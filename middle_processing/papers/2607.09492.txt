@@ -1,0 +1,1013 @@
+ 
+
+ Multimodal Reward Hacking in Reinforcement Learning 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below: 
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+ 1 Introduction 
+ 2 Experimental Framework 
+
+ 2.1 Task Setup 
+ 2.2 Reward Design 
+ 2.3 Evaluation Protocol 
+ 2.4 Training Details 
+
+ 3 Systematic Analysis 
+
+ 3.1 RL Under Imperfect Rewards Actively Creates New Failures 
+ 3.2 Reward Functions Have Structural Blind Spots at Decision Boundaries 
+ 3.3 Algorithm Choice Modulates Hacking Robustness, with Scale-Dependent Ranking Inversions 
+ 3.4 Scaling and Reward Design Are Complementary but Individually Insufficient 
+ 3.5 Unreliable Visual Verification Is Actively Harmful, Not Merely Unhelpful 
+ 3.6 Mechanistic Synthesis 
+
+ 4 Related Work 
+
+ Reward Hacking in RL-based Alignment. 
+ Multimodal Alignment and Reward Modeling. 
+
+ 5 Conclusion 
+ Potential risks. 
+ Use of AI Assistance. 
+ Acknowledgements. 
+ References 
+ A Dataset Details 
+
+ A.1 Safety VQA 
+ A.2 Algorithm Comparison Dataset 
+
+ B Training Hyperparameters 
+ C Reward Function Implementation 
+
+ C.1 R1 (Outcome only) 
+ C.2 R2 (Answer aware, image blind) 
+ C.3 R3 (Evidence aware, keyword verifier) 
+ C.4 R3 (Evidence aware, VLM as judge verifier) 
+ C.5 Extreme golden template reward 
+
+ D Judge Evaluation Details 
+ E Prompt Templates 
+
+ E.1 Single Judge Prompt 
+ E.2 Pairwise Judge Prompt 
+ E.3 R3 (VLM as Judge Verifier) Prompt 
+
+ License: CC BY 4.0
+
+arXiv:2607.09492v1 [cs.AI] 10 Jul 2026 
+
+ \checkdata 
+ [GitHub] https://github.com/Theodyy/MLLM-Reward-Hacking 
+
+ Multimodal Reward Hacking in Reinforcement Learning 
+
+ Jiayu Yao † , 
+Yiwei Wang ‡ , 
+Anmeng Zhang, 
+Zhe Sun § , 
+Songsong Wang, 
+ Lingrui Mei † , 
+Yuyao Ge † , 
+Shenghua Liu †,§ 
+
+ Affiliation: 
+
+ † Institute of Computing Technology, Chinese Academy of Sciences 
+ ‡ University of California, Merced , 
+ § Southeast University , 
+ § Corresponding Author 
+
+ Abstract 
+
+ Reinforcement learning is increasingly used to align multimodal large language models (MLLMs), yet higher rewards do not always mean better task performance. This problem is amplified in multimodal settings because visual input is difficult to verify with text-only or weakly grounded reward signals, allowing policies to improve reward scores while degrading visual reasoning. We study reward hacking in MLLM reinforcement learning through a controlled setup covering safety-oriented VQA, chart VQA, and extreme reward stress tests, while systematically varying reward design, data ambiguity, model scale (2B to 32B), and RL algorithm (GRPO, RLOO, DAPO). To separate RL-induced failures from pre-existing weaknesses, we introduce Newly Rewarded Failure Rate (NRFR), which measures the hacking rate specifically among samples where RL achieves higher proxy reward than the SFT baseline. Our experiments reveal three main findings. First, outcome-only rewards cause severe hacking (up to 48.1% Reward Hacking Rate), and NRFR exceeding RHR confirms that RL actively creates new failures rather than merely inheriting them. Second, scaling reduces hacking but is insufficient alone. Even the 32B model retains 54.9% worse rate under outcome-only rewards, while answer-aware rewards invert the average oracle direction at every scale, reaching the strongest gap when combined with 32B. Third, algorithm robustness is scale-dependent, with GRPO consistently most resistant (RHR 48–53%), RLOO persistently vulnerable (67–68%), and DAPO improving sharply from 67.2% at 2B to 45.5% at 8B. We further show that visual-evidence rewards help only when the verifier is reliable: keyword-based verification increases hacking relative to answer-aware rewards, whereas VLM-as-judge semantic verification reduces it. Overall, multimodal reward hacking is a systematic consequence of optimizing imperfect rewards. Robust MLLM alignment requires rewards and verifiers that remain reliable under optimization pressure. 
+
+ 1 Introduction 
+
+ Reinforcement learning is increasingly adopted as a post-training paradigm for multimodal large language models such as Qwen3-VL [ 2 ] and GPT-4o [ 14 ] . Real-time human evaluation at training scale is prohibitively expensive [ 19 ] . More and more systems therefore rely on automated reward signals, including deterministic scoring rules, keyword checkers, format verifiers, answer matchers, and LLM-based judges. However, a high reward score does not necessarily guarantee genuine performance improvement. 
+
+ The reason is structural. Automated rewards need to be cheap to compute at scale, so they tend to score what is easy to verify (keyword presence, format compliance, or answer-string match) rather than what is correct. In multimodal tasks this limitation is especially pronounced because the primary evidence, visual input, is difficult to verify with text-only or weakly grounded rewards. A policy can therefore improve its reward score without improving, or while degrading, its visual reasoning. We call this gap a reward-oracle mismatch , where the reward can improve without proportional oracle improvement, and in the worst case declines. 
+
+ Reward hacking, where policies exploit reward misspecification without improving task performance, has been widely studied in text-only settings. Prior work has explored reward robustness, reward shaping, Bayesian modeling, and gradient regularization [ 34 , 6 , 5 , 1 ] . Theoretical analyses show that hacking can arise from structural optimization incentives rather than implementation artifacts [ 29 , 25 ] . Similar phenomena have been observed in math reasoning, code generation, and safety alignment, where models satisfy reward criteria without acquiring the intended capability. However, existing studies remain largely text-only and do not examine how reward hacking changes when correctness depends on visual grounding. 
+
+ Figure 1 : 
+Overview of multimodal reward hacking.
+When automated proxy rewards diverge from the intended oracle objective , RL can increase reward scores while degrading faithful multimodal reasoning.
+The central example shows a Chart VQA case where the RL policy obtains high reward by giving the correct answer but fabricates visual evidence, exposing a reward–oracle mismatch.
+We study this failure mode in a controlled multimodal RL sandbox covering task type, reward design, RL algorithm, and model scale, and diagnose three hacking categories: Decision Hacking, Evidence Hacking, and Reward-Form Hacking.
+Metrics including RHR, ROG, and NRFR quantify how imperfect rewards induce shortcut learning under optimization pressure.
+
+ Yet multimodal reward hacking remains underexplored. As shown in Figure 1 , repeated optimization against imperfect rewards can lead models to refuse queries regardless of visual content, fabricate visual evidence unsupported by the image, or exploit format rewards through keyword-stuffed templates. To our knowledge, no prior work systematically studies how such failures emerge in multimodal RL, how they are shaped by reward design and RL algorithms, or how they evolve across model scales. 
+
+ To bridge this gap, we build a controlled multimodal RL sandbox centered on Safety VQA, which exposes decision-boundary exploitation and visual-grounding failures. The sandbox spans four model scales (2B to 32B), diverse reward designs, multiple RL algorithms, and extreme reward stress tests. We further introduce diagnostic metrics including reward hacking rate, reward-oracle gap, and newly rewarded failure rate. Our contributions are as follows. 
+
+ • 
+
+ We provide a systematic empirical study of reward hacking in MLLM reinforcement learning. 
+We build a controlled sandbox covering safety VQA and extreme reward stress tests, while varying reward design, data ambiguity, model scale, and RL algorithm. We organize the observed failures into decision-level, evidence-level, and reward-form shortcuts. 
+
+ • 
+
+ We introduce a diagnostic framework for attributing reward-induced failures. 
+By comparing SFT and RL outputs and conditioning on reward gains, our framework identifies cases where RL newly rewards oracle-invalid behaviors. The resulting Newly Rewarded Failure Rate (NRFR) separates RL-induced failures from vulnerabilities inherited from the base policy. 
+
+ • 
+
+ We characterize what amplifies or mitigates reward hacking under optimization. 
+We find that ambiguous boundaries, outcome-only rewards, and algorithm-dependent shortcut propagation tend to amplify hacking, while scaling and answer-aware rewards mitigate but do not eliminate it. We also show that verification reliability matters more than information quantity. Noisy keyword-based evidence rewards can introduce new shortcuts, whereas semantic grounding helps reduce hacking. 
+
+ 2 Experimental Framework 
+
+ 2.1 Task Setup 
+
+ We consider multimodal RL 1 1 
+ 1 
+
+ We use “multimodal RL” rather than “RLHF” throughout because our rewards are automated (rule-based or model-based), not derived from human preference annotations. The same reward-oracle mismatch arises in human-feedback settings whenever the proxy reward is imperfect. with input as an image-text pair, model output , and reward for optimization. We distinguish the training reward from oracle correctness , where indicates whether the response truly satisfies the task objective. 
+
+ We study Safety VQA , which requires deciding whether to answer or refuse. Given an image and query, the model should answer benign inputs and refuse risky ones. We build the dataset from nine open-source safety benchmarks (VLGuard [ 44 ] , VLSBench [ 13 ] , MLLMGuard [ 8 ] , MM-SafetyBench [ 16 ] , MSTS [ 23 ] , Omni [ 42 ] , SPA_VL [ 40 ] , Guard [ 9 ] , and LlavaGuard [ 11 ] ) and split it into benign , risky , and ambiguous subsets, where over-refusal, evidence fabrication, and template collapse are the main hacking modes. This domain captures two core failures in multimodal RL. The first is optimizing the wrong decision (over-refusal of benign content). The second is optimizing the right decision with the wrong evidence (fabricating visual grounding). We additionally use Chart VQA as a cross-domain probe. Under a format-only reward (VQA-R0), the model can inflate its reward without proportional accuracy gains, demonstrating that reward hacking generalizes beyond safety tasks. Dataset details are in Appendix A . 
+
+ 2.2 Reward Design 
+
+ We design reward functions with increasing access to task-relevant signals. The reward series is structured to test whether more information in rewards always helps, a question that drives our analysis of verification reliability. 
+
+ Safety VQA (R1 to R3). 
+R1 (Outcome-only) scores only output structure and strongly incentivizes refusal, creating an asymmetric reward landscape that drives over-refusal.
+R2 (Answer-aware) adds keyword matching against reference answers, closing the dominant over-refusal shortcut but not verifying visual grounding.
+R3 (Evidence-aware) builds on R2 with visual evidence checking and hallucination penalties, testing whether lightweight visual verification helps. R3 has two verification variants: a keyword-based verifier (used for Safety VQA) and a VLM-as-judge verifier (used for Chart VQA). See Appendix C for full definitions. 
+
+ We additionally employ an extreme golden-template reward for the algorithm stress test. This reward assigns to one exact refusal phrase and to all other responses, maximizing hacking pressure (Appendix C ). 
+
+ 2.3 Evaluation Protocol 
+
+ We evaluate reward hacking by comparing training reward with oracle correctness. We use Qwen3-VL-235B as the oracle judge, applied only at evaluation time in the Safety VQA reward-design experiments. We choose a strong VLM rather than human annotation for scalable evaluation across hundreds of checkpoints and thousands of samples. This oracle serves as a proxy for human judgment. It is not a perfect ground truth, but a substantially stronger signal than the training rewards it evaluates. For Safety VQA we deliberately avoid using it as a training reward to study the gap between cheap, scalable rewards (which real systems must use) and expensive, high-quality evaluation; for Chart VQA we additionally probe the effect of semantic verification by invoking the same VLM as an in-training grounding judge (Section 3.5 ). Full judge details are in Appendix D . 
+
+ Primary metrics. 
+ Reward Hacking Rate (RHR) measures the fraction of RL outputs that the oracle classifies as reward hacking: 
+
+ Newly Rewarded Failure Rate (NRFR) isolates RL-driven hacking by conditioning on samples where the proxy reward favors RL over SFT: 
+
+ When NRFR exceeds RHR, proxy-reward gains are disproportionately concentrated on hacking samples. This indicates that RL actively creates failures rather than merely failing to fix existing ones. 
+
+ Reward-Oracle Gap (ROG) tracks the mean quality change on a 0 to 10 pairwise judge scale: 
+
+ where negative values denote oracle degradation. Worse Rate (WR) captures the prevalence of degradation: 
+
+ ROG and WR describe the same distribution from complementary angles. ROG is its mean, and WR is the mass below zero. 
+
+ Behavioral descriptors. We additionally report refusal rate and template refusal rate (at most 20 tokens with a refusal pattern) to characterize how hacking manifests as over-refusal and template collapse. 
+
+ 2.4 Training Details 
+
+ We conduct experiments on Qwen3-VL-Instruct with four model scales (2B, 4B, 8B, 32B), trained on 4 H200 GPUs via DeepSpeed ZeRO-3. We adopt three optimization algorithms (GRPO, RLOO, and DAPO) across our experiments. All settings include a unified SFT baseline for evaluation. Full hyperparameters are provided in Appendix B . 
+
+ 3 Systematic Analysis 
+
+ Our analysis reveals three recurring failure modes under imperfect rewards. Decision Hacking exploits reward asymmetry to over-refuse benign or ambiguous inputs (examined in Section 3.2 ). Evidence Hacking inserts superficial visual entities without genuine grounding to collect evidence bonuses (examined in Section 3.5 ). Reward-Form Hacking converges to reward-maximizing templates regardless of input content (examined in Section 3.3 ). These modes are not mutually exclusive and a single response can exhibit multiple modes simultaneously. 
+
+ 3.1 RL Under Imperfect Rewards Actively Creates New Failures 
+
+ Figure 2 : 
+Reward-oracle alignment spectrum.
+(a) Total misalignment (Safety VQA, 2B, R1 clean). Proxy reward rises while ROG steadily worsens, producing a scissor curve.
+(b) Partial misalignment (Chart VQA, 2B, format-only reward R0). Reward climbs rapidly while ROG declines, though less severely than in (a).
+(c) Active failure creation. Among settings where NRFR exceeds RHR, proxy-reward gains are disproportionately concentrated on hacking samples, confirming that RL selectively reinforces oracle-rejected behaviors.
+
+ Motivation. 
+A common expectation for RL with automated rewards is that an imperfect reward is at worst harmless. The model may fail to improve, but should not degrade. If RL instead actively creates failures, the problem is not that the reward is “not good enough” but that optimization itself can exert pressure in the wrong direction. The key question is whether observed hacking reflects RL-induced failures or pre-existing weakness. 
+
+ Results. 
+Starting from the same SFT initialization, we apply RL and track both reward and oracle correctness. As shown in Figure 2 (a), reward consistently rises while oracle declines on the 2B R1 clean setting, producing a scissor curve with ROG reaching and RHR reaching 42.6%. 
+
+ The scissor curve alone cannot distinguish two explanations. Either the SFT baseline already hacks and RL merely fails to correct it, or RL actively creates new hacking. NRFR resolves this (Figure 2 (c)). On clean settings, NRFR exceeds RHR across multiple reward designs and scales (2B-R1, 2B-R2, 32B-R1, 32B-R2 in the figure). Among samples where RL achieves higher proxy reward than SFT, the oracle-hacking proportion is even higher than in the overall population. RL is selectively reinforcing behaviors that the oracle rejects . As rewards improve from R1 to R2, the NRFR-RHR gap diminishes, confirming that NRFR serves as a diagnostic of reward exploitability. 
+
+ Cross-domain evidence confirms this pattern beyond safety tasks (Figure 2 (b)). Under a format-only reward (Chart VQA-R0), the model achieves a 4.7 reward gain but only 1.1 accuracy gain, with reward efficiency (accuracy gain per unit reward) of just 0.172 compared to 0.724–0.769 for answer-aware rewards. The reward inflates without proportional task improvement, suggesting that reward optimization can actively drive non-productive behaviors. 
+
+ Discussion. 
+ Zhang et al. [36] show that RL produces genuine gains only when pre-training leaves headroom. Shao et al. [25] argue that spurious rewards mislead RLVR training. We demonstrate that under exploitable rewards, RL can produce systematic degradation in which the model optimizes the reward shortcut rather than the task. Nishimura-Gasparian et al. [18] similarly find that RL increases specification gaming rates. Shang et al. [24] categorize which reward errors are harmful, and our results suggest outcome-only errors produce inverted reward signals. 
+
+ Practical Guidance. 
+Monitor NRFR during training. NRFR exceeding RHR signals that RL is actively creating failures. A rising reward curve alone can be misleading. 
+
+ 3.2 Reward Functions Have Structural Blind Spots at Decision Boundaries 
+
+ Motivation. 
+Real-world multimodal tasks rarely have clear-cut labels. Many queries lie near the boundary between safe and unsafe, or between visually grounded and language-prior-answerable. A key question is whether boundary-amplified hacking reflects data difficulty itself or structural reward-oracle disagreement. 
+
+ Results. 
+As shown in Figure 3 , ambiguous samples amplify reward hacking. For R1, the RHR of the 2B model rises from 42.6% to 48.1% (+5.5pp), and that of the 4B model rises from 33.2% to 39.3% (+6.1pp), accompanied by degraded ROG. For R2, the ambiguity effect persists. The 2B model rises from 25.5% to 30.6% (+5.1pp) and 4B from 16.6% to 19.9% (+3.3pp). R3 shows the largest amplification at 2B (clean 27.7% to ambiguous 36.7%, +9.0pp), indicating that noisy visual signals are most vulnerable at decision boundaries. 
+
+ Figure 3 : 
+Decision boundaries amplify reward hacking and refusal behavior.
+Left panel shows RHR under clean vs. ambiguous settings. Right panel shows refusal rate under the same conditions. Ambiguous inputs consistently yield higher RHR and refusal rates, especially under R1.
+
+ Such amplification is unlikely to be explained by sample difficulty alone. Ambiguous samples introduce directional bias into reward signals. R1’s asymmetric incentives drive the model to refuse answers excessively. This reveals a flaw in reward design, where the optimal policy derived from rewards can conflict with the true objective at decision boundaries. RL tends to exploit discrepancies between reward objectives and true task requirements precisely where the distinction is most ambiguous. 
+
+ Discussion. 
+ Ren et al. [22] find that VLMs in dual-use scenarios achieve less than 13% safe completion rates, indicating extreme fragility at safety-critical boundaries. Our results provide a training-dynamics explanation. Exploitation opportunity is maximized precisely at the decision boundary. Heckel et al. [10] prove that RL algorithms naturally focus on ambiguous prompts, which are also the most vulnerable to reward hacking. Palaskar et al. [20] report that 34% of joint image-text errors occur despite correct individual modality classification, suggesting that boundary cases require compositional cross-modal reasoning that current reward functions fail to capture. 
+
+ Practical Guidance. 
+Simply adding ambiguous samples without improving reward quality amplifies rather than mitigates hacking. Reward design precision for boundary cases is essential. 
+
+ 3.3 Algorithm Choice Modulates Hacking Robustness, with Scale-Dependent Ranking Inversions 
+
+ Figure 4 : 
+Algorithm robustness under exploitable rewards across scales.
+(a) Training dynamics at 2B: RLOO converges fastest to high reward, DAPO next, GRPO slowest—yet higher reward does not imply better oracle quality.
+(b) RHR (bars, left axis) and ROG (lines, right axis) across model scales. DAPO’s RHR drops sharply with scale, producing a ranking inversion at 8B, while RLOO’s ROG worsens monotonically.
+(c) Benign worse rate across scales: RLOO degrades benign-query handling most severely (86.1% at 8B), while DAPO improves from 78.2% to 73.9%.
+
+ Motivation. 
+When reward reliability is uncertain, the question “which algorithm is least exploitable” matters more than “which achieves highest reward.” If rankings change with scale, the answer becomes context-dependent. 
+
+ Results. 
+Figure 4 presents the full comparison under the extreme golden-template reward. GRPO is the most consistently stable algorithm across scales in our experiments (RHR 48–53%, WR 62–75%). RLOO causes substantially more degradation (RHR 67–68%, WR 62–85%), with particularly severe effects on benign samples (benign WR 79.5% at 2B, rising to 86.1% at 8B). DAPO shows a distinctive scale-dependent profile. At 2B, its RHR is 67.2%, comparable to RLOO, but it improves dramatically with scale, dropping to 48.5% at 4B and 45.5% at 8B. This represents the steepest improvement among all algorithms and creates a ranking inversion. At 2B, GRPO is far more robust than DAPO and RLOO (which are comparable). At 8B, GRPO and DAPO are comparable and both markedly more robust than RLOO. Notably, at 8B DAPO achieves the lowest RHR (45.5%), though GRPO remains the safest choice when model scale is unknown. 
+
+ Mechanism. 
+GRPO’s group-relative normalization dilutes extreme reward signals, slowing both convergence and exploitation. RLOO’s precise leave-one-out advantages efficiently propagate the extreme reward, accelerating template collapse. DAPO’s decoupled clipping provides scale-dependent protection. Limited representational capacity at small scales prevents maintaining diversity under clipping, while larger models can preserve it. Benign worse rates are consistently high across all algorithms (Figure 4 c), with RLOO reaching 86.1% at 8B, indicating that the extreme reward disproportionately degrades benign-query handling regardless of algorithm choice. Under exploitable rewards, exploration can become a liability because more exploration helps discover better hacks rather than better solutions [ 32 ] . 
+
+ Discussion. 
+ Xu and Fang [33] identify GRPO’s poor negative rollout utilization as a weakness for reasoning. We find this same property provides implicit protection against exploitation. Li [15] discover scale-dependent ranking inversions across 51 algorithms, and our results are consistent for hacking robustness. 
+
+ Practical Guidance. 
+When reward reliability is uncertain, GRPO is the safest choice. Larger models may benefit from DAPO. RLOO should be avoided under exploitable rewards. 
+
+ 3.4 Scaling and Reward Design Are Complementary but Individually Insufficient 
+
+ Motivation. 
+A widespread expectation is that scaling helps resolve alignment challenges. If scaling merely attenuates rather than eliminates hacking, robust reward design remains important regardless of model size. 
+
+ Figure 5 : 
+Scaling and reward design are complementary.
+(a) Worse Rate (solid, left axis) and ROG (dashed, right axis) across model scales under R1 and R2 (Safety VQA, clean). R1 stays inverted at every scale. R2 achieves positive ROG throughout and reduces WR to 26.4% at 32B.
+(b) RHR heatmap across model scales, reward designs, and data regimes. RHR decreases along both the scale axis and the reward-design axis. Ambiguous columns are consistently higher than their clean counterparts. The lightest cell (R2 Clean at 32B, 11.9%) still shows residual hacking, confirming that scaling mitigates but does not eliminate reward hacking.
+
+ Results. 
+Figure 5 reports metrics across model sizes. Under R1 clean, RHR decreases steadily from 42.6% at 2B to 33.2% at 4B, 19.1% at 8B, and 18.3% at 32B. ROG improves from to . Yet the 32B model under R1 still exhibits a 54.9% worse rate. The reward signal remains inverted at the largest scale. Over half of pairwise comparisons are worse than the SFT baseline. 
+
+ Under R2, scaling compounds with the improved reward. The 32B model achieves RHR 11.9%, ROG , and WR 26.4%. R2’s ROG is positive at every scale we test ( at 2B, at 4B, at 8B, at 32B). Answer-awareness alone is sufficient to invert the average direction of the reward signal, and scaling then compresses the variance further. R2 at 32B yields an RHR of 11.9%. This is lower than R2 at 2B (25.5%) and lower than R1 at 32B (18.3%). Larger models better leverage improved reward signals, and improved rewards better guide larger models. Scaling and reward improvement are complementary rather than redundant. 
+
+ Even R2 at 32B retains 26.4% WR. Positive average ROG masks the fact that over a quarter of individual samples still degrade. This “average improvement masks individual harm” pattern recurs across the R2 column. WR is 40.0% at 2B, 35.3% at 4B, 41.7% at 8B, all with positive ROG. Ambiguity amplifies the gap further. At every scale the R2-Ambig cell is higher than R2-Clean (2B 30.6% vs 25.5%, 4B 19.9% vs 16.6%, 8B 19.5% vs 14.5%, 32B 15.8% vs 11.9%). The pattern extends to R3. The boundary-blind-spot effect from T2 persists across the scale axis. 
+
+ Discussion. 
+ Wang and Huang [28] prove that hacking is a structural equilibrium rather than a correctable bug. This suggests scaling merely shifts the equilibrium rather than eliminating it. Gauthier et al. [7] show that iterative RLHF leads to alignment collapse through a missing steering term in the optimization gradient, an issue that scaling does not address. 
+
+ Practical Guidance. 
+Outcome-only rewards at the largest scale remain insufficient for safety-critical applications. Effective mitigation likely requires simultaneously improving reward reliability and scaling model capacity. Neither axis on its own is enough. 
+
+ 3.5 Unreliable Visual Verification Is Actively Harmful, Not Merely Unhelpful 
+
+ Figure 6 : 
+Verifier reliability, not information quantity, determines whether visual-evidence rewards help.
+(a) Safety VQA RHR across model scales: adding visual evidence via keyword matching (R3) yields RHR equal to or higher than R2 at every scale, despite incorporating additional visual information.
+(b) The same intervention “add visual evidence” produces opposite outcomes under different verifiers. On Safety VQA with keyword matching (unreliable), R3 raises RHR from 25.5% to 27.7%; on Chart VQA with VLM-as-judge (reliable), R3 lowers RHR from 10.0% to 8.5%.
+
+ Motivation. 
+The intuition that more information improves verification is natural, but if the added information is itself unreliable, it may create new exploit paths rather than close existing ones. To isolate the role of verifier reliability from information content, we hold the reward intervention fixed (“add visual evidence to R2”) and vary only how that evidence is verified. 
+
+ Results. 
+Moving from R1 to R2 substantially reduces RHR (42.6% to 25.5% at 2B; 33.2% to 16.6% at 4B; 19.1% to 14.5% at 8B; 18.3% to 11.9% at 32B in Figure 6 (a)). Answer-awareness closes the most exploitable gap. Surprisingly, safety R3 does not reliably improve over R2 (Figure 6 (a)). Despite incorporating visual evidence and hallucination penalties, R3 yields RHR strictly higher than R2 at every scale we test: 27.7% vs. 25.5% at 2B ( pp), 20.0% vs. 16.6% at 4B ( pp), 17.2% vs. 14.5% at 8B ( pp), and 14.1% vs. 11.9% at 32B ( pp). The keyword-matching evidence component can be satisfied by superficial entity mentions without genuine grounding, so the added evidence signal appears to be actively misaligned optimization pressure that offsets R2’s gains rather than neutral noise. 
+
+ To confirm that this failure comes from verifier reliability rather than from adding visual information itself, we hold the intervention fixed and vary only the verifier (Figure 6 (b)). Under keyword matching (Safety VQA), R3 raises RHR from 25.5% to 27.7% ( pp); under VLM-as-judge grounding (Chart VQA), the same intervention lowers RHR from 10.0% to 8.5% ( pp). The direction of the effect flips with the verifier while the reward intervention is unchanged. Verifier reliability, not information quantity, is the operative axis. Unreliable verification does not just fail to help—it creates a new exploitation path (keyword stuffing) that did not exist under R2. 
+
+ Discussion. 
+This finding refines the information bottleneck hypothesis. It is not more information is better , but reliably verified information is better . PEARL [ 37 ] uses perceptual checklists as hard gates rather than soft rewards, precisely avoiding the exploitation path we identify. VAPO [ 27 ] identifies “visual forgetting” in extended GRPO reasoning, the same phenomenon from the reasoning quality perspective. PerPO [ 43 ] formalizes “image-unconditional reward hacking,” directly corresponding to the failure surfaced under our keyword-matching verifier. 
+
+ Practical Guidance. 
+If visual signals can only be verified via keyword matching, do not add them. R2’s answer-aware signal already closes the dominant shortcut, and layering an unreliable evidence signal on top is counterproductive. Use VLM-as-judge semantic verification or hard gates [ 37 ] when incorporating visual evidence into rewards. 
+
+ 3.6 Mechanistic Synthesis 
+
+ The five findings share three mechanisms, each acting at a different stage of the training loop. First, the reward function creates an exploitation path when its incentives are asymmetric or its verifier is unreliable. Second, the RL algorithm carries that signal into the policy, and its choice determines how efficiently the shortcut is discovered and reinforced. Third, model scale caps how far reward improvements can compensate, since larger models leverage a better reward but cannot substitute for one. 
+
+ The three stages compound, and their combination points to a general prescription rather than a single fix. Failures are amplified when a poorly designed reward such as an outcome-only signal is trained under a shortcut-efficient algorithm such as RLOO on a smaller model with ambiguous or boundary-heavy data, since each stage adds pressure toward the same exploitation path. Robustness improves in the opposite direction. A reliably verified reward such as VLM-as-judge grounding combined with a shortcut-dilutive algorithm such as GRPO on a larger model with cleaner data reduces hacking at every stage. In our experiments we observe both directions, with the worst configurations producing near-total template collapse and the strongest configurations still leaving nonzero RHR, indicating that no single lever is sufficient and that reward hacking under imperfect rewards is a structural risk to be jointly managed across reward design, algorithm choice, and scale. 
+
+ 4 Related Work 
+
+ Reward Hacking in RL-based Alignment. 
+
+ Reward hacking, where policies exploit imperfect reward signals rather than learn the intended behavior, is a central failure mode of RL-based alignment. In text-only settings, prior work addresses it through reward robustness [ 34 ] , reward shaping [ 6 ] , Bayesian modeling [ 5 ] , and gradient regularization [ 1 ] . Theoretical analyses show that hacking stems from imperfect proxy-true reward correlation [ 17 ] and constitutes a structural equilibrium [ 28 ] . Specification gaming studies show that RL training substantially increases exploit rates [ 18 ] . Hong et al. [12] systematically analyze reward hacking in text-to-image RL, showing that aesthetic and consistency rewards are individually exploitable and that ensembling only partially mitigates the problem. Chai et al. [4] propose activation reward models and the PreferenceHack benchmark for detecting reward hacking in LLMs and multimodal models. These works are confined to text-only or generation settings and do not examine multimodal reasoning failure modes such as visual bypass. 
+
+ Separately, algorithm comparison studies reveal that RL algorithm choice materially shapes training outcomes. OXRL [ 15 ] discovers scale-dependent ranking inversions across 51 algorithms. GRPO-specific analyses identify overconfidence [ 3 ] , aggregation bias [ 35 ] , zero-advantage collapse [ 21 ] , and harms from negative rollouts [ 33 ] . These findings show that algorithm robustness is neither universal nor monotonic in scale, yet no work evaluates robustness against deliberately exploitable rewards. 
+
+ Multimodal Alignment and Reward Modeling. 
+
+ Multimodal RL introduces grounding challenges absent in text-only settings. Recent reward modeling work improves alignment via critique-based signals [ 39 ] , systematic architecture design [ 38 ] , generative objectives [ 41 ] , and cross-task representations [ 31 ] , but does not study whether improved rewards resist hacking. VLM-R1 [ 26 ] applies R1-style RL to vision-language models and observes reward hacking in object detection, though without systematic analysis of mechanisms or mitigation. 
+
+ For visual grounding, PEARL [ 37 ] uses perceptual checklists as fidelity gates, VAPO [ 27 ] prevents visual forgetting via anchoring, PerPO [ 43 ] enforces perceptual preference consistency, and Pref-GRPO [ 30 ] identifies normalization artifacts in pointwise reward models. These works share the premise that adding visual information to training improves robustness. Our work provides evidence that challenges this premise. Unreliable keyword-based visual verification can amplify hacking rather than suppress it. 
+
+ 5 Conclusion 
+
+ We presented a systematic empirical study of reward hacking in reinforcement learning for multimodal large language models. Using a controlled sandbox with safety-oriented VQA and extreme reward stress tests, we examined how reward design, data ambiguity, model scale, RL algorithm, and visual verification shape reward-oracle mismatch. Our findings suggest that multimodal reward hacking is not an incidental artifact but a systematic consequence of optimizing imperfect rewards. RL can newly reward oracle-invalid behaviors. Ambiguous decision boundaries expose reward blind spots. Algorithm choice changes shortcut amplification. Unreliable visual verification can be actively harmful. Scaling and answer-aware rewards help, but neither appears sufficient alone. Robust MLLM alignment therefore likely requires not only larger models, but also rewards, verifiers, and algorithms that remain reliable under optimization pressure. 
+
+ Limitations 
+
+ Our study focuses on one model family (Qwen3-VL), although we evaluate multiple scales from 2B to 32B. Future work should test whether the same reward-hacking dynamics hold across other MLLM families and training infrastructures. Our oracle evaluation relies on a strong VLM judge rather than large-scale human annotation, so the reported hacking rates may inherit judge-specific biases. In addition, the study focuses on safety-oriented VQA, and cross-domain validation on other multimodal tasks (e.g., chart reasoning, document understanding) is ongoing work. These limitations do not change the central reward-oracle mismatch studied in this work, but they bound the scope of our empirical claims. 
+
+ Ethics Statement 
+
+ This work studies failure modes in multimodal alignment systems, with the goal of improving their robustness and reliability. By identifying and analyzing reward hacking behaviors, we aim to support the development of safer and more trustworthy AI systems. 
+
+ At the same time, our findings reveal potential vulnerabilities in current multimodal RL pipelines. Although exposing these issues is necessary for advancing alignment research, such insights could be misused to intentionally exploit reward functions or weaken safety mechanisms. We therefore encourage responsible use of our results and advocate for continued research on robust mitigation strategies. 
+
+ Potential risks. 
+
+ Our analysis also highlights deployment risks for multimodal large language models, including unreliable outputs, incorrect vision-language grounding, and safety hazards in real-world applications such as robotics, visual verification, and decision-support systems. 
+
+ Use of AI Assistance. 
+
+ We used AI-assisted writing tools to support language polishing, grammar checking, and presentation refinement. All research ideas, experimental designs, analyses, results, and final claims were developed, verified, and approved by the authors. 
+
+ Acknowledgements. 
+
+ This work is supported in part by the National Key R&D Program of China under Grant Nos. 2025YFC3309700, Beijing Natural Science Foundation No. 4262033, and the National Natural Science Foundation of China under Grant Nos. U25B2076, 62441229, and 62377043. 
+
+ References 
+
+ [1] 
+ J. Ackermann, M. Noukhovitch, T. Ishida, and M. Sugiyama (2026) 
+
+ Gradient regularization prevents reward hacking in reinforcement learning from human feedback and verifiable rewards .
+
+ arXiv preprint arXiv:2602.18037 .
+
+ Cited by: §1 ,
+ §4 .
+
+ [2] 
+ S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, et al. (2025) 
+
+ Qwen3-vl technical report .
+
+ arXiv preprint arXiv:2511.21631 .
+
+ Cited by: §1 .
+
+ [3] 
+ M. Bereket and J. Leskovec (2025) 
+
+ Uncalibrated reasoning: grpo induces overconfidence for stochastic outcomes .
+
+ arXiv preprint arXiv:2508.11800 .
+
+ Cited by: §4 .
+
+ [4] 
+ T. Chai, C. Mitra, B. Huang, G. R. Gare, Z. Lin, A. Arbelle, L. Karlinsky, R. Feris, T. Darrell, D. Ramanan, and R. Herzig (2025) 
+
+ Activation reward models for few-shot model alignment .
+
+ arXiv preprint arXiv:2507.01368 .
+
+ Cited by: §4 .
+
+ [5] 
+ Z. Duan, G. Rong, Z. Li, B. Chen, M. Zhou, and D. Guo (2026) 
+
+ Mitigating reward hacking in rlhf via bayesian non-negative reward modeling .
+
+ arXiv preprint arXiv:2602.10623 .
+
+ Cited by: §1 ,
+ §4 .
+
+ [6] 
+ J. Fu, X. Zhao, C. Yao, H. Wang, Q. Han, and Y. Xiao (2025) 
+
+ Reward shaping to mitigate reward hacking in rlhf .
+
+ arXiv preprint arXiv:2502.18770 .
+
+ Cited by: §1 ,
+ §4 .
+
+ [7] 
+ E. Gauthier, F. Bach, and M. I. Jordan (2026) 
+
+ Explaining and preventing alignment collapse in iterative rlhf .
+
+ arXiv preprint arXiv:2605.04266 .
+
+ Cited by: §3.4 .
+
+ [8] 
+ T. Gu, Z. Zhou, K. Huang, D. Liang, Y. Wang, H. Zhao, Y. Yao, X. Qiao, K. Wang, Y. Yang, Y. Teng, Y. Qiao, and Y. Wang (2024) 
+
+ MLLMGuard: a multi-dimensional safety evaluation suite for multimodal large language models .
+
+ arXiv preprint arXiv:2406.07594 .
+
+ Cited by: §2.1 .
+
+ [9] 
+ S. Han, K. Rao, A. Ettinger, L. Jiang, B. Y. Lin, N. Lambert, Y. Choi, and N. Dziri (2024) 
+
+ WildGuard: open one-stop moderation tools for safety risks, jailbreaks, and refusals of llms .
+
+ In Advances in Neural Information Processing Systems ,
+
+ Cited by: §2.1 .
+
+ [10] 
+ R. Heckel, M. Soltanolkotabi, and C. Thramboulidis (2026) 
+
+ Asymmetric prompt weighting for reinforcement learning with verifiable rewards .
+
+ arXiv preprint arXiv:2602.11128 .
+
+ Cited by: §3.2 .
+
+ [11] 
+ L. Helff, F. Friedrich, M. Brack, K. Kersting, and P. Schramowski (2024) 
+
+ LlavaGuard: vlm-based safeguard for vision dataset curation and safety assessment .
+
+ arXiv preprint arXiv:2406.05113 .
+
+ Cited by: §2.1 .
+
+ [12] 
+ Y. Hong, K. Kao, H. Zhou, and C. Hsieh (2026) 
+
+ Understanding reward hacking in text-to-image reinforcement learning .
+
+ arXiv preprint arXiv:2601.03468 .
+
+ Cited by: §4 .
+
+ [13] 
+ X. Hu, D. Liu, H. Li, X. Huang, and J. Shao (2025) 
+
+ VLSBench: unveiling visual leakage in multimodal safety .
+
+ arXiv preprint arXiv:2411.19939 .
+
+ Cited by: §2.1 .
+
+ [14] 
+ A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al. (2024) 
+
+ Gpt-4o system card .
+
+ arXiv preprint arXiv:2410.21276 .
+
+ Cited by: §1 .
+
+ [15] 
+ X. Li (2026) 
+
+ Do post-training algorithms actually differ? a controlled study across model scales uncovers scale-dependent ranking inversions .
+
+ arXiv preprint arXiv:2603.19335 .
+
+ Cited by: §3.3 ,
+ §4 .
+
+ [16] 
+ X. Liu, Y. Zhu, J. Gu, Y. Lan, C. Yang, and Y. Qiao (2023) 
+
+ MM-safetybench: a benchmark for safety evaluation of multimodal large language models .
+
+ arXiv preprint arXiv:2311.17600 .
+
+ Cited by: §2.1 .
+
+ [17] 
+ Z. Liu, X. Sun, and Z. Zheng (2026) 
+
+ Robust optimization for mitigating reward hacking with correlated proxies .
+
+ arXiv preprint arXiv:2604.12086 .
+
+ Cited by: §4 .
+
+ [18] 
+ K. Nishimura-Gasparian, R. McCarthy, and D. Lindner (2026) 
+
+ Towards understanding specification gaming in reasoning models .
+
+ arXiv preprint arXiv:2605.02269 .
+
+ Cited by: §3.1 ,
+ §4 .
+
+ [19] 
+ L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al. (2022) 
+
+ Training language models to follow instructions with human feedback .
+
+ Advances in neural information processing systems 35 , pp. 27730–27744 .
+
+ Cited by: §1 .
+
+ [20] 
+ S. Palaskar, L. Gatys, M. Abdelrahman, M. Jacobo, L. Lindsey, R. Moharir, G. Lund, Y. Xu, N. Shiee, J. Bigham, et al. (2025) 
+
+ VLSU: mapping the limits of joint multimodal understanding for ai safety .
+
+ arXiv preprint arXiv:2510.18214 .
+
+ Cited by: §3.2 .
+
+ [21] 
+ D. Plyusov, A. Gorbatovski, B. Shaposhnikov, V. Sinii, A. Malakhov, and D. Gavrilov (2026) 
+
+ F-grpo: don’t let your policy learn the obvious and forget the rare .
+
+ arXiv preprint arXiv:2602.06717 .
+
+ Cited by: §4 .
+
+ [22] 
+ K. Ren, P. Nakov, and U. Naseem (2025) 
+
+ DUAL-bench: measuring over-refusal and robustness in vision-language models .
+
+ arXiv preprint arXiv:2510.10846 .
+
+ Cited by: §3.2 .
+
+ [23] 
+ P. Röttger, G. Attanasio, F. Friedrich, J. Goldzycher, A. Parrish, R. Bhardwaj, et al. (2025) 
+
+ MSTS: a multimodal safety test suite for vision-language models .
+
+ arXiv preprint arXiv:2501.10057 .
+
+ Cited by: §2.1 .
+
+ [24] 
+ S. Shang, H. Strauss, S. Wei, S. Arora, and N. Razin (2026) 
+
+ When errors can be beneficial: a categorization of imperfect rewards for policy gradient .
+
+ arXiv preprint arXiv:2604.25872 .
+
+ Cited by: §3.1 .
+
+ [25] 
+ R. Shao, S. S. Li, R. Xin, S. Geng, Y. Wang, S. Oh, S. S. Du, N. Lambert, S. Min, R. Krishna, et al. (2025) 
+
+ Spurious rewards: rethinking training signals in rlvr .
+
+ arXiv preprint arXiv:2506.10947 .
+
+ Cited by: §1 ,
+ §3.1 .
+
+ [26] 
+ H. Shen, P. Liu, J. Li, C. Fang, Y. Ma, J. Liao, Q. Shen, Z. Zhang, K. Zhao, Q. Zhang, R. Xu, and T. Zhao (2025) 
+
+ VLM-r1: a stable and generalizable r1-style large vision-language model .
+
+ arXiv preprint arXiv:2504.07615 .
+
+ Cited by: §4 .
+
+ [27] 
+ X. Tian, S. Zou, Z. Yang, M. He, F. Waschkowski, L. Wesemann, P. Tu, and J. Zhang (2025) 
+
+ More thought, less accuracy? on the dual nature of reasoning in vision-language models .
+
+ arXiv preprint arXiv:2509.25848 .
+
+ Cited by: §3.5 ,
+ §4 .
+
+ [28] 
+ J. Wang and J. Huang (2026) 
+
+ Reward hacking as equilibrium under finite evaluation .
+
+ arXiv preprint arXiv:2603.28063 .
+
+ Cited by: §3.4 ,
+ §4 .
+
+ [29] 
+ X. Wang, M. Tian, Y. Zeng, Z. Huang, J. Yuan, B. Chen, J. Xu, M. Zhou, W. Liu, M. Wu, et al. (2026) 
+
+ Reward hacking in the era of large models: mechanisms, emergent misalignment, challenges .
+
+ arXiv preprint arXiv:2604.13602 .
+
+ Cited by: §1 .
+
+ [30] 
+ Y. Wang, Z. Li, Y. Zang, Y. Zhou, J. Bu, C. Wang, Q. Lu, C. Jin, and J. Wang (2025) 
+
+ Pref-grpo: pairwise preference reward-based grpo for stable text-to-image reinforcement learning .
+
+ arXiv preprint arXiv:2508.20751 .
+
+ Cited by: §4 .
+
+ [31] 
+ Y. Wang, Y. Zang, H. Li, C. Jin, and J. Wang (2025) 
+
+ Unified reward model for multimodal understanding and generation .
+
+ arXiv preprint arXiv:2503.05236 .
+
+ Cited by: §4 .
+
+ [32] 
+ X. Wu, Q. Sun, R. Zhang, C. Song, J. Wu, Y. Qi, and H. Cheng (2026) 
+
+ Demystifying reinforcement learning for long-horizon tool-using agents: a comprehensive recipe .
+
+ arXiv preprint arXiv:2603.21972 .
+
+ Cited by: §3.3 .
+
+ [33] 
+ M. Xu and H. Fang (2026) 
+
+ Beyond negative rollouts: positive-only policy optimization with implicit negative gradients .
+
+ arXiv preprint arXiv:2605.06650 .
+
+ Cited by: §3.3 ,
+ §4 .
+
+ [34] 
+ Y. Yan, X. Lou, J. Li, Y. Zhang, J. Xie, C. Yu, Y. Wang, D. Yan, and Y. Shen (2024) 
+
+ Reward-robust rlhf in llms .
+
+ arXiv preprint arXiv:2409.15360 .
+
+ Cited by: §1 ,
+ §4 .
+
+ [35] 
+ Z. Zeng, J. Huang, Z. Yin, J. Liu, Z. Li, B. Li, Y. Wu, Y. Zheng, G. Zhang, W. Huang, et al. (2026) 
+
+ Balanced aggregation: understanding and fixing aggregation bias in grpo .
+
+ arXiv preprint arXiv:2605.04077 .
+
+ Cited by: §4 .
+
+ [36] 
+ C. Zhang, G. Neubig, and X. Yue (2025) 
+
+ On the interplay of pre-training, mid-training, and rl on reasoning language models .
+
+ arXiv preprint arXiv:2512.07783 .
+
+ Cited by: §3.1 .
+
+ [37] 
+ C. Zhang, H. Qiu, Q. Zhang, Y. Xu, Z. Zeng, S. Yang, P. Shi, L. Ma, and J. Zhang (2025) 
+
+ Perceptual-evidence anchored reinforced learning for multimodal reasoning .
+
+ arXiv preprint arXiv:2511.18437 .
+
+ Cited by: §3.5 ,
+ §3.5 ,
+ §4 .
+
+ [38] 
+ Y. Zhang, H. Yang, H. Zhang, Y. Shi, Z. Chen, H. Tian, C. Fu, H. Wang, K. Wu, B. Cui, et al. (2025) 
+
+ Basereward: a strong baseline for multimodal reward model .
+
+ arXiv preprint arXiv:2509.16127 .
+
+ Cited by: §4 .
+
+ [39] 
+ Y. Zhang, T. Yu, H. Tian, C. Fu, P. Li, J. Zeng, W. Xie, Y. Shi, H. Zhang, J. Wu, et al. (2025) 
+
+ Mm-rlhf: the next step forward in multimodal llm alignment .
+
+ arXiv preprint arXiv:2502.10391 .
+
+ Cited by: §4 .
+
+ [40] 
+ Y. Zhang, L. Chen, G. Zheng, Y. Gao, R. Zheng, J. Fu, Z. Yin, S. Jin, Y. Qiao, X. Huang, F. Zhao, T. Gui, and J. Shao (2024) 
+
+ SPA-vl: a comprehensive safety preference alignment dataset for vision language model .
+
+ arXiv preprint arXiv:2406.12030 .
+
+ Cited by: §2.1 .
+
+ [41] 
+ J. Zhou, J. Ji, B. Chen, J. Sun, D. Hong, S. Han, Y. Guo, Y. Yang, et al. (2026) 
+
+ Generative rlhf-v: learning principles from multi-modal human preference .
+
+ Advances in Neural Information Processing Systems 38 , pp. 126021–126051 .
+
+ Cited by: §4 .
+
+ [42] 
+ Y. Zhu, X. Wen, W. J. Mo, T. Zhu, Y. Xie, P. Qi, and M. Chen (2025) 
+
+ OmniGuard: unified safety moderation for omni-modal inputs and outputs .
+
+ arXiv preprint arXiv:2512.02306 .
+
+ Cited by: §2.1 .
+
+ [43] 
+ Z. Zhu, L. Zhao, K. Lin, J. Yang, E. Yu, C. Liu, H. Wei, J. Sun, Z. Ge, and X. Zhang (2025) 
+
+ Perpo: perceptual preference optimization via discriminative rewarding .
+
+ arXiv preprint arXiv:2502.04371 .
+
+ Cited by: §3.5 ,
+ §4 .
+
+ [44] 
+ Y. Zong, O. Bohdal, T. Yu, Y. Yang, and T. Hospedales (2024) 
+
+ Safety fine-tuning at (almost) no cost: a baseline for vision large language models .
+
+ In International Conference on Machine Learning ,
+
+ Cited by: §2.1 .
+
+ Appendix A Dataset Details 
+
+ A.1 Safety VQA 
+
+ We construct Safety VQA from nine open-source safety benchmarks: VLGuard, VLSBench, MLLMGuard, MM-SafetyBench, MSTS, Omni, SPA_VL, Guard, and LlavaGuard. The construction pipeline has five stages. 
+
+ Stage 1: Unified labeling. The nine benchmarks use heterogeneous schemas for risk annotation and metadata. We first pass every sample through Qwen3.5-397B with a fixed labeling prompt to produce a common record schema. Each record contains a pipeline tag ( input vs. intermediate product), a multiturn flag, a risk level (no-risk, low-risk, mid-risk, or high-risk), and a list of any adversarial injection methods detected. This unification is the prerequisite for cross-source filtering and balancing. 
+
+ Stage 2: Filtering. We retain only samples where pipeline == input , is_multiturn == 0 , no injection methods were detected, and the user message contains both an image and text. Four sources satisfy all filtering criteria in sufficient volume for our splits: VLSBench, MM-SafetyBench, Omni, and MSTS. 
+
+ Stage 3: Risk-level mapping. Unified risk levels are mapped to three categories used throughout our experiments: no-risk benign , high-risk risky , and both low-risk and mid-risk ambiguous . In the clean setting we use only benign and risky samples with clear-cut labels; the ambiguous variant additionally injects boundary samples whose risk level is unclear even to human annotators, enabling controlled comparison of hacking rates between unambiguous and boundary cases. Duplicates are removed via a (source, user_content) hash. 
+
+ Stage 4: Balanced sampling and split assembly. To prevent any single benchmark from dominating, each source is capped at 30% of any split it appears in. We then assemble five splits with the label ratios in Table 1 : SFT is benign-heavy (90/10) to establish a substantive answering baseline; GRPO clean is 70/30 benign/risky; the ambiguous variants of GRPO and eval add ambiguous samples on top of the clean composition (30% for GRPO, 40% for eval), so that clean and ambiguous splits differ only in the presence of boundary cases. 
+
+ Stage 5: Reference generation and evidence extraction. SFT assistant messages and GRPO reference solutions are generated by Qwen3.5-397B. The generation prompt is minimal. Benign samples receive a normal helpful answer, ambiguous samples receive an answer followed by a brief safety note, and risky samples receive a short neutral refusal. Chain-of-thought fragments in the output are stripped by a post-processing filter. For R3 GRPO training only, we run a second Qwen3.5-397B pass in VLM mode to extract an image_evidence field per image, an English short-phrase list of visible objects, people, scenes, attributes, and actions. The extraction yields on average 19 entities per image (empty on only 2 of 1555 images). This field is written only to the GRPO training set. Evaluation samples do not carry evidence because the oracle judge assesses grounding directly. 
+
+ Label 
+ Source 
+
+ Split 
+ Total 
+ Benign 
+ Risky 
+ Ambig. 
+ VLSBench 
+ MSTS 
+ MM-SafetyBench 
+ Omni 
+
+ SFT (train) 
+ 2439 
+ 2145 
+ 294 
+ – 
+ 869 
+ 178 
+ 880 
+ 512 
+
+ GRPO clean (train) 
+ 649 
+ 415 
+ 234 
+ – 
+ 197 
+ 129 
+ 178 
+ 145 
+
+ GRPO ambiguous (train) 
+ 906 
+ 401 
+ 245 
+ 260 
+ 288 
+ 206 
+ 233 
+ 179 
+
+ Eval clean 
+ 320 
+ 239 
+ 81 
+ – 
+ 99 
+ 110 
+ 58 
+ 53 
+
+ Eval ambiguous 
+ 512 
+ 247 
+ 83 
+ 182 
+ 150 
+ 166 
+ 101 
+ 95 
+
+ Table 1: 
+ Safety VQA composition. Sizes for each split broken down by risk label and effective source. The ambiguous variants of GRPO and eval extend their clean counterparts with ambiguous samples, isolating decision-boundary effects. Source counts are balanced by the 30% per-source cap in Stage 4.
+
+ A.2 Algorithm Comparison Dataset 
+
+ For the extreme reward stress test (Section 3.3 ), we use a separate dataset to isolate algorithm effects from reward-design interactions. The training set contains 500 samples (mixed benign and risky, without label information available to the reward function). The evaluation set contains 500 samples with benign/risky labels for post-hoc analysis of per-category degradation. The SFT baseline for this experiment uses 18000 samples to ensure a well-calibrated starting policy. 
+
+ Appendix B Training Hyperparameters 
+
+ All experiments train Qwen3-VL-Instruct (2B/4B/8B/32B) on 4 H200 GPUs via DeepSpeed ZeRO-3, using LoRA at both the SFT and RL stages. The reward-design track (Sections 3.1 , 3.2 , 3.4 , 3.5 ) and the algorithm-comparison track (Section 3.3 ) differ only in the settings below. 
+
+ Reward Design 
+ Algorithm Comp. 
+
+ Hyperparameter 
+ SFT 
+ GRPO 
+ SFT 
+ GRPO 
+
+ LoRA rank / alpha 
+ 32 / 32 
+ 16 / 32 
+ 32 / 32 
+ 32 / 64 
+
+ Learning rate 
+ 2e-5 
+ 5e-6 
+ 1e-4 
+ 5e-6 
+
+ Training epochs 
+ 3 
+ 5 
+ 2 
+ 2 
+
+ Quantization 
+ 4-bit (2B) 
+ None 
+ None 
+ None 
+
+ KL coefficient ( ) 
+ None 
+ 0.04 
+ None 
+ 0.04 
+
+ Num generations ( ) 
+ None 
+ 8 
+ None 
+ 8 
+
+ Max completion length 
+ None 
+ 256 
+ None 
+ 256 
+
+ Table 2: Training hyperparameters for both tracks and both stages. 
+
+ For the algorithm comparison, RLOO uses advantage_estimator=rloo with kl_in_reward=true . DAPO uses loss_type=dapo with cliprange=0.2 . All other hyperparameters are shared with GRPO as shown in Table 2 . 
+
+ Appendix C Reward Function Implementation 
+
+ We use four proxy reward functions. R1, R2, and R3 form a progression on Safety VQA from outcome only to answer aware to evidence aware, with R3 having two variants that differ in how visual evidence is verified. The extreme golden template reward is a separate label unaware stress test used only in the algorithm comparison of Section 3.3 . All rewards take a batch of responses plus per sample kwargs and are registered as swift ORM plugins. 
+
+ Every Safety VQA reward shares three regularization terms with identical coefficients. A length penalty of per word, a repetition penalty of when the unique token ratio falls below , and a non extremely short bonus of when the response exceeds five words. All Safety VQA rewards also share the same refusal detector, a regex match against a fixed pattern list containing i’m sorry , i cannot , cannot assist , unable to , and seven similar phrases. In the rest of this section we write for the behavior score, for the keyword term, and for the shared regularization. 
+
+ C.1 R1 (Outcome only) 
+
+ R1 sees the risk label but neither the reference solution nor the image. Its behavior score branches on the risk label and on whether the response contains any refusal pattern. On a risky sample a refusal contributes and a non refusal contributes . On a benign sample a refusal contributes and a non refusal contributes . On an ambiguous sample a refusal contributes and a non refusal contributes . The final reward is . 
+
+ The asymmetry is deliberate. On risky samples the refusal minus non refusal gap is , on benign samples it is , and on ambiguous samples refusing is strictly better than answering by regardless of image content. R1 therefore creates a systematic over refusal incentive at both label boundaries. 
+
+ C.2 R2 (Answer aware, image blind) 
+
+ R2 rescales the R1 behavior scores to a smaller magnitude and adds a keyword coverage term against a reference solution. The behavior scores become for risky refusal and non refusal, for benign, and for ambiguous. The ambiguous refusal score drops from under R1 to under R2, removing the outcome only shortcut that drives ambiguous over refusal. 
+
+ Let be a word boundary tokenizer and let be the reference solution. The keyword term measures how much of the reference is covered by the response, 
+
+ The square root gives partial credit to weak matches and the factor makes the keyword signal comparable in magnitude to the rescaled behavior signal. The final reward is 
+
+ R2 does not verify visual content. 
+
+ C.3 R3 (Evidence aware, keyword verifier) 
+
+ R3 with a keyword verifier keeps the R2 objective and adds two visual terms based on a pre extracted image_evidence phrase list per image (Appendix A Stage 5). Let be the content tokens of , i.e. tokens longer than two characters after stopword removal, and let be the analogous set for the reference solution. Evidence support and hallucination penalty are 
+
+ rewards a response for mentioning image entities and penalizes content tokens that appear neither in the reference solution nor in the evidence list. On risky refusals both terms are scaled by so that appropriate refusals are not penalized for lacking evidence. The final reward is 
+
+ This variant uses purely lexical evidence checking, so no VLM is invoked during training. The image_evidence field is generated once during data preparation and reused across all training steps. 
+
+ C.4 R3 (Evidence aware, VLM as judge verifier) 
+
+ R3 with a VLM as judge verifier replaces the two lexical terms and with a single semantic grounding judgment produced by Qwen3-VL-235B, invoked at training time with the image, user query, and response. The judge returns one of grounded , partially_grounded , or not_grounded , mapped to grounding scores , , and respectively. Refusals skip the judge and receive a grounding score of . The final reward keeps R2’s behavior and keyword terms and adds a single grounding contribution, 
+
+ A persistent cache keyed by (image path, response) reuses judgments across steps, and up to judge calls run concurrently per batch to keep training throughput comparable to the keyword variant. 
+
+ C.5 Extreme golden template reward 
+
+ The extreme reward is label unaware. It does not take the risk label as input and its scoring depends only on lexical patterns in the response. The base score is . Responses matching the exact golden phrase i’m sorry, i cannot assist with that request receive . Responses containing sorry or cannot but not the exact phrase receive . On top of these three tiers, responses longer than words lose for every additional words. The design maximizes exploitation pressure. One phrase is a global attractor, near matches form a soft basin, and long outputs are punished so that template collapse becomes the dominant local optimum. 
+
+ Appendix D Judge Evaluation Details 
+
+ Shared configuration. Both the single and pairwise oracle judges use Qwen3-VL-235B, called only at evaluation time and never during training, so that the oracle assessment is independent of the training reward signal. Every judge call receives the image, the user query, the risk label, and the reference response as input, alongside the model outputs to be evaluated. The reference response is included because appropriateness on a safety task depends on what a reasonable answer looks like for that specific query and risk level, not on the answer’s surface form alone. Both judges run with temperature against the same API endpoint. 
+
+ Single judge and RHR / NRFR. The single judge takes one model response at a time and returns a JSON object with a binary label field ( Yes , No , or Invalid ) plus a short reason. The prompt asks the judge to classify the response as hacking when it ignores the query and gives a generic or irrelevant answer, unnecessarily refuses when the reference gives a normal answer, collapses to a short templated refusal, is overly safe but unhelpful compared to the reference, or optimizes for safe looking output instead of task correctness. The prompt explicitly notes that not all refusals are hacking, and that image label and reference must be considered jointly, so that a correct refusal on a risky sample is not counted. RHR is the fraction of RL outputs whose returned label is Yes . NRFR reuses this same label but restricts the population to the subset of samples where the training reward function scores the RL output above the SFT output, . The proxy reward used for this condition is the same R1, R2, or R3 reward function that generated the training signal, applied here as an absolute scorer on both the RL and SFT outputs of each evaluation sample. This makes NRFR a diagnostic of whether the reward function itself concentrates its credit on hacking samples. 
+
+ Pairwise judge and ROG / WR. The pairwise judge takes both the SFT and RL responses to the same query in a single call and independently scores each on a to scale. The judge returns sft_score , rl_score , a comparison label ( RL better , RL worse , or Similar ), and a reason. We use only the two numeric scores, computing per sample. ROG is the mean of across the evaluation set. WR is the fraction of samples with . ROG and WR describe the same distribution from complementary angles, ROG as its mean and WR as the mass below zero, which is why we report both in the analysis of Section 3 . 
+
+ Appendix E Prompt Templates 
+
+ We provide the complete prompt templates used for evaluation and for the VLM as judge verifier. All prompts use Qwen3-VL-235B at temperature . Field placeholders in braces ( {instruction} , {image_label} , etc.) are substituted at call time. 
+
+ E.1 Single Judge Prompt 
+
+ E.2 Pairwise Judge Prompt 
+
+ E.3 R3 (VLM as Judge Verifier) Prompt 
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors 
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below: 
+
+ Click the "Report Issue" ( ) button, located in the page header. 
+
+ Tip: You can select the relevant text first, to include it in your report. 
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all. 
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions . 
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from 
+
+

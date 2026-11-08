@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Orrery.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14211a; --ink:#f1ebdd; --muted:#a7ab9c;
+    --card:rgba(255,255,255,.80); --card-border:rgba(0,0,0,.08);
+    --btn:#2a2927; --btn-ink:#f4f2ee;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;overflow:hidden;-webkit-font-smoothing:antialiased;transition:background .6s}
+  #scene{position:fixed;inset:0;display:block;cursor:grab}
+  .vignette{position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(120% 95% at 45% 50%,rgba(0,0,0,0) 45%,rgba(0,0,0,.42) 100%)}
+
+  /* ---- editorial typography ---- */
+  .masthead{position:fixed;left:40px;top:36px;max-width:300px;z-index:5;pointer-events:none}
+  .kicker{font-size:9.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  .title{font-family:'Instrument Serif',serif;font-style:italic;font-size:78px;line-height:.88;margin:0;font-weight:400;letter-spacing:-.01em}
+  .blurb{font-size:11.5px;line-height:1.6;color:var(--muted);margin-top:16px;max-width:225px}
+
+  .howto{position:fixed;left:40px;bottom:32px;max-width:330px;z-index:5;pointer-events:none}
+  .howto h4{font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted);margin:0 0 7px;font-weight:500}
+  .howto p{font-family:'Instrument Serif',serif;font-style:italic;font-size:17px;line-height:1.3;margin:0}
+  .howto .fine{font-family:Inter,sans-serif;font-style:normal;font-size:10.5px;line-height:1.55;color:var(--muted);margin-top:8px;max-width:310px}
+
+  .live{position:fixed;top:34px;right:40px;z-index:6;font-size:9px;letter-spacing:.22em;color:#5d5a53;display:flex;align-items:center;gap:6px;
+    background:var(--card);border:1px solid var(--card-border);border-radius:20px;padding:4px 10px}
+  .live .dot{width:6px;height:6px;border-radius:50%;background:#2fb36a;box-shadow:0 0 0 3px rgba(47,179,106,.18)}
+
+  /* ---- HUD card ---- */
+  .hud{position:fixed;top:70px;right:40px;width:216px;z-index:6;color:#1c1b19;
+    background:var(--card);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--card-border);border-radius:12px;padding:14px;
+    box-shadow:0 18px 50px -24px rgba(0,0,0,.5);font-size:11px}
+  .hud h3{font-size:8.5px;letter-spacing:.26em;text-transform:uppercase;color:#77736c;margin:0 0 10px;font-weight:500}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+  .btn{background:var(--btn);color:var(--btn-ink);border:none;border-radius:5px;padding:8px 6px;font-size:10px;font-weight:500;cursor:pointer;transition:transform .08s,opacity .15s;font-family:inherit}
+  .btn:hover{opacity:.86}
+  .btn:active{transform:translateY(1px)}
+  .btn.on{background:#9a6a1c}
+
+  .stats{display:flex;justify-content:space-between;margin:11px 1px 0;color:#77736c;font-size:9.5px}
+  .stats b{color:#1c1b19;font-weight:600;font-variant-numeric:tabular-nums;margin-left:3px}
+
+  .sect{font-size:8.5px;letter-spacing:.24em;text-transform:uppercase;color:#77736c;margin:14px 0 8px;border-top:1px solid var(--card-border);padding-top:12px;font-weight:500}
+  .flav{display:flex;gap:6px}
+  .chip{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;padding:7px 0 6px;border-radius:6px;border:1px solid var(--card-border);background:rgba(255,255,255,.6);transition:border-color .15s}
+  .chip.on{border-color:#1c1b19;box-shadow:inset 0 0 0 1px #1c1b19}
+  .chip .sw{width:13px;height:13px;border-radius:50%;box-shadow:inset 0 -2px 3px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2)}
+  .chip span{font-size:8.5px;color:#1c1b19}
+
+  .slider{margin:10px 0}
+  .slider label{display:flex;justify-content:space-between;font-size:9.5px;color:#77736c;margin-bottom:4px}
+  .slider input{width:100%;accent-color:#2a2927;height:3px}
+
+  .foot{display:flex;gap:5px;margin-top:13px;border-top:1px solid var(--card-border);padding-top:12px}
+  .foot .btn{flex:1;background:rgba(255,255,255,.7);color:#1c1b19;border:1px solid var(--card-border)}
+  .foot .btn:hover{background:#fff}
+
+  /* ---- planet card ---- */
+  .pcard{position:fixed;left:0;top:0;z-index:7;width:230px;pointer-events:none;color:#1c1b19;
+    background:var(--card);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--card-border);border-radius:12px;padding:14px 16px 13px;
+    box-shadow:0 18px 50px -20px rgba(0,0,0,.55);opacity:0;transform:translateY(6px);transition:opacity .35s,transform .35s}
+  .pcard.show{opacity:1;transform:none}
+  .pcard .k{font-size:8.5px;letter-spacing:.26em;text-transform:uppercase;color:#77736c}
+  .pcard h2{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;font-size:38px;line-height:1;margin:6px 0 10px}
+  .pcard .row{display:flex;justify-content:space-between;font-size:9.5px;color:#77736c;padding:4px 0;border-top:1px solid var(--card-border)}
+  .pcard .row b{color:#1c1b19;font-weight:600;font-variant-numeric:tabular-nums}
+  .pcard p{font-family:'Instrument Serif',serif;font-style:italic;font-size:15px;line-height:1.3;margin:9px 0 0}
+  .pcard .esc{font-size:8.5px;letter-spacing:.2em;color:#9a968e;margin-top:10px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="vignette"></div>
+
+<div class="masthead">
+  <div class="kicker">Material Studies</div>
+  <h1 class="title">The<br>Orrery.</h1>
+  <p class="blurb">Eight worlds on brass arms around a sun of frosted amber glass. One crank, a walnut drum full of wheels, and every orbit cut into the teeth.</p>
+</div>
+
+<div class="howto">
+  <h4>How to play</h4>
+  <p>Turn the crank. Find the Earth. Wait for the eclipse.</p>
+  <p class="fine">Drag the crank handle to wind the year · tap a planet to visit it, Esc to return · drag to orbit · scroll to zoom.</p>
+</div>
+
+<div class="live"><span class="dot"></span>WEBGL · LIVE</div>
+
+<div class="hud">
+  <h3>The Mechanism</h3>
+  <div class="grid2">
+    <button class="btn" id="b-crank">Crank</button>
+    <button class="btn" id="b-warp">Time warp</button>
+    <button class="btn" id="b-eclipse">Eclipse</button>
+    <button class="btn" id="b-align">Align</button>
+  </div>
+  <div class="stats">
+    <div>Days<b id="s-days">0</b></div>
+    <div>Years<b id="s-years">0.0</b></div>
+    <div>Orbits<b id="s-orbits">0</b></div>
+  </div>
+
+  <div class="sect">Finish</div>
+  <div class="flav" id="finish">
+    <div class="chip on" data-f="brass"><div class="sw" style="background:linear-gradient(135deg,#f2cf7a,#a8782a)"></div><span>Brass</span></div>
+    <div class="chip" data-f="silver"><div class="sw" style="background:linear-gradient(135deg,#f4f4f2,#9a9c9e)"></div><span>Silver</span></div>
+    <div class="chip" data-f="rose"><div class="sw" style="background:linear-gradient(135deg,#f6c7ad,#b5705a)"></div><span>Rose gold</span></div>
+  </div>
+
+  <div class="slider"><label>Speed <span id="v-speed">30 d/s</span></label><input id="speed" type="range" min="0" max="1" step="0.01" value="0.45"></div>
+  <div class="slider"><label>Scale <span id="v-scale">1.0×</span></label><input id="scale" type="range" min="0" max="1" step="0.01" value="0.4"></div>
+  <div class="slider"><label>Lamp <span id="v-lamp">On</span></label><input id="lamp" type="range" min="0" max="1" step="0.01" value="1"></div>
+
+  <div class="foot">
+    <button class="btn" id="b-reset">Reset</button>
+    <button class="btn" id="b-pause">Pause</button>
+    <button class="btn" id="b-view">Reset view</button>
+  </div>
+</div>
+
+<div class="pcard" id="pcard">
+  <div class="k" id="pc-k">Planet</div>
+  <h2 id="pc-name">Earth</h2>
+  <div class="row">Period<b id="pc-period">365.25 d</b></div>
+  <div class="row">Gear ratio<b id="pc-ratio">1 : 1</b></div>
+  <p id="pc-fact"></p>
+  <div class="esc">Esc to return</div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* =========================================================
+   0. constants & helpers
+   ========================================================= */
+const DECK = .85;               // top of the walnut drum
+const DRUM_R = 2.9;             // drum radius
+const PY = 2.5;                 // plane of the planets / sun centre
+const RING_R0 = 5.8, RING_R1 = 6.25;   // ecliptic ring
+const DAYS_PER_TURN = 7;        // one crank turn winds a week
+
+let seed = 11;
+const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const rr = (a, b) => a + (b - a) * rnd();
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const hash = (x, y) => { const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return h - Math.floor(h); };
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+const fbm = (x, y, o = 4) => { let s = 0, a = .5, f = 1; for (let i = 0; i < o; i++) { s += a * vnoise(x * f, y * f); f *= 2; a *= .5; } return s; };
+/* world angle convention: CCW seen from above, (cos θ, 0, -sin θ) */
+const polar = (r, th, y = 0) => new THREE.Vector3(r * Math.cos(th), y, -r * Math.sin(th));
+
+function canvasTex(w, h, draw, srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  t.userData.redraw = () => { draw(c.getContext('2d'), w, h); t.needsUpdate = true; };
+  return t;
+}
+/* per-pixel painter: f(u,v) -> [r,g,b] (0..255) */
+function pixelTex(w, h, f) {
+  return canvasTex(w, h, (g) => {
+    const img = g.createImageData(w, h), d = img.data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const c = f(x / w, y / h), k = (y * w + x) * 4;
+      d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+  });
+}
+const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const hex3 = h => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+
+/* =========================================================
+   1. renderer / scene / camera / lights
+   ========================================================= */
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const BG_DAY = new THREE.Color(0x14211a), BG_NIGHT = new THREE.Color(0x05080a);
+scene.background = BG_DAY.clone();
+scene.fog = new THREE.Fog(BG_DAY.clone(), 28, 60);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
+
+const camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, .1, 200);
+const VIEW = { target: new THREE.Vector3(.75, 1.25, .5), pos: new THREE.Vector3() };
+VIEW.pos.setFromSphericalCoords(21.5, THREE.MathUtils.degToRad(56), THREE.MathUtils.degToRad(16)).add(VIEW.target);
+camera.position.copy(VIEW.pos);
+const controls = new OrbitControls(camera, canvas);
+controls.target.copy(VIEW.target);
+controls.enableDamping = true; controls.dampingFactor = .07;
+controls.minDistance = 4; controls.maxDistance = 45; controls.maxPolarAngle = 1.45;
+controls.update();
+
+/* the desk lamp: a warm spot from upper left */
+const hemi = new THREE.HemisphereLight(0xfff3dc, 0x1a2a20, .35);
+scene.add(hemi);
+const lamp = new THREE.SpotLight(0xffe2b8, 4.6, 0, .62, 1, 0);
+lamp.position.set(-4.5, 18, 5);
+lamp.castShadow = true;
+lamp.shadow.mapSize.set(2048, 2048);
+lamp.shadow.camera.near = 6; lamp.shadow.camera.far = 35;
+lamp.shadow.bias = -.0004; lamp.shadow.normalBias = .03;
+scene.add(lamp, lamp.target);
+const fill = new THREE.DirectionalLight(0xfff0dc, .7);     // soft front fill so vertical brass reads
+fill.position.set(4, 5, 14); scene.add(fill);
+
+/* =========================================================
+   2. materials
+   ========================================================= */
+const FINISHES = {
+  brass:  { c: 0xd9ac55, d: 0xb88a3c, r: .26 },
+  silver: { c: 0xe3e4e6, d: 0xbfc1c4, r: .2 },
+  rose:   { c: 0xf2bda6, d: 0xd09580, r: .24 }
+};
+const brass = new THREE.MeshPhysicalMaterial({ color: 0xd9ac55, metalness: 1, roughness: .26, clearcoat: .3, clearcoatRoughness: .2, envMapIntensity: 1.6 });
+const brassDark = new THREE.MeshPhysicalMaterial({ color: 0xb88a3c, metalness: 1, roughness: .34, envMapIntensity: 1.4 });
+const steel = new THREE.MeshStandardMaterial({ color: 0x8e9196, metalness: 1, roughness: .3 });
+
+const walnutTex = pixelTex(512, 1024, (u, v) => {
+  const w = fbm(u * 2, v * 3, 3);
+  const g = Math.sin((u * 38 + w * .9) * Math.PI) * .5 + .5;
+  const fine = vnoise(u * 260, v * 6), streak = fbm(u * 9, v * .8, 3);
+  const pores = vnoise(u * 700, v * 220) > .9 ? .85 : 1;
+  const t = clamp(.15 + .35 * Math.pow(g, 4) + .3 * fine + .35 * (streak - .3), 0, 1);
+  return mix3(hex3(0x2a150b), hex3(0x5e3720), t).map(x => x * pores);
+});
+walnutTex.wrapS = walnutTex.wrapT = THREE.RepeatWrapping;
+const walnut = new THREE.MeshPhysicalMaterial({ map: walnutTex, roughness: .42, clearcoat: .8, clearcoatRoughness: .18 });
+const walnutTop = new THREE.MeshPhysicalMaterial({ map: walnutTex, roughness: .45, clearcoat: .7, clearcoatRoughness: .2 });
+
+const velvetTex = pixelTex(512, 512, (u, v) => {
+  const n = fbm(u * 6, v * 6, 4), fine = hash(Math.floor(u * 512), Math.floor(v * 512));
+  const t = .55 + .35 * n + .1 * fine;
+  return mix3(hex3(0x081610), hex3(0x1a3a28), t);
+});
+velvetTex.wrapS = velvetTex.wrapT = THREE.RepeatWrapping; velvetTex.repeat.set(10, 10);
+const velvet = new THREE.MeshPhysicalMaterial({ map: velvetTex, roughness: .95, sheen: 1, sheenColor: new THREE.Color(0x4f8f6a), sheenRoughness: .4 });
+
+/* =========================================================
+   3. table cloth + walnut drum
+   ========================================================= */
+const cloth = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), velvet);
+cloth.rotation.x = -Math.PI / 2; cloth.receiveShadow = true;
+scene.add(cloth);
+
+const orrery = new THREE.Group();
+scene.add(orrery);
+
+const drum = (() => {
+  const g = new THREE.Group();
+  /* turned profile: plinth ogee, body, top lip */
+  const P = [[0, 0], [3.22, 0], [3.24, .03], [3.24, .07], [3.16, .1], [3.12, .14], [3.04, .16], [2.96, .19], [2.92, .22],
+             [2.9, .26], [2.9, .66], [2.93, .69], [2.98, .72], [3.02, .76], [3.04, .8], [3.02, .84], [2.98, DECK]];
+  const prof = P.map(([x, y]) => new THREE.Vector2(x, y));
+  const lg = new THREE.LatheGeometry(prof, 128);
+  const uv = lg.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 5, uv.getY(i) * .55);
+  const body = new THREE.Mesh(lg, walnut); body.castShadow = body.receiveShadow = true; g.add(body);
+  const top = new THREE.Mesh(new THREE.CircleGeometry(2.98, 128), walnutTop);
+  top.rotation.x = -Math.PI / 2; top.position.y = DECK; top.receiveShadow = true; g.add(top);
+  /* brass inlay bands */
+  for (const [y, r, t] of [[.245, 2.905, .018], [.665, 2.905, .018]]) {
+    const b = new THREE.Mesh(new THREE.TorusGeometry(r, t, 10, 160), brass); b.rotation.x = Math.PI / 2; b.position.y = y; g.add(b);
+  }
+  const rim = new THREE.Mesh(new THREE.RingGeometry(2.72, 2.8, 160), brass); rim.rotation.x = -Math.PI / 2; rim.position.y = DECK + .002; g.add(rim);
+  /* small turned brass feet */
+  for (let i = 0; i < 6; i++) {
+    const f = new THREE.Mesh(new THREE.SphereGeometry(.09, 16, 10), brassDark); f.scale.y = .5;
+    f.position.copy(polar(3.05, i / 6 * Math.PI * 2 + .3, .02)); g.add(f);
+  }
+  return g;
+})();
+orrery.add(drum);
+
+/* =========================================================
+   4. involute gears (real meshing)
+   ========================================================= */
+const MOD = .04;
+function gearGeometry(z, m, { thick = .05, spokes = 0, bore = .03 } = {}) {
+  const r = m * z / 2, ra = r + m, rf = r - 1.25 * m, rb = r * Math.cos(THREE.MathUtils.degToRad(20));
+  const inv = a => Math.tan(a) - a;
+  const invP = inv(Math.acos(rb / r));
+  const half = rho => Math.PI / (2 * z) + invP - inv(Math.acos(Math.min(1, rb / rho)));
+  const pts = [], step = Math.PI * 2 / z;
+  const r0 = Math.max(rf, rb);
+  for (let k = 0; k < z; k++) {
+    const c = k * step, hb = half(r0);
+    pts.push([rf, c - hb - .12 * step]);
+    if (rf < rb) pts.push([rb, c - hb]);
+    for (let i = 0; i <= 4; i++) { const rho = r0 + (ra - r0) * i / 4; pts.push([rho, c - half(rho)]); }
+    for (let i = 4; i >= 0; i--) { const rho = r0 + (ra - r0) * i / 4; pts.push([rho, c + half(rho)]); }
+    if (rf < rb) pts.push([rb, c + hb]);
+    pts.push([rf, c + hb + .12 * step]);
+    pts.push([rf, c + step / 2]);
+  }
+  const shape = new THREE.Shape(pts.map(([rho, a]) => new THREE.Vector2(rho * Math.cos(a), rho * Math.sin(a))));
+  const holes = [];
+  if (spokes) {
+    const ro = rf - Math.max(.05, 1.8 * m), rh = Math.max(bore + .07, r * .24), sw = Math.max(.05, r * .09);
+    for (let s = 0; s < spokes; s++) {
+      const a0 = s / spokes * Math.PI * 2, a1 = (s + 1) / spokes * Math.PI * 2;
+      const h = new THREE.Path();
+      h.absarc(0, 0, ro, a0 + sw / 2 / ro, a1 - sw / 2 / ro, false);
+      h.absarc(0, 0, rh, a1 - sw / 2 / rh, a0 + sw / 2 / rh, true);
+      holes.push(h);
+    }
+  }
+  const bh = new THREE.Path(); bh.absarc(0, 0, bore, 0, Math.PI * 2, true); holes.push(bh);
+  shape.holes = holes;
+  const g = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: true, bevelThickness: .006, bevelSize: .006, bevelSegments: 1, curveSegments: 24 });
+  g.rotateX(-Math.PI / 2);
+  return g;
+}
+
+/* gear train: every wheel's angle is derived from its driver through tooth ratios */
+const gears = [];
+function addGear(def) {
+  const { z, m = MOD, y, parent = null, dir = 0, coax = false, spokes = 0, thick = .05, mat = brass, bore = .03 } = def;
+  const r = m * z / 2;
+  const mesh = new THREE.Mesh(gearGeometry(z, m, { thick, spokes, bore }), mat);
+  mesh.castShadow = mesh.receiveShadow = true;
+  let pos;
+  if (!parent) pos = def.pos.clone();
+  else if (coax) pos = parent.pos.clone();
+  else pos = parent.pos.clone().add(polar(parent.r + r, dir));
+  pos.y = y;
+  mesh.position.copy(pos);
+  const gear = { z, m, r, pos, parent, dir, coax, mesh, rot: 0 };
+  gears.push(gear); orrery.add(mesh);
+  return gear;
+}
+function updateGears(driverAngle) {
+  for (const g of gears) {
+    if (!g.parent) g.rot = driverAngle;
+    else if (g.coax) g.rot = g.parent.rot;
+    else { const p = g.parent; g.rot = -(p.z / g.z) * (p.rot - g.dir) + g.dir + Math.PI + Math.PI / g.z; }
+    g.mesh.rotation.y = g.rot;
+  }
+}
+
+/* posts & screw caps under every arbor */
+function arbor(pos, yTop, r = .035) {
+  const h = yTop - DECK;
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, h, 16), brassDark);
+  post.position.set(pos.x, DECK + h / 2, pos.z); post.castShadow = true; orrery.add(post);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 1.35, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), steel);
+  cap.position.set(pos.x, yTop, pos.z); orrery.add(cap);
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(r * 2.4, r * 2.6, .025, 20), brass);
+  foot.position.set(pos.x, DECK + .012, pos.z); orrery.add(foot);
+}
+
+const CRANK_DIR = -.55;                      // drum side where the crank sits (front right)
+const LA = DECK + .07, LB = DECK + .17;       // two gear layers
+const train = (() => {
+  const great = addGear({ z: 60, y: LA, pos: new THREE.Vector3(), spokes: 6, bore: .2, thick: .055 });
+  const pinion = addGear({ z: 14, y: LA, parent: null, pos: polar((60 + 14) * MOD / 2, CRANK_DIR), thick: .055 });
+  /* great wheel is driven by the crank pinion */
+  great.parent = pinion; great.dir = CRANK_DIR + Math.PI; gears.push(gears.shift());   // keep update order: pinion first
+  const idlerA = addGear({ z: 30, y: LA, parent: great, dir: CRANK_DIR + 2.15, spokes: 5 });
+  const pinA = addGear({ z: 12, y: LB, parent: idlerA, coax: true });
+  const wheelA = addGear({ z: 36, y: LB, parent: pinA, dir: CRANK_DIR + 2.15 + 2.2, spokes: 5 });
+  const idlerB = addGear({ z: 24, y: LA, parent: great, dir: CRANK_DIR - 2.0, spokes: 4 });
+  const pinB = addGear({ z: 40, y: LB, parent: idlerB, coax: true, spokes: 5 });
+  const wheelB = addGear({ z: 16, y: LB, parent: pinB, dir: CRANK_DIR - 2.0 - 1.6 });
+  for (const g of [pinion, idlerA, wheelA, idlerB, wheelB]) arbor(g.pos, (g === idlerA || g === idlerB ? LB : g.pos.y) + .075);
+  return { great, pinion };
+})();
+
+/* =========================================================
+   5. crank on the drum side
+   ========================================================= */
+const crank = (() => {
+  const g = new THREE.Group();
+  const base = polar(DRUM_R, CRANK_DIR, .46);
+  g.position.copy(base); g.rotation.y = CRANK_DIR; g.scale.setScalar(1.35);   // local +x points out of the drum
+  const boss = new THREE.Mesh(new THREE.CylinderGeometry(.17, .2, .08, 32), brass); boss.rotation.z = Math.PI / 2; boss.position.x = .02; g.add(boss);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .42, 16), brass); shaft.rotation.z = Math.PI / 2; shaft.position.x = .22; g.add(shaft);
+  const spin = new THREE.Group(); spin.position.x = .42; g.add(spin);
+  const hubM = new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, .07, 24), brass); hubM.rotation.z = Math.PI / 2; spin.add(hubM);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(.05, .5, .1), brass); arm.position.y = .25; spin.add(arm);
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, .07, 24), brass); tip.rotation.z = Math.PI / 2; tip.position.y = .5; spin.add(tip);
+  const knobP = [[0, 0], [.035, 0], [.035, .03], [.055, .06], [.07, .14], [.062, .22], [.045, .26], [.05, .29], [0, .3]].map(([x, y]) => new THREE.Vector2(x, y));
+  const knob = new THREE.Mesh(new THREE.LatheGeometry(knobP, 24), walnut); knob.rotation.z = -Math.PI / 2; knob.position.set(.03, .5, 0); spin.add(knob);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  orrery.add(g);
+  return { group: g, spin, knob };
+})();
+
+/* =========================================================
+   6. planets, arms, central column, sun
+   ========================================================= */
+const earthTex = pixelTex(512, 256, (u, v) => {
+  const lat = Math.abs(v - .5) * 2;
+  const n = fbm(u * 7 + 3, v * 5, 5) + .18 * Math.cos(u * Math.PI * 2 * 2);
+  let c = mix3(hex3(0x1f5f7a), hex3(0x2f8a9a), fbm(u * 20, v * 12, 2));
+  if (n > .56) c = mix3(hex3(0x5c8a46), hex3(0xb9a46a), sstep(.6, .75, n) * (1 - lat));
+  if (lat > .84 + .06 * fbm(u * 10, v, 2)) c = [236, 242, 246];
+  const cl = fbm(u * 12 + 9, v * 14, 4);
+  return mix3(c, [250, 250, 250], sstep(.62, .8, cl) * .8);
+});
+const bands = (cols, turb, spot) => pixelTex(512, 256, (u, v) => {
+  const w = v + turb * (fbm(u * 8, v * 30, 3) - .5);
+  const t = (Math.sin(w * Math.PI * 14) * .5 + .5) * .7 + .3 * fbm(u * 3, w * 40, 2);
+  let c = mix3(hex3(cols[0]), hex3(cols[1]), t);
+  if (spot) { const d = Math.hypot((u - .3) * 3, (v - .6) * 6); c = mix3(c, hex3(0xc0603e), sstep(.3, .12, d) * .9); }
+  return c;
+});
+const mottled = (a, b, f, craters = 0) => pixelTex(256, 128, (u, v) => {
+  let t = fbm(u * f, v * f * .5, 5);
+  if (craters) t -= .25 * sstep(.72, .8, vnoise(u * 40, v * 20));
+  return mix3(hex3(a), hex3(b), clamp(t, 0, 1));
+});
+
+const PLANETS = [
+  { name: 'Mercury', P: 87.969,   orbit: 1.05, R: .1, mat: { map: mottled(0x55575a, 0xa7a8a6, 10, 1), metalness: .55, roughness: .45 },
+    fact: 'A year here is shorter than its own day: it orbits twice for every three turns on its axis.' },
+  { name: 'Venus',   P: 224.701,  orbit: 1.5,  R: .17,  mat: { map: bands([0xe9d7a8, 0xf6ead0], 1.2), roughness: .7 },
+    fact: 'It spins backwards, so the Sun rises in the west and takes about 117 Earth days to set.' },
+  { name: 'Earth',   P: 365.256,  orbit: 2.0,  R: .18,  mat: { map: earthTex, roughness: .55 }, tilt: .41,
+    fact: 'The Moon sits 400 times nearer than the Sun and is 400 times smaller, which is why eclipses fit so neatly.' },
+  { name: 'Mars',    P: 686.98,   orbit: 2.5,  R: .13,  mat: { map: mottled(0x8e3a22, 0xc8673e, 6), roughness: .8 },
+    fact: 'Olympus Mons is nearly three times the height of Everest and as wide as France.' },
+  { name: 'Jupiter', P: 4332.59,  orbit: 3.2,  R: .4,  mat: { map: bands([0xa87650, 0xf3e4c8], .22, true), roughness: .6 },
+    fact: 'Its Great Red Spot is a storm wider than the Earth that has been raging for at least 350 years.' },
+  { name: 'Saturn',  P: 10759.22, orbit: 4.0,  R: .33,  mat: { map: bands([0xcfb07a, 0xf0dfb4], .2), roughness: .6 }, ring: true, tilt: .47,
+    fact: 'The rings are 280,000 km across yet mostly less than a hundred metres thick.' },
+  { name: 'Uranus',  P: 30688.5,  orbit: 4.7,  R: .24,  mat: { map: bands([0x8fd3d6, 0xa9e3e2], .1), roughness: .5 }, tilt: 1.7,
+    fact: 'Knocked on its side, it rolls around the Sun: each pole gets 42 years of daylight.' },
+  { name: 'Neptune', P: 60182,    orbit: 5.3,  R: .23,  mat: { map: bands([0x24479e, 0x3e66c4], .3), roughness: .5 },
+    fact: 'It has completed only one orbit since it was discovered in 1846.' }
+];
+const EARTH = 2, MOON_P = 27.3217, MOON_D = .34;
+
+const column = new THREE.Group(); orrery.add(column);
+const sunGroup = new THREE.Group(); sunGroup.position.y = PY; orrery.add(sunGroup);
+const armY = i => DECK + .32 + (7 - i) * .085;   // outer planets on the lowest arms
+
+PLANETS.forEach((p, i) => {
+  const y = armY(i);
+  /* collar on the nested tubes */
+  const cr = .1 + (7 - i) * .012;
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr, .05, 32), brass); collar.position.y = y; collar.castShadow = true; column.add(collar);
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(cr * .82, cr * .82, y - DECK, 24), brassDark); tube.position.y = (y + DECK) / 2; column.add(tube);
+
+  const arm = new THREE.Group(); arm.position.y = y; orrery.add(arm);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(.018, .018, p.orbit + .25, 10), brass);
+  rod.rotation.z = Math.PI / 2; rod.position.x = (p.orbit - .25) / 2; arm.add(rod);
+  const cw = new THREE.Mesh(new THREE.SphereGeometry(.045, 16, 10), brass); cw.position.x = -.25; arm.add(cw);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.014, .02, PY - y, 10), brass); post.position.set(p.orbit, (PY - y) / 2, 0); arm.add(post);
+  const elbow = new THREE.Mesh(new THREE.SphereGeometry(.03, 12, 8), brass); elbow.position.x = p.orbit; arm.add(elbow);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(.045, .02, .05, 16), brass); cup.position.set(p.orbit, PY - y - p.R * .9, 0); arm.add(cup);
+  arm.traverse(o => { if (o.isMesh) o.castShadow = true; });
+
+  const holder = new THREE.Group(); holder.position.set(p.orbit, PY - y, 0); arm.add(holder);
+  const body = new THREE.Group(); holder.add(body);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), new THREE.MeshStandardMaterial(p.mat));
+  ball.scale.setScalar(p.R); ball.rotation.order = 'ZYX'; ball.rotation.z = p.tilt || 0; ball.castShadow = true; ball.userData.planet = i;
+  body.add(ball);
+  if (p.ring) {
+    const rg = new THREE.RingGeometry(1.25, 2.25, 96, 1), uv = rg.attributes.uv, pos = rg.attributes.position;
+    for (let k = 0; k < uv.count; k++) { const rad = Math.hypot(pos.getX(k), pos.getY(k)); uv.setXY(k, (rad - 1.25), .5); }
+    const ringTex = canvasTex(256, 4, (g, w) => {
+      for (let x = 0; x < w; x++) { const t = x / w, a = (.35 + .6 * vnoise(t * 40, 1)) * sstep(0, .06, t) * sstep(1, .9, t) * (t > .62 && t < .67 ? .15 : 1);
+        g.fillStyle = `rgba(${220 - t * 40},${195 - t * 40},${150 - t * 30},${a})`; g.fillRect(x, 0, 1, 4); }
+    });
+    const ring = new THREE.Mesh(rg, new THREE.MeshStandardMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide, roughness: .7, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.userData.planet = i;
+    const tilt = new THREE.Group(); tilt.rotation.z = p.tilt; tilt.add(ring); tilt.scale.setScalar(p.R); body.add(tilt);
+    p.ringMesh = ring;
+  }
+  p.arm = arm; p.body = body; p.ball = ball; p.phase = 0;
+});
+
+/* the Moon rides a little arm on Earth's post */
+const moon = (() => {
+  const E = PLANETS[EARTH];
+  const g = new THREE.Group(); g.position.set(E.orbit, PY - armY(EARTH) - .2, 0); E.arm.add(g);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, MOON_D, 8), brass); rod.rotation.z = Math.PI / 2; rod.position.x = MOON_D / 2; g.add(rod);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.007, .007, .2, 8), brass); post.position.set(MOON_D, .1, 0); g.add(post);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), new THREE.MeshStandardMaterial({ map: mottled(0x8d8c88, 0xd8d6d0, 9, 1), roughness: .9 }));
+  ball.scale.setScalar(.045); ball.position.set(MOON_D, .2, 0); ball.castShadow = true; g.add(ball);
+  return { pivot: g, ball, rod, post };
+})();
+
+/* top of the column + frosted amber sun */
+const sun = (() => {
+  const topY = armY(0) + .03;
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(.03, .04, PY - topY, 12), brass); rod.position.y = (PY + topY) / 2; column.add(rod);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(.13, .05, .1, 24), brass); cup.position.y = PY - .47; column.add(cup);
+  const core = new THREE.Mesh(new THREE.SphereGeometry(.32, 48, 32), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, .78, .4).multiplyScalar(3) }));
+  sunGroup.add(core);
+  const shellMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffbf6a, transmission: 1, thickness: .9, roughness: .36, ior: 1.45,
+    attenuationColor: new THREE.Color(0xff9a30), attenuationDistance: 1.6,
+    emissive: 0xff7a1a, emissiveIntensity: .22, clearcoat: 1, clearcoatRoughness: .3
+  });
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(.48, 64, 48), shellMat);
+  sunGroup.add(shell);
+  const light = new THREE.PointLight(0xffb866, 2.5, 0, 1.2); sunGroup.add(light);
+  const glowTex = canvasTex(128, 128, (g, w, h) => { const r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    r.addColorStop(0, 'rgba(255,190,110,1)'); r.addColorStop(.3, 'rgba(255,160,70,.35)'); r.addColorStop(1, 'rgba(255,140,50,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: .45 }));
+  glow.scale.setScalar(2.4); sunGroup.add(glow);
+  return { shell, shellMat, core, light, glow };
+})();
+
+/* =========================================================
+   7. ecliptic ring on four legs, engraved with zodiac
+   ========================================================= */
+const ZODIAC = [['♈', 'Aries'], ['♉', 'Taurus'], ['♊', 'Gemini'], ['♋', 'Cancer'], ['♌', 'Leo'], ['♍', 'Virgo'],
+                ['♎', 'Libra'], ['♏', 'Scorpio'], ['♐', 'Sagittarius'], ['♑', 'Capricorn'], ['♒', 'Aquarius'], ['♓', 'Pisces']];
+const ringTex = canvasTex(4096, 256, (g, w, h) => {
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgba(60,40,10,.9)'; g.strokeStyle = 'rgba(60,40,10,.9)';
+  /* v=0 at inner edge, v=1 at outer edge (canvas y flipped) */
+  const Y = v => h * (1 - v);
+  g.lineWidth = 3;
+  for (const v of [.06, .26, .74, .94]) { g.beginPath(); g.moveTo(0, Y(v)); g.lineTo(w, Y(v)); g.stroke(); }
+  for (let d = 0; d < 360; d++) {
+    const x = d / 360 * w, long = d % 10 === 0, mid = d % 5 === 0;
+    g.lineWidth = long ? 3 : 1.6;
+    g.beginPath(); g.moveTo(x, Y(.06)); g.lineTo(x, Y(long ? .24 : mid ? .19 : .14)); g.stroke();
+  }
+  for (let s = 0; s < 12; s++) {
+    const x0 = s / 12 * w; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(x0, Y(.26)); g.lineTo(x0, Y(.94)); g.stroke();
+    const cx = x0 + w / 24;
+    g.save(); g.translate(cx, Y(.6)); g.scale(1, -1);       // letter tops face the sun
+    g.textBaseline = 'middle'; g.textAlign = 'left';
+    const name = ZODIAC[s][1];
+    g.font = 'italic 70px "Instrument Serif", Georgia, serif'; const nw = g.measureText(name).width;
+    g.font = '62px "DejaVu Sans", "Segoe UI Symbol", "Apple Symbols", serif'; const gw = g.measureText(ZODIAC[s][0]).width;
+    const tx = -(gw + 22 + nw) / 2;
+    g.fillText(ZODIAC[s][0] + '︎', tx, 0);
+    g.font = 'italic 70px "Instrument Serif", Georgia, serif';
+    g.fillText(name, tx + gw + 22, 6);
+    g.restore();
+  }
+});
+const ecliptic = (() => {
+  const g = new THREE.Group(); g.position.y = PY - .12;
+  const rg = new THREE.RingGeometry(RING_R0, RING_R1, 256, 1);
+  const uv = rg.attributes.uv, pos = rg.attributes.position;
+  for (let k = 0; k < uv.count; k++) {
+    const x = pos.getX(k), y = pos.getY(k), a = Math.atan2(y, x);
+    uv.setXY(k, ((a / (Math.PI * 2)) + 1) % 1, (Math.hypot(x, y) - RING_R0) / (RING_R1 - RING_R0));
+  }
+  /* fix seam: duplicate-free ring has a wrap triangle; nudge u on the seam column */
+  for (let k = 0; k < uv.count; k++) if (Math.abs(pos.getY(k)) < 1e-6 && pos.getX(k) > 0) uv.setX(k, (k % 257) === 0 ? 0 : 1);
+  const faceMat = new THREE.MeshPhysicalMaterial({ color: 0xd9ac55, metalness: 1, roughness: .3, map: ringTex, bumpMap: ringTex, bumpScale: -1.2, clearcoat: .3 });
+  faceMat.userData.isFace = true;
+  const face = new THREE.Mesh(rg, faceMat); face.rotation.x = -Math.PI / 2; face.position.y = .025; face.receiveShadow = true; g.add(face);
+  const under = new THREE.Mesh(new THREE.RingGeometry(RING_R0, RING_R1, 256, 1), brassDark); under.rotation.x = Math.PI / 2; under.position.y = -.025; g.add(under);
+  for (const r of [RING_R0, RING_R1]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(r, r, .05, 256, 1, true), brass);
+    band.material = brass; g.add(band);
+    const bead = new THREE.Mesh(new THREE.TorusGeometry(r, .022, 8, 256), brass); bead.rotation.x = Math.PI / 2; bead.position.y = .025; g.add(bead);
+  }
+  /* turned legs */
+  const legP = [[0, 0], [.16, 0], [.17, .03], [.12, .07], [.07, .12], [.06, .3], [.09, .38], [.06, .46], [.045, .9],
+                [.05, 1.4], [.075, 1.5], [.05, 1.6], [.04, 2.0], [.06, 2.08], [.09, 2.13], [.09, 2.2], [0, 2.2]].map(([x, y]) => new THREE.Vector2(x, y));
+  const legH = PY - .12 - .025;
+  const legGeo = new THREE.LatheGeometry(legP, 24); legGeo.scale(1.45, legH / 2.2, 1.45);
+  for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Mesh(legGeo, brass);
+    leg.position.copy(polar((RING_R0 + RING_R1) / 2, Math.PI / 4 + i * Math.PI / 2, -(PY - .12)));
+    leg.castShadow = true; g.add(leg);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  orrery.add(g);
+  return g;
+})();
+
+/* soft contact shadow under the drum (ambient occlusion) */
+const aoTex = canvasTex(256, 256, (g, w, h) => { const r = g.createRadialGradient(w / 2, h / 2, w * .3, w / 2, h / 2, w / 2);
+  r.addColorStop(0, 'rgba(0,0,0,.75)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+const ao = new THREE.Mesh(new THREE.PlaneGeometry(8.4, 8.4), new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false }));
+ao.rotation.x = -Math.PI / 2; ao.position.y = .004; scene.add(ao);
+
+/* =========================================================
+   8. eclipse umbra: a thin shell on Earth that darkens where the Moon blocks the Sun
+   ========================================================= */
+const umbraMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false,
+  uniforms: { uSun: { value: new THREE.Vector3() }, uMoon: { value: new THREE.Vector3() }, uMoonR: { value: .045 } },
+  vertexShader: `varying vec3 vW; varying vec3 vN;
+    void main(){ vec4 w = modelMatrix * vec4(position,1.); vW = w.xyz; vN = normalize(mat3(modelMatrix) * normal);
+      gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform vec3 uSun; uniform vec3 uMoon; uniform float uMoonR; varying vec3 vW; varying vec3 vN;
+    void main(){
+      vec3 L = normalize(uSun - vW); vec3 m = uMoon - vW; float t = dot(m, L);
+      float d = length(m - L * t);
+      float lit = smoothstep(-.1, .25, dot(normalize(vN), L));
+      float pen = smoothstep(uMoonR * 2.6, uMoonR * .9, d), core = smoothstep(uMoonR * 1.1, uMoonR * .6, d);
+      float a = (pen * .55 + core * .4) * step(0., t) * lit;
+      gl_FragColor = vec4(.03, .015, .0, a);
+    }`
+});
+const umbra = new THREE.Mesh(new THREE.SphereGeometry(1.004, 48, 32), umbraMat);
+umbra.raycast = () => {};
+PLANETS[EARTH].ball.add(umbra);
+
+/* =========================================================
+   9. pose: everything is a function of `days`
+   ========================================================= */
+const PHASE0 = [0.4, 2.2, 3.7, 5.2, 1.3, 2.9, 4.6, 0.9], MOON0 = 1.2;
+const state = { days: 0, scale: 1, speed: 30, warp: false, lamp: 1, finish: 'brass', paused: false, focus: -1 };
+let moonPhase = MOON0;
+PLANETS.forEach((p, i) => p.phase = PHASE0[i]);
+const planetAngle = (p, d = state.days) => p.phase + d / p.P * Math.PI * 2;
+const moonAngle = (d = state.days) => moonPhase + d / MOON_P * Math.PI * 2;
+const _v = new THREE.Vector3();
+
+function pose() {
+  const d = state.days, sc = state.scale;
+  for (const p of PLANETS) {
+    const th = planetAngle(p, d);
+    p.arm.rotation.y = th;
+    p.body.rotation.y = -th;                    // axial tilt stays fixed in space
+    p.ball.rotation.y = d * .6;                 // slow self-spin about the tilted axis
+    p.body.scale.setScalar(sc);
+  }
+  const thE = planetAngle(PLANETS[EARTH], d);
+  moon.pivot.rotation.y = moonAngle(d) - thE;
+  const md = MOON_D * Math.max(1, sc * 1.05);
+  moon.ball.scale.setScalar(.045 * sc); moon.ball.position.x = md; moon.post.position.x = md;
+  moon.rod.scale.y = md / MOON_D; moon.rod.position.x = md / 2;
+  const crankAngle = d / DAYS_PER_TURN * Math.PI * 2;
+  crank.spin.rotation.x = -crankAngle;          // winding clockwise (seen from outside) runs time forward
+  updateGears(crankAngle);
+  /* umbra uniforms */
+  orrery.updateMatrixWorld(true);
+  sunGroup.getWorldPosition(umbraMat.uniforms.uSun.value);
+  moon.ball.getWorldPosition(umbraMat.uniforms.uMoon.value);
+  umbraMat.uniforms.uMoonR.value = .045 * sc;
+}
+
+/* =========================================================
+   10. tweens & the machine's actions
+   ========================================================= */
+const tweens = [];
+const ease = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+/* tweens run on wall-clock time so they finish on schedule even at a low frame rate */
+function tween(dur, fn, done) { const t = { dur, t: 0, fn, done }; tweens.push(t); return t; }
+function stepTweens(dt) {
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const t = tweens[i]; t.t = Math.min(t.dur, t.t + dt); t.fn(ease(t.t / t.dur));
+    if (t.t >= t.dur) { tweens.splice(i, 1); t.done?.(); }
+  }
+}
+let busy = null;      // the running days-tween, so actions don't fight
+function windTo(target, dur, done) {
+  if (busy) { tweens.splice(tweens.indexOf(busy), 1); busy = null; }
+  const d0 = state.days;
+  busy = tween(dur, k => state.days = d0 + (target - d0) * k, () => { busy = null; done?.(); });
+}
+function crankTurns(n = 2) { setWarp(false); windTo(state.days + n * DAYS_PER_TURN, .8 * Math.abs(n)); }
+function setWarp(on = !state.warp) { state.warp = on; $('b-warp').classList.toggle('on', on); }
+
+/* next solar eclipse: Moon on the Sun-Earth line, between them */
+function nextEclipse(d0 = state.days) {
+  const E = PLANETS[EARTH], rate = Math.PI * 2 * (1 / MOON_P - 1 / E.P);
+  const f = moonAngle(d0) - planetAngle(E, d0) - Math.PI;
+  let dd = ((-f % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / rate;
+  if (dd < .5) dd += Math.PI * 2 / rate;
+  return d0 + dd;
+}
+function eclipse() {
+  setWarp(false); unfocus();
+  const target = nextEclipse();
+  windTo(target, 2.4, () => focus(EARTH, { eclipse: true }));
+}
+/* Align: slip the clutches so every arm points along Earth's line */
+function align() {
+  setWarp(false);
+  const ref = planetAngle(PLANETS[EARTH]);
+  const from = PLANETS.map(p => p.phase), m0 = moonPhase;
+  const to = PLANETS.map(p => { let a = ref - planetAngle(p); a = Math.atan2(Math.sin(a), Math.cos(a)); return p.phase + a; });
+  let ma = ref - moonAngle(); ma = Math.atan2(Math.sin(ma), Math.cos(ma));
+  tween(2.2, k => { PLANETS.forEach((p, i) => p.phase = from[i] + (to[i] - from[i]) * k); moonPhase = m0 + ma * k; });
+}
+
+/* =========================================================
+   11. finish, lamp, scale, speed
+   ========================================================= */
+const ringFace = ecliptic.children.find(o => o.material?.userData?.isFace).material;
+function setFinish(name) {
+  const f = FINISHES[name]; state.finish = name;
+  brass.color.set(f.c); brass.roughness = f.r; brassDark.color.set(f.d); brassDark.roughness = f.r + .08;
+  ringFace.color.set(f.c);
+  document.querySelectorAll('#finish .chip').forEach(c => c.classList.toggle('on', c.dataset.f === name));
+}
+const envMats = [];
+scene.traverse(o => { if (o.isMesh) [].concat(o.material).forEach(m => { if (!envMats.includes(m)) { m.userData.env0 = m.envMapIntensity ?? 1; envMats.push(m); } }); });
+function setLamp(v) {
+  state.lamp = v;
+  const night = 1 - v;
+  lamp.intensity = 4.6 * v; fill.intensity = .7 * v; hemi.intensity = .03 + .32 * v;
+  envMats.forEach(m => m.envMapIntensity = m.userData.env0 * (.05 + .95 * v));
+  sun.light.intensity = 2.5 + 9 * night;
+  sun.light.decay = 1.2 + .4 * night;
+  sun.glow.material.opacity = .45 + .45 * night; sun.glow.scale.setScalar(2.4 + 1.4 * night);
+  scene.background.copy(BG_DAY).lerp(BG_NIGHT, night); scene.fog.color.copy(scene.background);
+  document.body.style.background = '#' + scene.background.getHexString();
+  document.querySelector('.vignette').style.opacity = 1 + night * .6;
+  $('lamp').value = v;
+  $('v-lamp').textContent = v > .85 ? 'On' : v > .15 ? 'Dim' : 'Off';
+}
+function setScale(v) { state.scale = .5 + v * 1.25; $('scale').value = v; $('v-scale').textContent = state.scale.toFixed(1) + '×'; }
+function setSpeed(v) { state.speed = 2 * Math.pow(10, v * 2.6); $('speed').value = v; $('v-speed').textContent = Math.round(state.speed) + ' d/s'; }
+
+/* =========================================================
+   12. camera focus + planet card
+   ========================================================= */
+const card = document.getElementById('pcard');
+const ORD = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth'];
+const cam = { mode: 'free', offset: new THREE.Vector3() };
+function planetWorld(i, out = new THREE.Vector3()) { return PLANETS[i].ball.getWorldPosition(out); }
+function focus(i, { eclipse = false } = {}) {
+  const p = PLANETS[i];
+  state.focus = i; cam.mode = 'focus'; controls.enabled = false;
+  const pw = planetWorld(i), dist = 1.7 + p.R * state.scale * 8;
+  if (eclipse) {   // look at Earth's day side, a little off the Sun line so the Moon doesn't hide the shadow
+    const toSun = sunGroup.getWorldPosition(new THREE.Vector3()).sub(pw).setY(0).normalize();
+    cam.offset.copy(toSun.applyAxisAngle(new THREE.Vector3(0, 1, 0), .95)).setY(.38).normalize().multiplyScalar(dist * 1.1);
+  } else {
+    cam.offset.copy(camera.position).sub(controls.target).normalize();
+    cam.offset.y = Math.max(cam.offset.y, .45); cam.offset.normalize().multiplyScalar(dist);
+  }
+  $('pc-k').textContent = eclipse ? 'Solar eclipse · Day ' + Math.round(state.days) : ORD[i] + ' planet';
+  $('pc-name').textContent = p.name;
+  $('pc-period').textContent = p.P >= 1000 ? (p.P / 365.256).toFixed(2) + ' yr' : p.P.toFixed(1) + ' d';
+  const ratio = PLANETS[EARTH].P / p.P;
+  $('pc-ratio').textContent = ratio >= 1 ? ratio.toFixed(3) + ' : 1' : '1 : ' + (1 / ratio).toFixed(2);
+  $('pc-fact').textContent = eclipse ? 'The Moon slides between lamp and globe; its shadow is the dark spot crossing the day side of the Earth.' : p.fact;
+  card.classList.add('show');
+}
+function unfocus() {
+  card.classList.remove('show');
+  if (cam.mode === 'focus') cam.mode = 'return';
+  state.focus = -1;
+}
+function resetView() { unfocus(); cam.mode = 'return'; }
+function updateCamera(dt) {
+  const k = 1 - Math.exp(-dt * 3.2);
+  if (cam.mode === 'focus') {
+    const pw = planetWorld(state.focus);
+    controls.target.lerp(pw, k);
+    camera.position.lerp(_v.copy(pw).add(cam.offset), k);
+    camera.lookAt(controls.target);
+    placeCard(pw);
+  } else if (cam.mode === 'return') {
+    controls.target.lerp(VIEW.target, k); camera.position.lerp(VIEW.pos, k); camera.lookAt(controls.target);
+    if (camera.position.distanceTo(VIEW.pos) < .05) { cam.mode = 'free'; controls.enabled = true; }
+  } else controls.update();
+}
+function placeCard(pw) {
+  const s = _v.copy(pw).project(camera);
+  const x = (s.x * .5 + .5) * innerWidth, y = (-s.y * .5 + .5) * innerHeight;
+  const R = PLANETS[state.focus].R * state.scale / (camera.position.distanceTo(pw) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * innerHeight / 2;
+  let cx = x + R + 40;
+  if (cx + 240 > innerWidth - 270) cx = x - R - 40 - 230;
+  card.style.left = clamp(cx, 20, innerWidth - 250) + 'px';
+  card.style.top = clamp(y - 90, 20, innerHeight - 260) + 'px';
+}
+
+/* =========================================================
+   13. input: crank drag, planet picking, keys, HUD
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const pick = (e, objs) => { ndc.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1); ray.setFromCamera(ndc, camera); return ray.intersectObjects(objs, true)[0]; };
+const planetMeshes = PLANETS.flatMap(p => p.ringMesh ? [p.ball, p.ringMesh] : [p.ball]);
+let downAt = null, drag = null;
+function crankScreen() {
+  const hub = crank.spin.getWorldPosition(new THREE.Vector3()), axis = new THREE.Vector3(1, 0, 0).transformDirection(crank.group.matrixWorld);
+  const facing = axis.dot(_v.copy(camera.position).sub(hub)) > 0;
+  hub.project(camera);
+  return { x: (hub.x * .5 + .5) * innerWidth, y: (-hub.y * .5 + .5) * innerHeight, sign: facing ? 1 : -1 };
+}
+canvas.addEventListener('pointerdown', e => {
+  downAt = [e.clientX, e.clientY];
+  if (pick(e, [crank.group])) {
+    const c = crankScreen(); setWarp(false);
+    drag = { ...c, last: Math.atan2(e.clientY - c.y, e.clientX - c.x) };
+    controls.enabled = false; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing';
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (drag) {
+    const a = Math.atan2(e.clientY - drag.y, e.clientX - drag.x);
+    let da = a - drag.last; da = Math.atan2(Math.sin(da), Math.cos(da)); drag.last = a;
+    state.days += drag.sign * da / (Math.PI * 2) * DAYS_PER_TURN;
+    return;
+  }
+  canvas.style.cursor = pick(e, [crank.group]) ? 'grab' : pick(e, planetMeshes) ? 'pointer' : 'default';
+});
+canvas.addEventListener('pointerup', e => {
+  if (drag) { drag = null; if (cam.mode === 'free') controls.enabled = true; canvas.style.cursor = 'grab'; return; }
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  const hit = pick(e, planetMeshes);
+  if (hit) focus(hit.object.userData.planet);
+});
+addEventListener('keydown', e => { if (e.key === 'Escape') resetView(); });
+
+$('b-crank').onclick = () => crankTurns(2);
+$('b-warp').onclick = () => setWarp();
+$('b-eclipse').onclick = eclipse;
+$('b-align').onclick = align;
+$('finish').onclick = e => { const c = e.target.closest('.chip'); if (c) setFinish(c.dataset.f); };
+$('speed').oninput = e => setSpeed(+e.target.value);
+$('scale').oninput = e => setScale(+e.target.value);
+$('lamp').oninput = e => setLamp(+e.target.value);
+function setPaused(v = !state.paused) { state.paused = v; $('b-pause').textContent = v ? 'Play' : 'Pause'; }
+$('b-pause').onclick = () => setPaused();
+$('b-view').onclick = resetView;
+function reset() {
+  tweens.length = 0; busy = null; setWarp(false); setPaused(false);
+  state.days = 0; PLANETS.forEach((p, i) => p.phase = PHASE0[i]); moonPhase = MOON0;
+  resetView();
+}
+$('b-reset').onclick = reset;
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+/* =========================================================
+   14. counters + loop
+   ========================================================= */
+let lastStats = '';
+function syncStats() {
+  const d = state.days, orbits = PLANETS.reduce((s, p) => s + Math.max(0, Math.floor(d / p.P)), 0);
+  const key = Math.floor(d) + '|' + orbits;
+  if (key === lastStats) return; lastStats = key;
+  $('s-days').textContent = Math.max(0, Math.floor(d)).toLocaleString('en-US');
+  $('s-years').textContent = Math.max(0, d / 365.256).toFixed(1);
+  $('s-orbits').textContent = orbits;
+}
+setFinish('brass'); setSpeed(.45); setScale(.4); setLamp(1);
+const clock = new THREE.Clock();
+function frame() {
+  const raw = clock.getDelta(), dt = Math.min(raw, .1);
+  if (!state.paused) {
+    if (state.warp) state.days += state.speed * dt;
+    stepTweens(Math.min(raw, 3));
+  }
+  pose(); syncStats();
+  updateCamera(Math.min(raw, .5));
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+document.fonts.load('italic 54px "Instrument Serif"').then(() => ringTex.userData.redraw());
+
+window.DEMO = {
+  crank: crankTurns, timeWarp: setWarp, eclipse, align, setFinish, setLamp, setScale, setSpeed,
+  focus: i => focus(typeof i === 'string' ? PLANETS.findIndex(p => p.name.toLowerCase() === i.toLowerCase()) : i),
+  unfocus: resetView, reset, pause: setPaused, resetView, nextEclipse,
+  knobScreen: () => { const v = crank.knob.getWorldPosition(new THREE.Vector3()).project(camera); return [(v.x * .5 + .5) * innerWidth, (-v.y * .5 + .5) * innerHeight]; },
+  state, camera, controls, PLANETS
+};
+</script>
+</body>
+</html>
+

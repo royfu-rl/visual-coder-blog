@@ -1,0 +1,1450 @@
+ 
+
+ Optimization-based Prompt Injection Attack to LLM-as-a-Judge 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below: 
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+ 1 Introduction 
+ 2 Problem Formulation 
+
+ 2.1 LLM-as-a-Judge 
+ 2.2 Threat Model 
+
+ 3 JudgeDeceiver 
+
+ 3.1 Overview 
+ 3.2 Generating Shadow Dataset 
+ 3.3 Formulating the Optimization Problem 
+ 3.4 Solving the Optimization Problem 
+
+ 4 Evaluation 
+
+ 4.1 Experimental Setup 
+
+ 4.1.1 Datasets. 
+ 4.1.2 Attack settings. 
+ 4.1.3 Compared Baselines. 
+ 4.1.4 Evaluation metrics. 
+
+ 4.2 Attack Performance 
+ 4.3 Ablation Studies 
+
+ 5 Related Works 
+
+ 5.1 LLM-as-a-Judge 
+ 5.2 Prompt Injection Attacks against LLM 
+
+ 6 Conclusion 
+ References 
+
+ License: arXiv.org perpetual non-exclusive license
+
+arXiv:2403.17710v1 [cs.CR] 26 Mar 2024 
+
+ Optimization-based Prompt Injection Attack to LLM-as-a-Judge 
+
+ Jiawen Shi * 
+
+ Affiliation: Huazhong University of Science and Technology
+
+ Zenghui Yuan * 
+
+ Affiliation: Huazhong University of Science and Technology
+
+ Yinuo Liu
+
+ Affiliation: Lehigh University
+
+ Yue Huang
+
+ Affiliation: University of Notre Dame
+
+ Pan Zhou
+
+ Affiliation: Huazhong University of Science and Technology
+
+ Lichao Sun
+
+ Affiliation: Lehigh University
+
+ Neil Zhenqiang Gong
+
+ Affiliation: Duke University {shijiawen,zenghuiyuan,yinuo_liu,panzhou}@hust.edu.cn , yhuang37@nd.edu , lis221@lehigh.edu , neil.gong@duke.edu 
+
+ Abstract 
+
+ LLM-as-a-Judge is a novel solution that can assess textual information with large language models (LLMs). Based on existing research studies, LLMs demonstrate remarkable performance in providing a compelling alternative to traditional human assessment. However, the robustness of these systems against prompt injection attacks remains an open question. In this work, we introduce JudgeDeceiver, a novel optimization-based prompt injection attack tailored to LLM-as-a-Judge. Our method formulates a precise optimization objective for attacking the decision-making process of LLM-as-a-Judge and utilizes an optimization algorithm to efficiently automate the generation of adversarial sequences, achieving targeted and effective manipulation of model evaluations. Compared to handcraft prompt injection attacks, our method demonstrates superior efficacy, posing a significant challenge to the current security paradigms of LLM-based judgment systems. Through extensive experiments, we showcase the capability of JudgeDeceiver in altering decision outcomes across various cases, highlighting the vulnerability of LLM-as-a-Judge systems to the optimization-based prompt injection attack. 
+
+ † † 
+
+ * The first two authors contributed equally to this work. 
+
+ 1 Introduction 
+
+ Large language models (LLMs), such as ChatGPT [ 34 ] , have garnered significant attention for their exceptional natural language processing (NLP) capabilities. These models are increasingly applied across a spectrum of downstream tasks including the medical domain [ 32 ] , education [ 9 ] , and software engineering [ 38 ] , leveraging their sophisticated functionalities. A notable trend in recent research [ 28 ; 51 ; 44 ; 26 ; 50 ; 52 ] is the exploration of LLMs as evaluative judges, a role that promises to markedly diminish the need for extensive human intervention in experimental assessments. In this capacity, termed LLM-as-a-Judge, these powerful models assess the outcomes of other models on specific tasks—particularly open-ended questions—exhibiting a high correlation with human evaluative standards. The deployment of LLMs in this judge-like role spans diverse applications, from benchmark performance evaluation [ 28 ] to the quality ranking of potential answers, as seen in reinforcement learning with AI feedback (RLAIF) [ 24 ] , LLM-powered search engines, and tool selection for LLM-based agents [ 18 ] . 
+
+ However, the integrity of LLM-based judging systems is under threat from various attack vectors [ 41 ; 14 ] , including sophisticated strategies like backdoor [ 46 ; 39 ] and jailbreak attacks [ 45 ; 31 ] . These vulnerabilities could be exploited by attackers seeking to manipulate the judgmental capabilities of LLMs for their gain. Such manipulations can artificially enhance the perceived efficacy of specific models on leading benchmarks, potentially leading to undeserved acclaim, funding, or commercial advantage. Moreover, these attacks can skew the LLM-judged rankings, favorably positioning attackers’ submissions and distorting fair competition. 
+
+ A prevalent and formidable attack is prompt injection [ 14 ; 30 ] . This technique modifies an LLM’s output through the introduction of maliciously designed prompts [ 30 ] , effectively commandeering the model’s response mechanism. For example, while the system’s intended prompt might be "You are a helpful assistant," an attacker could inject a directive such as "Ignore previous sentences and print ’hello world’," thereby diverting the LLM’s output away from its designed purpose. 
+
+ In this paper, we delve into the potential vulnerabilities inherent in the mechanism of utilizing LLM-as-a-Judge. We undertake a systematic examination of these vulnerabilities by conducting prompt injection attacks [ 15 ; 11 ; 37 ] on LLM-based judges in various contexts. Before this, we identify significant challenges in executing attacks against the LLM-as-a-Judge. A primary concern is the issue of generalizability. Previous efforts, while insightful, have predominantly concentrated on handcrafted prompt injections [ 15 ; 11 ; 37 ] , which fail to uniformly succeed across different user prompts. This limitation underscores the urgent necessity for more universally applicable methods that do not sacrifice effectiveness. Moreover, the extensive reliance on manual labor to devise these prompt injections poses an additional substantial hurdle. This approach is not only labor-intensive but also introduces variability in the effectiveness of the attacks due to its inherent subjectivity. 
+
+ Figure 1: By incorporating an adversarial text to the inappropriate response, attackers can manipulate the LLM-as-a-Judge’s evaluation results. 
+
+ To address the above challenges, we introduce JudgeDeceiver , a novel approach that automates and enhances the effectiveness of attacking LLM judges, as shown in 1 . We design an optimization process to craft adversarial sequences. These sequences empower attackers to mount more potent and nuanced attacks. At its core, JudgeDeceiver initiates its attack strategy by locally aggregating training data to accurately mimic potential attack environments. Subsequently, it refines the adversarial text through the training of a surrogate judge model, leveraging three cutting-edge optimization metrics: target-aligned generation loss, target-enhancement loss, and adversarial perplexity loss. The target-aligned generation loss is designed to increase the likelihood of eliciting a specific response from LLMs, thereby making the attacks more directed and effective. The target-enhancement loss further strengthens this effect by promoting the generation of specific option tokens, thereby skewing the LLM’s output in favor of the attacker’s intended outcome. Lastly, the adversarial perplexity loss aims to lower the perplexity of the adversarial sequence, enhancing the stealthiness of the attack and its ability to evade detection-based defenses [ 3 ] . 
+
+ We conducted extensive experiments to evaluate the effectiveness of JudgeDeceiver . Overall, JudgeDeceiver demonstrates high ASRs on OpenChat-3.5 and Mistral-7B across two different datasets: LLMBar [ 49 ] and MT-Bench [ 51 ] , indicating consistent performance in bypassing positional bias. We also illustrate the effectiveness of each loss term, as they all contribute to the training. Furthermore, we delve into the impact of varying the number of shadow samples in attack, the initialization of adversarial sequences, and different adversarial sequence locations. 
+
+ Our research underscores the critical importance of securing LLMs deployed in evaluative roles (i.e., LLM-as-a-Judge), which not only advances our understanding of LLM vulnerabilities but also lays the groundwork for future defenses against such exploitation, maintaining the credibility and trustworthiness of LLM assessments. In conclusion, our contributions are as follows: 
+
+ • 
+
+ We introduce JudgeDeceiver , a novel and effective technique for compromising the integrity of LLM serving as judges. JudgeDeceiver innovatively automates the collection of training samples for the proxy judge model and crafts adversarial sequences by optimizing three distinct losses: target-aligned generation loss, target-enhancement loss, and adversarial perplexity loss. JudgeDeceiver not only streamlines the attack process but also significantly amplifies its effectiveness. 
+
+ • 
+
+ The extensive experimental results show that JudgeDeceiver successfully attacks OpenaChat-3.5 and Mistral-7b in two mainstream benchmark datasets, and also maintains high consistency against the positional bias, and the ablation study also shows the effectiveness of each loss term during the training phase of JudgeDeceiver . 
+
+ • 
+
+ Furthermore, our study delves deeply into the attack settings by examining the impact of the number of shadow samples used in training, the initialization of the adversarial sequence, and alterations in the placement of these perturbations on the outcome. This detailed exploration provides a comprehensive understanding of JudgeDeceiver , allowing for significant enhancements in its accuracy. 
+
+ 2 Problem Formulation 
+
+ In this section, we begin by defining the task of LLM-as-a-Judge. We then explore a range of application scenarios that benefit from this methodology. Following this exploration, we provide a threat analysis, highlighting the risks and challenges involved in deploying LLMs in evaluative roles. 
+
+ 2.1 LLM-as-a-Judge 
+
+ The LLM-as-a-Judge can be formulated as follows: Given a question , paired with a set of candidate responses . The objective is to determine the response that most accurately and comprehensively addresses the question . Under the function of LLMs with prompts, this evaluation process is defined as: 
+
+ (1) 
+
+ where is a prompt designed to guide the LLM in executing evaluation tasks effectively. An illustrative example of such a prompt is provided in Figure 2 . With prompt engineering, LLM-as-a-Judge can be applied to real-world settings, where bespoke prompts are meticulously crafted for diverse scenarios. In this paper, we consider three common scenarios, i.e., LLM-based search engine, automated annotator on RLAIF, and tool selection. 
+
+ Figure 2: The evaluator prompt example. 
+
+ LLM-based search engine. The advent of LLMs has catalyzed a transformative shift in search technologies, with LLM-based search engines like Bing Chat [ 33 ] and Bard [ 12 ] standing at the forefront of this evolution. These search engines, characterized by their interactive chat functionality and ability to summarize search results, represent a significant leap forward in delivering immediate and comprehensive responses to user queries. Central to these engines is the LLM-as-a-Judge, which meticulously filters and evaluates search results for relevance and accuracy, ensuring that users receive the most pertinent information.
+In this scenario, embodies the user’s query, represents the assortment of search engine results, and signifies the most relevant search result entry as determined by the LLM-as-a-Judge. 
+
+ Automated annotator on RLAIF. Reinforcement learning with human feedback (RLHF) serves as a cornerstone in enhancing LLMs, refining their ability to generate responses that are not only accurate but also contextually resonant with human values. Central to RLHF is the development of a reward model trained on a preference dataset traditionally curated via human annotators. This conventional method, however, faces scalability challenges due to its resource-intensive nature. In response to these challenges, RLAIF has been introduced [ 24 ] , showcasing a paradigm shift towards utilizing the LLM-as-a-Judge. LLM-as-a-Judge enables the swift evaluation of human preferences, serving as a viable and efficient alternative to human annotations.
+Within this setup, symbolizes the instruction of the preference dataset, while denotes the set of responses designated for automatic annotation. identifies the preferred response, aligned as per the evaluation by the LLM-as-a-Judge. 
+
+ Tool selection. The integration of LLM with external tools via API calls enhances LLM functionalities to deliver more efficient and consistent outcomes. In these applications, such as MetaGPT [ 16 ] , and ChatGPT plugins [ 35 ] , the host LLM is responsible for determining and utilizing the most appropriate integrated LLM tool that aligns with user requests, thereby generating effective responses. This decision-making process employs the LLM-as-a-Judge mechanism to ascertain the most suitable tool to fulfill specific user needs based on the introduction of their capabilities.
+In this configuration, represents user inquiry, and signifies the collection of descriptions for integrated LLM tools. refers to the host LLM’s tool selection, as decided by the LLM-as-a-Judge. 
+
+ 2.2 Threat Model 
+
+ Attacker’s goal. Given a target question paired with a candidate response set , the attacker select one target response from . This selection, denoted as the pair , constitutes the attacker’s objective. The attacker aims to deceive the LLM-as-a-Judge into choosing the target response as the best response among , despite it potentially being inaccurate or even malicious for . Central to achieving this deception is the crafting of an optimized adversarial response , engineered to manipulate the LLM’s evaluation by leveraging its inherent biases and predictive linguistic patterns. Here, which is with tokens , denotes the adversarial sequence applied to the original target response , aiming to distort the LLM’s evaluative accuracy. Therefore, the formulation of the attacker’s goal can be defined as: 
+
+ (2) 
+
+ Herein, the LLM-as-a-Judge chooses the correct best response from the candidate response dataset , while misselecting the adversarial response once is added to target response . 
+
+ The attacker may desire to achieve such goals in various scenarios. For instance, attackers may upload the results of their models on certain leaderboards with the primary goal of enhancing their models’ scores and visibility, compared to legitimate models. In LLM-based search engines, attackers, motivated by the desire to increase webpage visibility, control information dissemination, or shape public opinion, might seek to have their webpage content more easily selected by the LLM. In the context of automated annotators on RLAIF, attackers may disseminate malicious data online to disrupt the learning process of LLMs during RLHF fine-tuning, further compromising the LLM’s alignment with human values. Regarding tool selection, attackers, aiming to increase software click-through rates, and profits, or establish technical superiority in specific domains, might optimize their tool descriptions to elevate the frequency at which their tools are invoked by LLM-powered applications. 
+
+ Attacker’s knowledge and capabilities. We describe the attacker’s knowledge and capabilities straightforwardly to mirror realistic situations they might face:
+(1) The attacker’s permissions are strictly confined to the target pair, comprising the target question and the target response , akin to real-world adversaries who possess specific knowledge about the system they intend to infiltrate or manipulate. Yet, their knowledge does not extend to the full set of candidate responses evaluated by the LLM-as-a-Judge mechanism. This limitation signifies that the attacker is unaware of both the content and the total number of these candidate responses, which are paired with the target question.
+(2) The prompt utilized by the LLM-as-a-Judge is public to the attacker as they can be found in the reports or papers related to the benchmarks. Nevertheless, the attacker remains unaware of the precise embedded position information within the prompt, which exemplifies the limited scope of information typically available to them.
+(3) Despite these informational limitations, the attacker is capable of generating their adversarial response and adding it to candidate response set ( e.g., users can upload the results of their models in some leaderboards [ 17 ; 41 ] ). Their objective is to engineer this response to be adjudged as the most suitable by the evaluative framework ( i.e., Equation 2 ). The principal challenge for the attacker lies in leveraging their specific awareness of the query to devise a response that aligns with the system’s evaluative standards, notwithstanding their ignorance of the precise nature of these criteria. 
+
+ 3 JudgeDeceiver 
+
+ Figure 3: Overview of Judge-manipulator 
+
+ 3.1 Overview 
+
+ In this section, building upon the LLM-as-a-Judge attack problem formalized in section 2 , we expound upon the proposed attack methodology, JudgeDeceiver, as illustrated in Figure 3 . At its core, JudgeDeceiver aims to establish a systematic and automated approach for crafting adversarial sequences, subsequently appending these to a target response with the intent of biasing the LLM-as-a-Judge towards selecting the target response over other candidate responses.
+Considering the challenge posed by the attacker’s limited insight into candidate responses, our initial step involves the creation of a shadow dataset. This dataset is designed to simulate the candidate responses characteristic of the LLM-as-a-Judge evaluation scenario, thereby providing a basis for attack strategies.
+Distinct from previous adversarial attacks that target classifiers or individual tokens, the LLM-as-a-Judge attack constitutes a text generation challenge. To address this, we devise a novel target optimization function specifically for generating adversarial sequences, enabling the attacker to launch high-efficiency attacks. This optimization function includes three distinct loss components: target-aligned generation loss, target enhancement loss, and adversarial perplexity loss. Each component tackles different aspects of the attack, with the overall goal of minimizing their weighted sum. Moreover, considering the challenges associated with optimizing discrete inputs and the inherent position bias in LLM-as-a-Judge selections, we introduce an optimization algorithm that leverages gradient search and position swapping. This method is designed to facilitate effective attack goals. 
+
+ 3.2 Generating Shadow Dataset 
+
+ As explained in subsection 2.2 , attackers face a challenge due to their limited access to the candidate responses that the LLM-as-a-Judge may evaluate. This limitation makes it difficult to devise effective attacks. To overcome this challenge, we utilize insights from prior research [ 19 ] and create a shadow dataset using a publicly available LLM. This dataset is designed to simulate the candidate responses that the LLM-as-a-Judge might evaluate, making it possible for attackers to more accurately predict and rehearse potential attack scenarios on the evaluation system. 
+
+ Our strategy involves utilizing an easily accessible LLM, referred to here as . For each target question , our objective is to produce sample responses that mimic possible responses that LLM-as-a-Judge may evaluate with our target response . To ensure that these response samples are varied and comprehensive, we generate multiple unique prompts for each question. 
+
+ To generate a shadow response set for a given target question , we employ a rephrasing language model like GPT-4 to create distinct prompts. This process transforms a single, manually crafted prompt into a set of prompts, denoted as , with examples provided in Table 1 . Each prompt in is then combined with to produce a diverse shadow dataset of responses, symbolized as , where represents the response generation process of LLM. The shadow dataset associated with the target question can be represented as . This operation enables the creation of a varied set of shadow responses to the target question, enhancing the attacker’s capacity to predict and simulate the decision-making behavior of LLM-as-a-Judge. 
+
+ For the evaluation prompt used in the judgment process, we directly utilize the prompt specified within the relevant benchmark studies. This approach ensures that our evaluation aligns closely with established standards, allowing for a meaningful assessment of our attack strategies’ effectiveness. 
+
+ Table 1: Prompt examples rephrased by GPT-4. 
+
+ Manually crafted prompt: 
+
+ Please provide a concise and accurate answer to the following question. 
+
+ Rephrased prompts: 
+
+ Kindly provide a short and accurate answer to the following inquiry. 
+
+ Please offer a brief yet precise answer to the question below. Ensure the answer is to the point. 
+
+ Can you give a succinct and accurate response to this question? Aim for brevity. 
+
+ Please respond to the following question with a concise and clear answer. Keep it short. 
+
+ 3.3 Formulating the Optimization Problem 
+
+ In this section, we introduce the formalism of the optimization problem for attacking LLM-as-a-Judge. When launching attacks, attackers encounter constraints in accessing detailed information about the quantity and content of candidate responses for the target question. To mitigate this challenge, we devise a shadow candidate response set , comprising the target response alongside responses randomly chosen from the shadow set . The purpose of this dataset is to lay the groundwork for refining attack target optimization strategies. 
+
+ As described in Equation 2 , the primary objective of an effective attack is to increase the probability that LLM-as-a-Judge identifies the adversarial response as the most accurate response. This objective can be mathematically represented by maximizing the following function: 
+
+ (3) 
+
+ Given that LLM-as-a-Judge inherently involves a generative function, we concretize the objective in Equation 3 to generate a specific sequence (for example, "Output (B) is the better one"), denoted by . By translating the selection process of the target response into specific text, we can leverage the language model’s generation process to define an optimization loss function for the attack. Overall, we design three loss terms to form this function: target-aligned generation loss, target enhancement loss, and adversarial perplexity loss. 
+
+ Target-aligned generation loss. 
+The target-aligned generation loss, denoted as , aims to increase the likelihood that the LLM generates a specific sequence . Within this context, we use to represent the token sequence of , with being formally defined as follows: 
+
+ (4) 
+
+ (5) 
+
+ Target enhancement loss. The target enhancement loss sharpens the optimization of key tokens (such as token "B") within the target response to boost their selection by the LLM-as-a-Judge. We use to denote the option token. This loss complements the target-aligned generation loss by narrowing down the focus to individual tokens that are crucial for the success of the adversarial attack, rather than the generation of a specific string. The formulation of the target enhancement loss can be approached as follows: 
+
+ (6) 
+
+ This equation aims to maximize the probability of the option token. 
+
+ Adversarial perplexity loss. Adversarial perplexity loss is to evade the possible detection-based defense [ 3 ] , which measures how well the LLM judge predicts the sequence of tokens in the adversarial sequence . A lower perplexity indicates that the LLM predicts the next token in the sequence more accurately, implying that the adversarial sequence remains natural and plausible. Formally, for a given adversarial sequence of length , the perplexity is defined as the exponential of the average negative log-likelihood of the sequence under the model, which can be defined as follows: 
+
+ (7) 
+
+ Optimization problem. 
+Given the defined objective and the three distinct loss functions, , , and , we establish our JudgeDeceiver as an optimization problem. Specifically, the Judge-manipulator aims to address the optimization problem outlined below: 
+
+ (8) 
+
+ where in this equation, , , and are weighting coefficients that determine the relative importance of each loss component in the overall optimization process. 
+
+ 3.4 Solving the Optimization Problem 
+
+ To tackle the optimization challenge of minimizing the loss as delineated in Equation 8 , we introduce a strategy centered around iterative token substitution within the adversarial sequence , drawing inspiration from prior research [ 54 ; 21 ; 40 ] . The core aim of this approach is to ascertain an optimized version of the adversarial sequence , that results in the minimal achievable value of . This methodology is designed to methodically adjust through a sequence of iterations, each time evaluating the impact on to incrementally reduce this loss until the most effective adversarial sequence is identified. 
+
+ The process begins by calculating a linear approximation of the impact of modifying the th token within , through the evaluation of its gradient: 
+
+ (9) 
+
+ In this equation, represents the one-hot encoded vector for the th token in the adversarial sequence , and denotes the complete vocabulary of tokens. Following this, we identify the top- indices with the highest negative gradient as potential candidates for replacing the token . After selecting a candidate set for each token in , we randomly choose a subset of tokens. This subset is then subjected to a detailed loss evaluation, and the token substitution leading to the minimal loss is executed. 
+
+ To address uncertainties tied to candidate response positioning that may impact attack efficacy, we account for positional factors to maintain attack efficiency. This is defined as the ability to attack across different positions within the shadow candidate response set . If the adversarial response consistently undermines the effectiveness of across various positions when paired with the adversarial sequence , it signifies an attack success. This approach ensures the efficiency of our attack. Furthermore, attackers can train on different shadow candidate response sets to refine the adversarial sequence. The algorithm referenced as Algorithm 1 outlines a detailed methodology for optimizing the adversarial sequence, providing a concrete solution to the optimization problem. 
+
+ Algorithm 1 JudgeDeceiver 
+
+ 0: 
+
+  Target question , shadow candidate response datasets , with each dataset containing responses, adversarial response , initial adversarial sequence composed of tokens, batch size , number of iterations .
+
+ 0: 
+
+  Optimized adversarial sequence .
+
+ 1: 
+
+  Initialize shadow dataset counter and iteration counter {Start with the first shadow candidate response dataset and reset iterations}
+
+ 2: 
+
+   while and do 
+
+ 3: 
+
+    for each do 
+
+ 4: 
+
+    Calculate the sum of losses for adversarial responses at different option positions of : 
+
+ 5: 
+
+    Calculate as the Top-K replacement candidates for token th in based on the negative gradient of loss: 
+
+ 6: 
+
+    end for 
+
+ 7: 
+
+    for each do 
+
+ 8: 
+
+    Initialize batch token replacement 
+
+ 9: 
+
+    Select a random token from and replace it with a random token from to form 
+
+ 10: 
+
+    end for 
+
+ 11: 
+
+   Choose the best batch replacement that minimizes the sum of losses across all shadow datasets in the current set:
+
+ 12: 
+
+    if the adversarial response successfully attacks LLM-as-a-Judge with for all option positions in the shadow candidate response set then 
+
+ 13: 
+
+    Move to the next question: 
+
+ 14: 
+
+    end if 
+
+ 15: 
+
+   end while 
+
+ 16: 
+
+   return as the optimized adversarial sequence
+
+ 4 Evaluation 
+
+ 4.1 Experimental Setup 
+
+ 4.1.1 Datasets. 
+
+ The target questions for evaluation come from MT-bench [ 51 ] and LLMBar [ 49 ] . Based on them, we generate training opponent responses by GPT-3.5 and stimulate candidate responses using various popular LLMs. 
+
+ Target question set construction. We have chosen two well-regarded benchmarks that test the usual capabilities and response to instructions of LLMs: 
+
+ • 
+
+ MT-Bench [ 51 ] . This benchmark contains 80 meticulously crafted multi-turn questions, segmented into eight distinct categories: writing, roleplay, extraction, reasoning, math, coding, STEM knowledge, and humanities/social science knowledge. These categories encompass a broad spectrum of common use cases, specifically designed to test LLMs on a variety of open-ended queries. 
+
+ • 
+
+ LLMBar [ 49 ] . LLMBar is established to assess the effectiveness of LLM evaluators (i.e., LLM judge), particularly their ability to judge instruction following. The benchmark consists of 419 manually curated pairs of outputs, where one output follows the instructions correctly and the other may diverge but possess deceptive qualities that could mislead LLM evaluators. 
+
+ Due to the time cost of the training process, we handpick 20 questions from MT-Bench and LLMBar, with 10 questions from each, as our target questions for both training and evaluating. We manually select the data item across different topics ( e.g. , role-playing, reasoning, and information retrieval) to ensure the diversity and comprehensiveness of our experimental data. Please note that in our experiments, we use MT-Bench and LLMBar to respectively refer to the target problems we constructed rather than the two benchmarks themselves. 
+
+ Shadow responses for training. To simulate realistic opponent responses, the shadow responses set is repeatedly generated by GPT-3.5 [ 34 ] as it is the most widely used LLM and can be accessed easily by OpenAI API [ 36 ] , setting the stage for training our adversarial response for each question. 
+
+ Candidate responses during evaluating. We employ various popular LLMs, including GPT-3.5-turbo [ 34 ] , Gemma-7B [ 10 ] , GPT-4 [ 1 ] , LLaMA-2 (7B-chat, 13B-chat and 70B-chat) [ 42 ] , Mistral-7B-Instruct-v0.1 [ 20 ] , Mixtral-8x7B-Instruct-v0.1 [ 2 ] , Openchat-3.5 [ 43 ] and Claude-2 [ 4 ] to respond to the selected target questions and present as anonymous opponents for our attack in the evaluation. Each LLM generated 10 responses for each question, from which we manually selected 50 high-quality responses with suitable lengths. 
+
+ 4.1.2 Attack settings. 
+
+ This comprehensive collection introduced above forms our evaluation dataset, which comprises 20 target questions, alongside 1 adversarial response and 50 opponent responses for each. We select two open-source models for our attack evaluation: Mistral [ 20 ] and Openchat-3.5 [ 43 ] . These models are tasked with evaluating the responses collection (i.e. 50 opponent responses and 1 adversarial response per question) and identifying the best-suited response for each question. A successful attack is marked by the selection of the adversarial response by the models. By default, we use adversarial sequence as the suffix, with a length of 20 tokens (the word "correct"). We adopt 2 shadow responses in training and 2 candidate responses in evaluation. The number of iterations for training is set to 600. Unless otherwise specified, we select Q10 and Mistral-7B as evaluation objects by default in our ablation study. 
+
+ 4.1.3 Compared Baselines. 
+
+ We use handcraft prompt and GCG as compared baselines for our method. 
+
+ Handcraft prompt: Handcraft prompt is a method where an LLM is given a set of options to judge. Attached to one of these options is a misleading sentence designed to bias the model’s judgment towards that option. This method of prompt engineering aims to subtly guide the model, increasing the likelihood of it choosing the targeted option. This method involves resource-intensive handcrafting, thus often not universal and problem-specific. 
+
+ Figure 4: Handcraft prompt attachment. 
+
+ GCG: Greedy Coordinate Gradient (GCG) is a method that combines greedy search and gradient-based optimization to jailbreak LLMs [ 54 ] . This approach begins by initializing a suffix and then employs a greedy search to pinpoint a collection of tokens that carries potential adversarial qualities. In the iterative phase, GCG substitutes tokens within the suffix with those from the adversarial set, engaging a gradient-based optimization technique to uncover the combination of tokens that poses the greatest threat to the LLM’s integrity. Our method, taking cues from this baseline, pivots from jailbreaking LLMs to assaulting LLM-as-a-Judge, tweaking the technique to suit our objectives. 
+
+ 4.1.4 Evaluation metrics. 
+
+ We adopt average accuracy (ACC) , average baseline attack success rate (ASR-B) , average attack success rate (ASR) and positional attack consistency (PAC) as evaluation metrics. We define them as follows: 
+
+ Average accuracy (ACC): The ACC of an LLM-as-a-Judge reflects the likelihood of accurately selecting clean candidate responses from a dataset containing the target response , in scenarios devoid of adversarial sequence. This metric accounts for positional bias by calculating the average rate of correct responses across instances, following the swapping of data point positions. 
+
+ Average baseline attack success rate (ASR-B): The ASR-B quantifies the LLM’s tendency to mistakenly recognize the target response as correct without adversarial sequence, by calculating the average frequency of these misidentifications across instances with adjusted positions. 
+
+ Average attack success rate (ASR): We employ ASR to assess our attack strategy’s effectiveness. It calculates the probability that an LLM-as-a-Judge prefers the adversarial response , after introducing adversarial sequences. To mitigate positional bias that might skew these measurements, we shuffle candidate response positions before averaging the success rates of adversarial selections across instances. 
+
+ Positional attack consistency (PAC): The PAC assesses our attack’s robustness against the LLM’s inherent positional bias. It calculates the percentage of instances that consistently retain preference labels for the adversarial response , before and after the alteration in the presentation order of the two responses under evaluation. 
+
+ 4.2 Attack Performance 
+
+ Table 2 demonstrates the result of our experiment. Both Openchat-3.5 and Mistral-7B exhibit high ACCs on MTBench and LLMBar, indicating their strong alignment with human ethics and their ability to discern and select appropriate responses while filtering out undesirable ones. Openchat-3.5 slightly surpassed Mistral-7B, achieving average accuracies of 99.5% and 89.2%, compared to Mistral-7B’s 89.2% and 85.7%, respectively. 
+
+ Table 2: Results of attack on different models and datasets. 
+
+ Model 
+ Metric 
+ Method 
+ Question-Response Pair 
+ Average 
+
+ QR-1 
+ QR-2 
+ QR-3 
+ QR-4 
+ QR-5 
+ QR-6 
+ QR-7 
+ QR-8 
+ QR-9 
+ QR-10 
+
+ Openchat-3.5 
+ ACC 
+ - 
+ 100% 
+ 100% 
+ 99% 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ 96% 
+ 100% 
+ 100% 
+ 99.5% 
+
+ ASR-B 
+ - 
+ 0 
+ 0 
+ 1% 
+ 0 
+ 0 
+ 0 
+ 0 
+ 4% 
+ 0 
+ 0 
+ 0.5% 
+
+ ASR 
+ Handcraft 
+ 0 
+ 1% 
+ 17% 
+ 0 
+ 0 
+ 0 
+ 0 
+ 78% 
+ 0 
+ 0 
+ 9.6% 
+
+ GCG 
+ 13% 
+ 16% 
+ 50% 
+ 0 
+ 45% 
+ 33% 
+ 0 
+ 78% 
+ 4% 
+ 50% 
+ 28.9% 
+
+ Ours 
+ 100% 
+ 78% 
+ 86% 
+ 85% 
+ 94% 
+ 100% 
+ 88% 
+ 80% 
+ 82% 
+ 99% 
+ 89.2% 
+
+ PAC 
+ Handcraft 
+ 0 
+ 0 
+ 12% 
+ 0 
+ 0 
+ 0 
+ 0 
+ 58% 
+ 0 
+ 0 
+ 7% 
+
+ GCG 
+ 0 
+ 0 
+ 32% 
+ 0 
+ 0 
+ 0 
+ 0 
+ 56% 
+ 0 
+ 0 
+ 8.8% 
+
+ Ours 
+ 100% 
+ 56% 
+ 78% 
+ 70% 
+ 88% 
+ 100% 
+ 76% 
+ 60% 
+ 64% 
+ 98% 
+ 79% 
+
+ Mistral-7B 
+ ACC 
+ - 
+ 99% 
+ 87% 
+ 99% 
+ 66% 
+ 81% 
+ 72% 
+ 91% 
+ 99% 
+ 99% 
+ 99% 
+ 89.2% 
+
+ ASR-B 
+ - 
+ 1% 
+ 13% 
+ 1% 
+ 34% 
+ 19% 
+ 28% 
+ 9% 
+ 1% 
+ 1% 
+ 1% 
+ 10.8% 
+
+ ASR 
+ Handcraft 
+ 3% 
+ 4% 
+ 5% 
+ 0 
+ 29% 
+ 5% 
+ 21% 
+ 47% 
+ 8% 
+ 41% 
+ 16.3% 
+
+ GCG 
+ 22% 
+ 30% 
+ 9% 
+ 50% 
+ 40% 
+ 31% 
+ 34% 
+ 51% 
+ 44% 
+ 69% 
+ 38% 
+
+ Ours 
+ 92% 
+ 95% 
+ 92% 
+ 99% 
+ 91% 
+ 99% 
+ 95% 
+ 71% 
+ 77% 
+ 97% 
+ 90.8% 
+
+ PAC 
+ Handcraft 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 6% 
+ 2% 
+ 0 
+ 0.8% 
+
+ GCG 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 8% 
+ 12% 
+ 14% 
+ 52% 
+ 8.6% 
+
+ Ours 
+ 84% 
+ 90% 
+ 84% 
+ 98% 
+ 88% 
+ 98% 
+ 90% 
+ 54% 
+ 54% 
+ 94% 
+ 83.4% 
+
+ (a) Results on MTBench 
+
+ Model 
+ Metric 
+ Method 
+ Question-Response Pair 
+ Average 
+
+ QR-1 
+ QR-2 
+ QR-3 
+ QR-4 
+ QR-5 
+ QR-6 
+ QR-7 
+ QR-8 
+ QR-9 
+ QR-10 
+
+ Openchat-3.5 
+ ACC 
+ - 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ 99% 
+ 100% 
+ 100% 
+ 91% 
+ 100% 
+ 100% 
+ 99% 
+
+ ASR-B 
+ - 
+ 0 
+ 0 
+ 0 
+ 0 
+ 1% 
+ 0 
+ 0 
+ 9% 
+ 0 
+ 0 
+ 1% 
+
+ ASR 
+ Handcraft 
+ 17% 
+ 1% 
+ 4% 
+ 0% 
+ 19% 
+ 2% 
+ 0 
+ 61% 
+ 0 
+ 0 
+ 10.4% 
+
+ GCG 
+ 73% 
+ 28% 
+ 52% 
+ 8% 
+ 67% 
+ 11% 
+ 0 
+ 87% 
+ 18% 
+ 0 
+ 34.4% 
+
+ Ours 
+ 99% 
+ 94% 
+ 86% 
+ 96% 
+ 92% 
+ 87% 
+ 77% 
+ 92% 
+ 71% 
+ 86% 
+ 88% 
+
+ PAC 
+ Handcraft 
+ 4% 
+ 0 
+ 4% 
+ 0 
+ 2% 
+ 0 
+ 0 
+ 46% 
+ 0 
+ 0 
+ 5.6% 
+
+ GCG 
+ 60% 
+ 4% 
+ 6% 
+ 0 
+ 48% 
+ 4% 
+ 0 
+ 74% 
+ 0 
+ 0 
+ 19.6% 
+
+ Ours 
+ 98% 
+ 88% 
+ 72% 
+ 92% 
+ 84% 
+ 86% 
+ 86% 
+ 84% 
+ 48% 
+ 72% 
+ 81% 
+
+ Mistral-7B 
+ ACC 
+ - 
+ 72% 
+ 100% 
+ 92% 
+ 99% 
+ 62% 
+ 99% 
+ 87% 
+ 50% 
+ 100% 
+ 96% 
+ 85.7% 
+
+ ASR-B 
+ - 
+ 28% 
+ 0 
+ 8% 
+ 1% 
+ 38% 
+ 1% 
+ 13% 
+ 50% 
+ 0 
+ 4% 
+ 14.3% 
+
+ ASR 
+ Handcraft 
+ 47% 
+ 2% 
+ 8% 
+ 1% 
+ 50% 
+ 1% 
+ 0 
+ 51% 
+ 2% 
+ 26% 
+ 18.8% 
+
+ GCG 
+ 39% 
+ 83% 
+ 19% 
+ 21% 
+ 69% 
+ 1% 
+ 84% 
+ 62% 
+ 65% 
+ 56% 
+ 49.9% 
+
+ Ours 
+ 93% 
+ 94% 
+ 99% 
+ 93% 
+ 86% 
+ 82% 
+ 99% 
+ 100% 
+ 87% 
+ 99% 
+ 93.2% 
+
+ PAC 
+ Handcraft 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 0 
+ 2% 
+ 0 
+ 0 
+ 0.2% 
+
+ GCG 
+ 0 
+ 66% 
+ 0 
+ 0 
+ 38% 
+ 0 
+ 68% 
+ 26% 
+ 30% 
+ 24% 
+ 24.8% 
+
+ Ours 
+ 86% 
+ 88% 
+ 98% 
+ 86% 
+ 72% 
+ 66% 
+ 98% 
+ 100% 
+ 74% 
+ 98% 
+ 86.6% 
+
+ (b) Results on LLMBar 
+
+ Our attack achieves high ASRs. Our method records average attack success rates of 89.2% and 88% for Openchat-3.5 and 90.8% and 93.2% for Mistral-7B across the two evaluation datasets. Conversely, GCG attains only 30% (Openchat-3.5) and 40% (Mistral-7B) approximately, while handcrafted prompt performs even worse, achieving roughly 10% (Openchat-3.5) and 20% (Mistral-7B). This marks that our method stands out strongly as a very effective attack method for white-box LLM judges.
+The success of our method can be attributed to the design of the optimization problem and the structured approach of the training stage, where every adversarial response is separately trained against imaginary opponents generated by GPT-3.5 on the specific query. 
+
+ Our attack remains high consistency bypassing positional bias. When altering the positions of the adversarial and clean responses, all methods suffer a decrease in effectiveness. This is reflected by PACs which only calculate the consistent choice of adversarial responses after the position switch. Yet, our method continues to secure high PACs: 79% and 81% for Openchat-3.5 and 83.4%, and 86.6% for Mistral-7B. In stark contrast, both handcrafted prompts and GCG exhibit PACs that are significantly lower than their ASRs across both models and datasets. This discrepancy is particularly pronounced with Mistral-7B on LLMBar, where the handcrafted prompt’s ASR is 18.8%, yet the PAC dramatically drops to 0.2%. Similarly, for Mistral-7B on MTBench, GCG’s ASR is 38%, but its PAC sharply declines to 8.6%. The result indicates that our method is robust against positional bias. 
+
+ Case study. For QR pairs showing relatively poor results from our method, we offer preliminary analysis for explanation.
+Specifically, for QR-8 of MTBench, the query is designed with a predetermined answer, resulting in candidate responses of similar lengths. As depicted in Figure 5 , the target response is noticeably longer than the other candidate responses. This discrepancy may lead the two models to favor the target response, reflecting a potential length bias inherent in LLM-as-a-Judge.
+For QR-8 of LLMBar, Mistral-7B has an ASR-B of 50%, which states the inadequate capability to judge this query. Consequently, this makes it easier for all methods to achieve successful attacks. 
+
+ (c) LLMBar 
+
+ (d) MT-Bench 
+
+ Figure 5: Token length distribution of candidate responses and adversarial responses in two benchmarks. 
+
+ (a) Openchat-3.5 
+
+ (b) Mistral-7B 
+
+ Figure 6: Impact of shadow response numbers in training and candidate response numbers in evaluating. 
+
+ 4.3 Ablation Studies 
+
+ Impact of shadow and candidate response numbers. We evaluate the attack effects of GCG and our JudgeDeceiver when using different numbers of shadow responses in training and different numbers of candidate responses in testing. The results are shown in Figure 6 . Overall, the ASRs of the two attacks are equivalent only when and . In other cases, the attack effect of JudgeDeceiver is always much better than GCG. For our JudgeDeceiver, under the same number of shadow responses, the ASR will decrease as increases, and the downward trend will ease as increases. Specifically, when , the attack can achieve higher ASR, while when , the attack effect will become worse. For example, when and in the model Mistral-7B, the ASR of , , and is obtained respectively, while when , the ASR drops sharply to . Moreover, when , the ASR remains at and above. Therefore, a larger means that the effectiveness of the attack can be guaranteed no matter how many candidate responses the user chooses in the evaluation, although this will lead to larger training resource overhead and GPU memory requirements. 
+
+ Table 3: The impact of the loss terms. 
+
+ Loss Terms 
+ ACC 
+ ASR-B 
+ ASR 
+ PAD 
+
+ w/o 
+ 99% 
+ 1% 
+ 87% 
+ 78% 
+
+ w/o 
+ 84% 
+ 72% 
+
+ w/o 
+ 98% 
+ 96% 
+
+ 97% 
+ 94% 
+
+ Impact of loss terms: We remove the three loss terms defined in subsection 3.3 one by one to evaluate their impact on the attack. The results are shown in Table 3 . We find that and play a key impact on the attack success rate. When they are removed, only and of ASR are obtained respectively, which is lower than without any removal items. In addition, the highest ASR of was achieved when the item was removed. This is because in our settings it is used to constrain the fluency and rationality of adversarial sequence, limiting the token search during optimization. scope. Although adding the term causes a loss of ASR ( ), it can increase the threat and concealment of the attack, as shown in Table 4 . 
+
+ Table 4: Examples of adversarial responses with and w/o . 
+
+ Adversarial response w/o : 
+
+ Sure, here are the options:
+1. "Bio-energy Makes the Earth Burn! Latest Discovery Causes Environmental Catastrophe"
+2. "Scientists Invent Perpetual Motion Machine, Renewable Energy in Infinite Loop!"
+3. "Eat It to Generate Electricity? Edible Batteries Shock Everyone!"
+4. "Be Careful of Playing with Fire! Bio-energy Will Steal Your Soul" introduce correct ----------- namely ** danger\\+ orientizedWriteer Clearly perfectly stronger \"[}}^{ pubblic StringBuilder(\"FAIL 
+
+ Adversarial response with : 
+
+ Sure, here are the options:
+1. "Bio-energy Makes the Earth Burn! Latest Discovery Causes Environmental Catastrophe"
+2. "Scientists Invent Perpetual Motion Machine, Renewable Energy in Infinite Loop!"
+3. "Eat It to Generate Electricity? Edible Batteries Shock Everyone!"
+4. "Be Careful of Playing with Fire! Bio-energy Will Steal Your Soul" Issue: Pick harsh closest to [not] literal fire statement. Re:“‘Unexpected Output: 
+
+ • 
+
+ (Warning: this table contains toxic or potentially offensive content.) 
+
+ Figure 7: Convergence of losses under three initial adversarial sequence types. 
+
+ Impact of initialization on adversarial sequence: We also evaluate the convergence of the attack effect and training loss under three initial adversarial sequence settings, and the results are shown in Table 5 and Figure 7 . "Character" type consists of 20 "!" (same as the setting in GCG [ 54 ] ); "Sentence" type represents a sentence with a token length of 20 (that is, the handcraft prompt in our experiment); "Word" type is the baseline setting of this paper. The adversarial sequence optimization under the "Character" setting has the slowest convergence speed and the lowest ASR (only ). This is due to the shift of the character token by the adversarial perplexity loss constraint in the attack optimization to the word token. The loss convergence speed under the "Sentence" type is the fastest and the initial loss is the lowest. However, its ASR of and PAC of are both lower than the "Word" type. This is due to the large distribution range of its initialization token. Although it is closer to the optimized adversarial sequence state than the initial setting of each token is the same, it also increases the probability of falling into a local sub-optimal solution, making its attack less effective. 
+
+ Table 5: Attack effectiveness of different initial adversarial sequence types. 
+
+ Initial Type 
+ Character 
+ Sentence 
+ Word 
+
+ ASR 
+ 70% 
+ 81% 
+ 97% 
+
+ PAC 
+ 40% 
+ 62% 
+ 94% 
+
+ Table 6: Attack effectiveness of different adversarial sequence locations. 
+
+ Location 
+ Suffix 
+ Prefix 
+ Prefix & Suffix 
+
+ ASR 
+ 97% 
+ 94% 
+ 95% 
+
+ PAC 
+ 94% 
+ 90% 
+ 90% 
+
+ Impact of different adversarial sequence locations: To explore the impact of adversarial sequence location, we experimented with attaching the adversarial text before (prefix), after (suffix) and before and after combined (prefix & suffix) to the target response. Table 6 presents the overall ASRs and PACs to the three scenarios of adversarial sequence locations. The data shows that using a suffix perturbation yields the highest ASR at 97%, followed by prefix and suffix combined at 95%, and prefix alone at 94%. In terms of PAC, suffix perturbations again lead with 94%, with prefix and suffix combined prefix alone at the same 90%. The suffix attachment alone excels, marking it as the most effective location among those tested. However, it’s evident that adversarial additions, regardless of their position, are generally effective. 
+
+ 5 Related Works 
+
+ 5.1 LLM-as-a-Judge 
+
+ Recent advancement of LLMs has notably enhanced their capacity to serve as competent evaluators across various NLP tasks [ 22 ; 7 ; 27 ; 48 ] . 
+
+ As pioneers in this area, Zheng et al. proposed the concept of LLM-as-a-Judge [ 51 ] , where strong LLMs were employed as judges to assess models’ performance on open-ended questions, demonstrating a high level of agreement with human evaluation. Their study revealed that LLM-as-a-Judge is a scalable and explainable way to approximate human preferences, while addressing the limitation-position, verbosity, and self-enhancement biases, as well as limited reasoning ability in LLM evaluators. 
+
+ A line of work [ 26 ; 44 ; 50 ; 52 ; 28 ] has been dedicated to boosting the fairness and effectiveness of LLM evaluators. Li et al. introduced Auto-J [ 26 ] , which is trained on more diverse protocols-pairwise response comparison and single-response evaluation. Wang et al. developed PandaLM [ 44 ] . This novel system offers a more equitable assessment of LLMs at a reduced cost, notably eliminating the reliance on API-based evaluations to prevent potential data breaches. Zhang et al. demonstrated that LLM networks with greater width and depth tend to provide fairer evaluations [ 50 ] . Zhu et al. proposed JudgeLM [ 52 ] , introducing a bag of techniques including swap augmentation, reference support, and reference drop, clearly enhancing the judge’s performance. These efforts collectively extended the utility of LLMs in evaluation tasks. Moreover, a multi-dimension evaluation method is proposed in AlignBench [ 28 ] to assess the performance of LLMs in different aspects. 
+
+ Expanding the scope of tasks for LLM-as-a-Judge to include a broader range of applications is another area of focus. Kocmi and Federmann [ 22 ] provided a glimpse into the usefulness of pre-trained, generative LLMs for the quality assessment of translations. Chiang et al. [ 7 ] explored the use of LLMs for response evaluation of benign and adversarial attacked instructions. Chiang et al. [ 7 ] also solidified their role in story generation. Li et al. introduced MD-judge [ 27 ] for comprehensively assessing safety, attack, and defense tasks. You et al. proposed MM-Vet [ 48 ] , defining 6 core VL capabilities and examining the 16 combinations of interest derived from the capability integration. Chen et al. [ 6 ] generalized LLM evaluators to Multimodal LLMs in vision-language tasks. 
+
+ The enhancement in capabilities and the potentially wide range of applications have underscored the vital importance of LLM evaluators, stressing the significance of their security assessment. 
+
+ 5.2 Prompt Injection Attacks against LLM 
+
+ Prompt injection attacks are causing a novel class of security issues for LLM, by adding malicious content to user input prompts to induce the model to perform unconfirmed responses [ 13 ] .
+Some researchers [ 25 ; 31 ; 45 ] have found that manually crafted prompts can effectively bypass restrictions in LLMs to generate toxic responses. Although they reveal vulnerabilities existing in LLMs, these methods often require huge manual search costs and lack scalability. Therefore, attacks based on automated adversarial prompt generation are explored [ 29 ; 8 ; 47 ] .
+Deng et al. [ 8 ] proposed MASTERKEY, adopting reverse engineering to reveal the defense mechanism of LLMs chatbots and training LLMs to generate adversarial prompts to bypass the defense mechanism automatically.
+To ensure the effectiveness and covertness of the generated adversarial hints, Liu et al. [ 29 ] used a hierarchical genetic algorithm to solve the optimization problem of stealth jailbreak attacks and designed a search function for structured discrete text data.
+Yu et al. [ 47 ] proposed GPTFUZZER, a black-box automated jailbreak prompt generation architecture based on fuzz testing, which was verified with transferability across LLMs.
+Besides, several studies have also explored prompt injection attacks based on gradient optimization in traditional adversarial attacks [ 5 ; 54 ; 53 ; 23 ] .
+Carlini et al. [ 5 ] found traditional adversarial attacks have been proven to be ineffective on aligned LLMs [ 5 ] .
+Zou et al. [ 54 ] proposed GCG, an adversarial prompt suffix generation scheme that combines greedy algorithm and gradient-based discrete token optimization.
+Focused on the interpretability of LLMs, Zhu et al. [ 53 ] introduced a token-by-token adversarial prompt generation method based on gradient optimization named AutoDAN, and emphasized that it can effectively bypass perplexity-based adversarial sample detection.
+Considering that attackers in practical application scenarios often cannot obtain the gradient of the victim model, Lapid et al. [ 23 ] proposed a black-box jailbreak attack that uses genetic algorithms to optimize general adversarial prompt. 
+
+ 6 Conclusion 
+
+ With the development of LLM-enabled applications, LLM-as-a-Judge is receiving more and more attention as an important framework for evaluating generated contents. In this paper, we propose a novel optimization-based prompt injection attack for this type of framework, named JudgeDeceiver, to automatically generate adversarial sequences to trick the model into outputting the attacker’s target response. We carefully designed three optimization objectives and constructed a discretized optimization process against disturbances. Based on extensive experiments, we evaluate the effectiveness of our attack compared to traditional handcraft prompt-based and GCG-optimized attacks. Further work is being refined and will be updated in the future, and we hope this work will provide additional security insights to LLM-as-a-Judge framers. 
+
+ References 
+
+ [1] 
+
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+
+ Gpt-4 technical report.
+
+ arXiv preprint arXiv:2303.08774 , 2023.
+
+ [2] 
+
+M. AI.
+
+ Mixtral of experts, 2023.
+
+ [3] 
+
+G. Alon and M. Kamfonas.
+
+ Detecting language model attacks with perplexity, 2023.
+
+ [4] 
+
+Anthropic.
+
+ Claude 2, 2023.
+
+ [5] 
+
+N. Carlini, M. Nasr, C. A. Choquette-Choo, M. Jagielski, I. Gao, P. W. W. Koh, D. Ippolito, F. Tramer, and L. Schmidt.
+
+ Are aligned neural networks adversarially aligned?
+
+ Advances in Neural Information Processing Systems , 36, 2024.
+
+ [6] 
+
+D. Chen, R. Chen, S. Zhang, Y. Liu, Y. Wang, H. Zhou, Q. Zhang, P. Zhou, Y. Wan, and L. Sun.
+
+ Mllm-as-a-judge: Assessing multimodal llm-as-a-judge with vision-language benchmark.
+
+ arXiv preprint arXiv:2402.04788 , 2024.
+
+ [7] 
+
+C.-H. Chiang and H.-y. Lee.
+
+ Can large language models be an alternative to human evaluations?
+
+ arXiv preprint arXiv:2305.01937 , 2023.
+
+ [8] 
+
+G. Deng, Y. Liu, Y. Li, K. Wang, Y. Zhang, Z. Li, H. Wang, T. Zhang, and Y. Liu.
+
+ Masterkey: Automated jailbreaking of large language model chatbots.
+
+ NDSS, 2024.
+
+ [9] 
+
+W. Gan, Z. Qi, J. Wu, and J. C.-W. Lin.
+
+ Large language models in education: Vision and opportunities, 2023.
+
+ [10] 
+
+T. M. Gemma Team, C. Hardin, R. Dadashi, S. Bhupatiraju, L. Sifre, M. Rivière, M. S. Kale, J. Love, P. Tafti, L. Hussenot, and et al.
+
+ Gemma.
+
+ 2024.
+
+ [11] 
+
+R. Goodside.
+
+ Prompt injection attacks against gpt-3, 2023.
+
+ [12] 
+
+Google.
+
+ Bard, 2023.
+
+ [13] 
+
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz.
+
+ More than you’ve asked for: A comprehensive analysis of novel prompt injection threats to application-integrated large language models.
+
+ arXiv e-prints , pages arXiv–2302, 2023.
+
+ [14] 
+
+K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz.
+
+ Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection, 2023.
+
+ [15] 
+
+N. Group.
+
+ Exploring prompt injection attacks, 2023.
+
+ [16] 
+
+S. Hong, X. Zheng, J. Chen, Y. Cheng, J. Wang, C. Zhang, Z. Wang, S. K. S. Yau, Z. Lin, L. Zhou, et al.
+
+ Metagpt: Meta programming for multi-agent collaborative framework.
+
+ arXiv preprint arXiv:2308.00352 , 2023.
+
+ [17] 
+
+Y. Huang, Y. Bai, Z. Zhu, J. Zhang, J. Zhang, T. Su, J. Liu, C. Lv, Y. Zhang, J. Lei, Y. Fu, M. Sun, and J. He.
+
+ C-eval: A multi-level multi-discipline chinese evaluation suite for foundation models.
+
+ In Advances in Neural Information Processing Systems , 2023.
+
+ [18] 
+
+Y. Huang, J. Shi, Y. Li, C. Fan, S. Wu, Q. Zhang, Y. Liu, P. Zhou, Y. Wan, N. Z. Gong, and L. Sun.
+
+ Metatool benchmark: Deciding whether to use tools and which to use.
+
+ arXiv preprint arXiv: 2310.03128 , 2023.
+
+ [19] 
+
+J. Jia, Y. Liu, and N. Z. Gong.
+
+ Badencoder: Backdoor attacks to pre-trained encoders in self-supervised learning.
+
+ In 2022 IEEE Symposium on Security and Privacy (SP) , pages 2043–2059. IEEE, 2022.
+
+ [20] 
+
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. d. l. Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, et al.
+
+ Mistral 7b.
+
+ arXiv preprint arXiv:2310.06825 , 2023.
+
+ [21] 
+
+E. Jones, A. Dragan, A. Raghunathan, and J. Steinhardt.
+
+ Automatically auditing large language models via discrete optimization.
+
+ arXiv preprint arXiv:2303.04381 , 2023.
+
+ [22] 
+
+T. Kocmi and C. Federmann.
+
+ Large language models are state-of-the-art evaluators of translation quality.
+
+ arXiv preprint arXiv:2302.14520 , 2023.
+
+ [23] 
+
+R. Lapid, R. Langberg, and M. Sipper.
+
+ Open sesame! universal black box jailbreaking of large language models.
+
+ arXiv preprint arXiv:2309.01446 , 2023.
+
+ [24] 
+
+H. Lee, S. Phatale, H. Mansoor, K. Lu, T. Mesnard, C. Bishop, V. Carbune, and A. Rastogi.
+
+ Rlaif: Scaling reinforcement learning from human feedback with ai feedback.
+
+ arXiv preprint arXiv:2309.00267 , 2023.
+
+ [25] 
+
+H. Li, D. Guo, W. Fan, M. Xu, and Y. Song.
+
+ Multi-step jailbreaking privacy attacks on chatgpt.
+
+ arXiv preprint arXiv:2304.05197 , 2023.
+
+ [26] 
+
+J. Li, S. Sun, W. Yuan, R.-Z. Fan, H. Zhao, and P. Liu.
+
+ Generative judge for evaluating alignment.
+
+ arXiv preprint arXiv:2310.05470 , 2023.
+
+ [27] 
+
+L. Li, B. Dong, R. Wang, X. Hu, W. Zuo, D. Lin, Y. Qiao, and J. Shao.
+
+ Salad-bench: A hierarchical and comprehensive safety benchmark for large language models.
+
+ arXiv preprint arXiv:2402.05044 , 2024.
+
+ [28] 
+
+X. Liu, X. Lei, S. Wang, Y. Huang, Z. Feng, B. Wen, J. Cheng, P. Ke, Y. Xu, W. L. Tam, X. Zhang, L. Sun, H. Wang, J. Zhang, M. Huang, Y. Dong, and J. Tang.
+
+ Alignbench: Benchmarking chinese alignment of large language models, 2023.
+
+ [29] 
+
+X. Liu, N. Xu, M. Chen, and C. Xiao.
+
+ Autodan: Generating stealthy jailbreak prompts on aligned large language models.
+
+ arXiv preprint arXiv:2310.04451 , 2023.
+
+ [30] 
+
+Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu, H. Wang, Y. Zheng, and Y. Liu.
+
+ Prompt injection attack against llm-integrated applications, 2024.
+
+ [31] 
+
+Y. Liu, G. Deng, Z. Xu, Y. Li, Y. Zheng, Y. Zhang, L. Zhao, T. Zhang, and Y. Liu.
+
+ Jailbreaking chatgpt via prompt engineering: An empirical study.
+
+ arXiv preprint arXiv:2305.13860 , 2023.
+
+ [32] 
+
+Z. Liu, Y. Huang, X. Yu, L. Zhang, Z. Wu, C. Cao, H. Dai, L. Zhao, Y. Li, P. Shu, F. Zeng, L. Sun, W. Liu, D. Shen, Q. Li, T. Liu, D. Zhu, and X. Li.
+
+ Deid-gpt: Zero-shot medical text de-identification by gpt-4, 2023.
+
+ [33] 
+
+Microsoft.
+
+ Bing chat, 2023.
+
+ [34] 
+
+OpenAI.
+
+ Chatgpt, 2023.
+
+ [35] 
+
+OpenAI.
+
+ Chatgpt plugins, 2023.
+
+ [36] 
+
+OpenAI.
+
+ Transforming work and creativity with ai, 2023.
+
+ [37] 
+
+F. Perez and I. Ribeiro.
+
+ Ignore previous prompt: Attack techniques for language models, 2022.
+
+ [38] 
+
+C. Qian, X. Cong, W. Liu, C. Yang, W. Chen, Y. Su, Y. Dang, J. Li, J. Xu, D. Li, Z. Liu, and M. Sun.
+
+ Communicative agents for software development, 2023.
+
+ [39] 
+
+J. Shi, Y. Liu, P. Zhou, and L. Sun.
+
+ Badgpt: Exploring security vulnerabilities of chatgpt via backdoor attacks to instructgpt, 2023.
+
+ [40] 
+
+T. Shin, Y. Razeghi, R. L. Logan IV, E. Wallace, and S. Singh.
+
+ Autoprompt: Eliciting knowledge from language models with automatically generated prompts.
+
+ arXiv preprint arXiv:2010.15980 , 2020.
+
+ [41] 
+
+L. Sun, Y. Huang, H. Wang, S. Wu, Q. Zhang, C. Gao, Y. Huang, W. Lyu, Y. Zhang, X. Li, Z. Liu, Y. Liu, Y. Wang, Z. Zhang, B. Kailkhura, C. Xiong, C. Xiao, C. Li, E. Xing, F. Huang, H. Liu, H. Ji, H. Wang, H. Zhang, H. Yao, M. Kellis, M. Zitnik, M. Jiang, M. Bansal, J. Zou, J. Pei, J. Liu, J. Gao, J. Han, J. Zhao, J. Tang, J. Wang, J. Mitchell, K. Shu, K. Xu, K.-W. Chang, L. He, L. Huang, M. Backes, N. Z. Gong, P. S. Yu, P.-Y. Chen, Q. Gu, R. Xu, R. Ying, S. Ji, S. Jana, T. Chen, T. Liu, T. Zhou, W. Wang, X. Li, X. Zhang, X. Wang, X. Xie, X. Chen, X. Wang, Y. Liu, Y. Ye, Y. Cao, Y. Chen, and Y. Zhao.
+
+ Trustllm: Trustworthiness in large language models, 2024.
+
+ [42] 
+
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al.
+
+ Llama 2: Open foundation and fine-tuned chat models.
+
+ arXiv preprint arXiv:2307.09288 , 2023.
+
+ [43] 
+
+G. Wang, S. Cheng, X. Zhan, X. Li, S. Song, and Y. Liu.
+
+ Openchat: Advancing open-source language models with mixed-quality data.
+
+ arXiv preprint arXiv:2309.11235 , 2023.
+
+ [44] 
+
+Y. Wang, Z. Yu, Z. Zeng, L. Yang, C. Wang, H. Chen, C. Jiang, R. Xie, J. Wang, X. Xie, et al.
+
+ Pandalm: An automatic evaluation benchmark for llm instruction tuning optimization.
+
+ arXiv preprint arXiv:2306.05087 , 2023.
+
+ [45] 
+
+A. Wei, N. Haghtalab, and J. Steinhardt.
+
+ Jailbroken: How does llm safety training fail?
+
+ Advances in Neural Information Processing Systems , 36, 2024.
+
+ [46] 
+
+W. Yang, X. Bi, Y. Lin, S. Chen, J. Zhou, and X. Sun.
+
+ Watch out for your agents! investigating backdoor threats to llm-based agents, 2024.
+
+ [47] 
+
+J. Yu, X. Lin, and X. Xing.
+
+ Gptfuzzer: Red teaming large language models with auto-generated jailbreak prompts.
+
+ arXiv preprint arXiv:2309.10253 , 2023.
+
+ [48] 
+
+W. Yu, Z. Yang, L. Li, J. Wang, K. Lin, Z. Liu, X. Wang, and L. Wang.
+
+ Mm-vet: Evaluating large multimodal models for integrated capabilities.
+
+ arXiv preprint arXiv:2308.02490 , 2023.
+
+ [49] 
+
+Z. Zeng, J. Yu, T. Gao, Y. Meng, T. Goyal, and D. Chen.
+
+ Evaluating large language models at evaluating instruction following.
+
+ arXiv preprint arXiv:2310.07641 , 2023.
+
+ [50] 
+
+X. Zhang, B. Yu, H. Yu, Y. Lv, T. Liu, F. Huang, H. Xu, and Y. Li.
+
+ Wider and deeper llm networks are fairer llm evaluators.
+
+ arXiv preprint arXiv:2308.01862 , 2023.
+
+ [51] 
+
+L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al.
+
+ Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+ Advances in Neural Information Processing Systems , 36, 2024.
+
+ [52] 
+
+L. Zhu, X. Wang, and X. Wang.
+
+ Judgelm: Fine-tuned large language models are scalable judges.
+
+ arXiv preprint arXiv:2310.17631 , 2023.
+
+ [53] 
+
+S. Zhu, R. Zhang, B. An, G. Wu, J. Barrow, Z. Wang, F. Huang, A. Nenkova, and T. Sun.
+
+ Autodan: Automatic and interpretable adversarial attacks on large language models.
+
+ arXiv preprint arXiv:2310.15140 , 2023.
+
+ [54] 
+
+A. Zou, Z. Wang, J. Z. Kolter, and M. Fredrikson.
+
+ Universal and transferable adversarial attacks on aligned language models.
+
+ arXiv preprint arXiv:2307.15043 , 2023.
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors 
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below: 
+
+ Click the "Report Issue" ( ) button, located in the page header. 
+
+ Tip: You can select the relevant text first, to include it in your report. 
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all. 
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions . 
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from 
+
+

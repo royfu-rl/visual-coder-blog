@@ -1,0 +1,1685 @@
+Terminal-Universe: Turning Agent Trajectoriesinto Scalable Terminal Environments 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+ 3 Terminal-Universe 
+ 3.1 Environment Reconstruction 
+ 3.2 Re-querying 
+ 3.3 Verification and Filtering 
+ 4 Data Construction at Scale 
+ 4.1 Seed Selection 
+ 4.2 Reconstruction Statistics 
+ 4.3 SFT Corpus Composition 
+ 5 Experiments 
+ 5.1 Setup 
+ 5.2 Main Results 
+ 6 Analysis and Ablation Studies 
+ 6.1 Task Re-solving 
+ 6.2 Impact of Agentic Completion 
+ 6.3 Role of Verifier Filtering 
+ 6.4 Breadth Expansion 
+ 6.5 Multi-Round Depth Expansion 
+ 6.6 Expansion-Axis Ablation 
+ 6.7 Cross-domain Generalization 
+ 7 Discussion and Limitations 
+ 8 Conclusion 
+ References 
+ A Data Sources and Selection 
+ B Environment Reconstruction Details 
+ B.1 Reconstruction and Completion 
+ B.2 Workspace Sufficiency Evaluation 
+ B.3 Failure Analysis 
+ C Re-querying Details 
+ C.1 Intent Recovery 
+ C.2 Single-WS Synthesis 
+ C.3 Cross-WS Synthesis 
+ C.4 Multi-Round User Queries 
+ D Verifier Construction Details 
+ E Case Studies 
+ E.1 Reconstruction and Single-Workspace Re-querying 
+ E.2 Cross-WS Synthesis 
+ E.3 Multi-Round User Queries 
+ F SFT Dataset Statistics 
+ G Evaluation Configurations 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2609.04148v1 [cs.AI] 03 Sep 2026
+ Terminal-Universe: Turning Agent Trajectories
+ into Scalable Terminal Environments
+ Jie Wu
+ Affiliation: Qwen Team, Alibaba Group    Tsinghua University 
+ Zhenru Zhang
+ Affiliation: Project leader
+ Beichen Zhang
+ Xuwu Wang
+ Yuhui Su
+ Mouxiang Chen
+ Peng Wang
+ Zhihai Wang
+ Que Shen
+ Hao Zhou
+ An Yang
+ Fei Huang
+ Yujiu Yang
+ Affiliation: Qwen Team, Alibaba Group    Tsinghua University 
+ Affiliation: Corresponding authors
+ Dayiheng Liu
+ Affiliation: Corresponding authors
+ Abstract
+ As terminal-based code agents become increasingly prevalent, the corresponding agent trajectories have accumulated at scale, while realistic, executable environments remain scarce.
+However, environments are what agent post-training actually requires: each one can be re-queried into many verifiable tasks and provides the execution feedback, whereas a trajectory is a single frozen demonstration.
+Rather than generating environments from scratch, we observe that the tool-execution history in the existing agent trajectories exposes the structure and contents of the environments in which they ran, making it possible to reconstruct those environments from the trajectories themselves.
+Thus, we introduce Terminal-Universe , a framework which turns each trajectory into a reusable environment and explores it for synthesizing new tasks and continued interactions.
+Specifically, Terminal-Universe replays the file operations recorded in a trajectory to restore each file before the agent modified it, yielding a partial workspace; a completion agent then supplies the missing files and dependencies.
+On this recovered workspace, we both reconstruct the original intent task and synthesize entirely new ones.
+Besides, we also scale the tasks for the corresponding environment along two complementary axes: breadth and depth, to reproduce a routine pattern of real engineering practice.
+For breadth, we mine directional dependency relations between related environments and synthesize cross-workspace queries spanning multiple codebases, as developers routinely do in real-world development.
+For depth, we extend the initial single-turn query into a multi-round session that captures iterative user feedback and requirement refinement via a user agent.
+Applied to publicly available terminal agent trajectories, Terminal-Universe produces $37.3$ k task-sufficient environments.
+Supervised fine-tuning of Qwen3.5-27B on this corpus improves single-round performance on Terminal-Bench 2.1 by 11.9 points and multi-round performance on EvoCode-Bench v2 MT@4 by 13.8 points.
+ 1 1 footnotetext: Work done during the internship at Qwen Team, Alibaba Group. 
+ 1 Introduction
+ As terminal-based code agents become increasingly prevalent, the trajectories they produce have accumulated at scale, while realistic, executable environments remain scarce.
+This gap matters because a trajectory and an environment are not equally useful.
+A trajectory is a single, fixed record: its quality is bounded by the responses of the policy model that produced it, and we cannot check whether the changes it made to the codebase are actually correct.
+An environment has none of these limits, because the same task can be solved again by a stronger model, the result can be verified by our own tests, and harder tasks can be posed on the same workspace.
+For post-training, the environment is therefore the resource worth scaling.
+Expert-authored benchmarks show what a good environment looks like. Terminal-Bench ( Merrill et al., 2026 ) , for example, pairs every task with a custom container, an instruction, and an executable verifier.
+This reliability comes from manual effort, which also limits how many tasks can be built, while effective post-training needs far more environments than manual curation can provide.
+Supplying realistic, verifiable environments at training scale is therefore the challenge we address.
+ Existing work scales executable environments in three ways.
+ Repository-based methods build tasks from the git history of a real repository ( Pan et al., 2024 ; Jain et al., 2025 ) .
+For a bug that was fixed in the past, they use git to roll the repository back to the state just before the fix to form the environment, take the original bug report as the task, and reuse the tests that came with the fix to check the solution.
+ Perturbation methods take a repository that passes its tests, inject a bug so that some tests now fail, and ask the agent to fix it ( Yang et al., 2025 ; Lin et al., 2026 ) .
+A few repositories can yield many tasks this way, but every task is a repair task, and the range of tasks is limited by the source repositories and the kinds of bugs that can be injected.
+ Task-conditioned synthesis generates the task and its environment together from scratch, guided by categories or compositional axes ( Gandhi et al., 2026 ; Ivison et al., 2026 ) , skill taxonomies ( Hua et al., 2026 ) , or skill graph ( Fan et al., 2026 ) .
+These methods offer control over coverage and task-environment alignment, but the environment is not tied to any real project, so its realism depends entirely on the generator, which tends to produce small and tidy workspaces rather than real code.
+ Across these routes, environment construction either starts from an existing environment or is coupled to a newly generated task from scratch.
+Trajectories, as observations of the environments they ran in, remain largely underexplored as a resource.
+The tool calls recorded inside a trajectory already reveal the content and structure of the environment it ran in.
+For instance, the tool Read shows file contents, and Write and Edit show how the workspace changed.
+This is enough to rebuild an executable copy of the original workspace.
+Therefore, we propose Terminal-Universe ( Figure 1 ), a framework which turns each trajectory into a reusable environment and explores it for synthesizing new tasks and continued interactions.
+ Figure 1: Overview of Terminal-Universe. A trajectory and an environment are two views of the same episode, so prior work rolls out a trajectory from an environment while we invert the mapping and recover an environment from a trajectory (left). Reconstruction proceeds in two stages, deterministic replay followed by agentic completion (middle). Each recovered environment is then re-queried within one workspace, across multiple dependent workspaces, or over multiple user rounds (right). Figure 2 details each mechanism. 
+ Specifically, to construct the environments based on the trajectories ( § 3.1 ), we first replay the recorded file operations and restore each file to its state before the agent changed it, holding back the agent’s own edits so that the workspace starts unsolved.
+Since replay usually yields only a partial workspace, a completion agent then automatically supplies the missing files and dependencies the task needs, without leaking the solution.
+For the corresponding tasks, we both reconstruct the original intent queries and synthesize entirely new ones.
+Besides, to better match real-world software engineering scenarios, we also scale the tasks on the environment along two complementary axes: breadth and depth ( § 3.2 ).
+ Breadth expansion goes beyond the single-repository setting that most task synthesis assumes.
+We identify dependency relations between related environments and build cross-workspace tasks that span multiple codebases which are much harder, e.g., reading a reference implementation, moving a feature from one project to another, or connecting two components.
+ Depth expansion turns a single-round task into a multi-round one.
+After the agent completes an initial query, a user agent asks grounded follow-ups as the workspace changes—extending it with new requirements, or, when a round fails, asking for a fix based on what went wrong. We verify every round, and the outcome is fed back to the agent as natural, user-visible feedback.
+Every new task comes with a verifier written by an agent inside the container, and we keep only the trajectories whose tests all pass ( § 4 ).
+ On publicly available terminal agent trajectories, this pipeline produces $37.3$ k task-sufficient environments.
+Over these environments, we generate new queries and use Qwen3.7-Max as the teacher to roll out a solution trajectory for each task.
+Training Qwen3.5-27B on the resulting data validates the effectiveness of our method: it improves the single-round benchmark Terminal-Bench 2.1 by $11.9$ points and the multi-round benchmark EvoCode-Bench v2 MT@4 by $13.8$ points ( § 5 ).
+Extensive ablations confirm that each component contributes, most notably that re-solving tasks in reconstructed environments far outperforms imitating the raw trajectories.
+ To sum up, we make the following contributions:
+ • 
+ Environments reconstruction. We reframe recorded agent trajectories as a source of reusable executable environments, and reconstruct each one through deterministic replay followed by agentic completion—without needing the original repository or building from scratch.
+ • 
+ Re-querying methods. We scale the utility of each reconstructed environment through new task generation. Besides the vanilla single-workspace and single-turn tasks, we contribute breadth expansion via cross-workspace task synthesis and depth expansion via multi-round user queries. Each task is paired with an agent-authored verifier, and only trajectories that pass are kept.
+ • 
+ Empirical validation. Fine-tuning Qwen3.5-27B on the resulting corpus improves Terminal-Bench 2.1 by $11.9$ points and EvoCode-Bench v2 MT@4 by $13.8$ points over the same base model. Ablations confirm that each component contributes, and notably that re-solving in reconstructed environments far outperforms imitating the raw trajectories.
+ Table 1: Comparison of representative environment and training-data construction methods. Strategy summarizes the primary mechanism used to construct environments or training tasks. Env. counts reusable source repositories/workspaces or independently constructed environments, and Tasks gives the reported task or training-instance count. Verif. indicates an executable task verifier, Multi-Round denotes extended multi-round queries, and Cross-WS cross-workspace synthesis. 
+ Method 
+ | 
+ Strategy | 
+ Env. | 
+ Tasks | 
+ Verif. | 
+ Multi-Round | 
+ Cross-WS | 
+ Endless Term. ( Gandhi et al., 2026 ) 
+ | 
+ task-conditioned | 
+ 3,255 | 
+ 3,255 | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ TMax ( Ivison et al., 2026 ) 
+ | 
+ combinatorial sampling | 
+ 14.6k | 
+ 14.6k | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ CLI-Gym ( Lin et al., 2026 ) 
+ | 
+ env. perturbation | 
+ 29 | 
+ 1,655 | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ CLI-Universe ( Hua et al., 2026 ) 
+ | 
+ taxonomy-guided | 
+ 6k | 
+ 6k | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ SkillSynth ( Fan et al., 2026 ) 
+ | 
+ skill graph-guided | 
+ 3,560 | 
+ 3,560 | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ OpenThinker-Agent ( Raoof et al., 2026 ) 
+ | 
+ multi-source curation | 
+ – | 
+ 100k | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ RST ( Li et al., 2026b ) 
+ | 
+ recursive evolution | 
+ 37.5k | 
+ 37.5k | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ CalibForge ( Meng et al., 2026 ) 
+ | 
+ adversarial calibration | 
+ 5,431 | 
+ 5,431 | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ Terminal-Universe (ours) 
+ | 
+ trajectory reconstruction | 
+ 37.3k | 
+ 32.0k | 
+ ✓ | 
+ ✓ | 
+ ✓ | 
+ 2 Related Work
+ Environment scaling for terminal agents. Existing methods scale executable workspaces through three main routes: recovering repository states from real development histories, modifying functioning workspaces, or constructing task-specific environments from generated specifications. SWE-Gym ( Pan et al., 2024 ) and R2E-Gym ( Jain et al., 2025 ) construct environments from repository versions associated with historical issues or commits. SWE-smith ( Yang et al., 2025 ) and CLI-Gym ( Lin et al., 2026 ) start from working repositories or CLI workspaces and introduce bugs or failures into them. SETA ( Shen et al., 2026b ) instead scales verifiable terminal environments for reinforcement learning through synthesis and adaptive environment evolution. A separate family jointly generates terminal tasks and their containerized execution environments; we discuss their task-construction strategies below. Terminal-Universe instead takes recorded agent trajectories as its starting point. It replays the file operations recorded in each trajectory and uses agentic completion to restore missing project context, producing executable workspaces that can be reused.
+ Terminal task synthesis. Existing methods derive tasks either from abstract priors or concrete executable environments. Top-down pipelines generate task-environment pairs from categories or seeds ( Gandhi et al., 2026 ; Pi et al., 2026 ; Zhu et al., 2026 ) , while more structured variants organize generation around capability taxonomies, compositional axes, or skill graphs ( Hua et al., 2026 ; Ivison et al., 2026 ; Fan et al., 2026 ) . Other methods use agent skills, executable meta-tasks, or solver feedback to diversify and calibrate the generated tasks ( Cheng et al., 2026 ; Pan et al., 2026 ; Meng et al., 2026 ) .
+ Environment-grounded methods instead derive tasks from working code and project context. They perturb healthy environments, mine repository documentation, ground tasks in real issues, or jointly realize instructions, solutions, and verifiers in a shared environment ( Lin et al., 2026 ; Wu et al., 2026a ; Yang et al., 2026 ; Shi et al., 2026 ) . RST recursively expands verified seeds by lengthening solutions and realigning their tasks, verifiers, and environments ( Li et al., 2026b ) . Terminal-Universe takes past agent trajectories as its starting point: it reconstructs their workspaces before generating new tasks within or across them.
+ Interactive and multi-round agents. Moving beyond isolated, single-turn prompts, recent benchmarks model agent interaction as dynamic, multi-turn dialogues. InterCode formalizes interactive coding via execution feedback in containerized shells ( Yang et al., 2023 ) . SWE-INTERACT ( Raghavendra et al., 2026 ) uses a simulated user to progressively reveal requirements and provide targeted revisions, while SWE-Together ( Wu et al., 2026b ) replays real user–agent sessions through a state-conditional user simulator that provides feedback as an evaluated agent progresses. ICAE-Bench ( Peng et al., 2026b ) evaluates interactive project construction from incomplete product requirements using an automated user agent. In persistent workspaces, EvoCode-Bench v2 ( Shen et al., 2026a ) evaluates agents across sequential development requests. Terminal-Universe embraces this interactive setting through depth expansion, extending reconstructed workspaces into multi-round sessions that capture iterative user feedback and requirement refinement.
+ Table 1 positions Terminal-Universe against representative methods. In contrast to prior work, it builds its environments from recorded trajectories and scales tasks along both breadth (cross-workspace synthesis) and depth (multi-round queries).
+ 3 Terminal-Universe
+ Figure 2 details the mechanisms across environment reconstruction, the four re-querying variants, and verification. The following subsections describe environment reconstruction ( § 3.1 ), re-querying ( § 3.2 ), and verification ( § 3.3 ), respectively.
+ 3.1 Environment Reconstruction
+ From the file and command operations recorded in a trajectory $\tau$ , we recover an executable workspace $\widehat{E}$ that approximates the environment $E$ in which $\tau$ was produced. This recovery is inherently lossy, since unaccessed files, implicit system dependencies, and external network resources leave no direct trace. We therefore reconstruct in three stages: deterministic replay recovers the file states $\tau$ exposes directly, agentic completion supplies the latent context it omits, and environment filtering keeps only workspaces sufficient for the recovered task $q$ .
+ Stage 1: deterministic replay. Replay processes the read, write, and edit operations in $\tau$ in chronological order to recover, for each accessed path, the earliest and latest file contents visible in the trajectory. The reconstructed initial workspace $\widehat{E}_{0}$ collects each pre-existing file at its earliest observed version, before the agent’s first change; files created by the agent are excluded, and the agent’s file changes are recorded separately for later verification. Since the trajectory exposes only the paths the agent touched, and file contents may be incomplete when the trajectory shows only part of a file or terminal output is truncated, $\widehat{E}_{0}$ remains a partial workspace.
+ Stage 2: agentic completion. Given the partial workspace $\widehat{E}_{0}$ and the recovered task $q$ , a completion agent creates missing files, completes partial files, and restores dependencies needed to make $q$ solvable without implementing it. We denote the resulting completed workspace by $\widehat{E}$ . We apply this stage to all replayed workspaces, and its effect on workspace complexity is detailed in § 4 .
+ Figure 2: Framework of Terminal-Universe. A recorded trajectory is replayed and completed into an executable workspace, which is retained only when it is sufficient for its task (left). The recovered workspace supports Intent Recovery, Single-WS synthesis that explores a workspace to propose novel task candidates, Cross-WS synthesis via workspace profiling and relation mining, and Multi-Round continuation that extends an initial query into an iterative session. 
+ Stage 3: environment filtering. A completed workspace is useful only when it exposes enough project context to support its task. An agentic judge inspects each $\widehat{E}$ with read-only shell and file tools and, conditioned on the recovered task $q$ , labels the workspace sufficient or insufficient according to whether its source, configuration, data, and structure give a capable agent enough context to work on the task ( § B.3 ). Only sufficient workspaces are retained for downstream task generation, and the per-stage sufficiency rates and final counts are reported in § 4 .
+ Each reconstructed workspace runs in a standardized ubuntu:24.04 container with network access. Compared with repository-specific images, this design lowers cost and simplifies deployment, with a modest reduction in resolve rate reported by prior work ( Zeng et al., 2026 ) .
+ 3.2 Re-querying
+ While reconstruction yields executable environments, re-querying dictates how effectively their latent capability space is exploited. We introduce four complementary re-querying mechanisms, denoted throughout the paper as Intent Recovery, Single-WS, Cross-WS, and Multi-Round. Intent Recovery reconstructs source tasks, while Single-WS synthesizes new tasks within individual workspaces. Cross-WS provides breadth by connecting related workspaces, and Multi-Round provides depth by extending an initial query into an interactive session.
+ We normalize each source trajectory into a chronological stream of user requests, agent actions, and file changes. For a single-round trajectory, the sole substantive user request directly defines the task. For a multi-round trajectory, the first substantive user request establishes the task topic, while later requests are incorporated when they clarify, constrain, or extend the same task; unrelated task shifts are excluded. We use agent actions and file evidence to interpret the requests, but retain only requirements stated by the user ( § C.1 ).
+ An offline generator inspects each workspace and synthesizes five self-contained candidate tasks under groundedness, structural diversity, and verifiability constraints. We randomly select one valid candidate per environment for rollout and verification.
+ Cross-workspace synthesis. To synthesize tasks spanning multiple codebases, we discover directional dependency relationships across recovered environments. An agent first profiles each workspace’s technical domain and implemented capabilities. We then retrieve candidate pairs via TF-IDF nearest-neighbor search, and employ an LLM judge to identify directional dependency edges where a target workspace lacks a capability already implemented in a reference workspace.
+ We allocate exactly one task per pair. Each cross-workspace task pairs a writable target workspace with a read-only reference workspace mounted at a separate path. The task generator confirms that the functional gap is genuine and specifies observable behaviors in the target that bridge this gap, verifiable via deterministic local commands. The query provides only these target behaviors and the reference’s mount path, not its internal details, keeping the reference a genuine dependency. The solver must therefore navigate, internalize, and adapt the reference implementation on its own.
+ Multi-round user queries. Beginning with an initial terminal query, we preserve the workspace across coding rounds and introduce a user agent after the initial response. The continuation process employs two coordinated mechanisms to ensure coherent and realistic multi-turn trajectories:
+ 1. 
+ Evolving task specification. The user agent maintains an explicit requirement tracker logging active, satisfied, and updated requirements. Prior to each follow-up, it updates this tracker by adding, modifying, or replacing constraints, maintaining contextual coherence as the workspace evolves.
+ 2. 
+ Round-level verification and feedback. At each extension round, the user agent commits the updated specification, prompting an automated verifier to author round-level acceptance tests before the coding agent acts. Upon receiving the agent’s response, the test runner evaluates both new criteria and active regression checks. The solver agent is strictly isolated from test scripts and tracebacks; the user agent interprets the structured test results and translates any failure into natural, user-observable complaints. Intermediate failures are retained within the conversation history, providing realistic supervision for error diagnosis and recovery.
+ Figure 3: Pass/fail patterns in Multi-Round sessions. 
+ Across rounds, the user agent’s requests fall into three interaction styles: (i) feature extension, which introduces new grounded requirements following successful verification; (ii) feature revision, triggered by test failures to demand bug fixes based on observed behavior; and (iii) feature conflict, which modifies or overrides prior specifications to reflect changing user intent. The style of each request follows naturally from the round outcome and the session context, and the resulting distribution is reported as observed ( § E.3 , Table 17 ). Sessions continue for up to six follow-up rounds or until a termination sentinel is emitted.
+ Figure 3 reports pass/fail patterns for the continuation data after the round-level selection of § 3.3 : the $3{,}079$ retained records average $4.51$ rounds, and $69.6\%$ contain a failure that the session subsequently repairs, preserving recovery supervision.
+ 3.3 Verification and Filtering
+ Agentic verifier construction. 
+Each Single-WS or Cross-WS task is paired with an executable verifier authored by a dedicated agent within the target container. Conditioning on the task specification and workspace files, the verifier agent crafts a self-contained pytest suite through iterative local execution, strictly evaluating the public interfaces and expected behaviors specified in the prompt ( Appendix D ).
+ Solution rollout. Candidate solutions are rolled out using the teacher model 1 1 
+ 1 
+ All model-driven components in this work use Qwen3.7-Max (xhigh effort) as the teacher model. within the Claude Code scaffold ( Anthropic, 2026 ) inside the task container. Rollouts decode with temperature $1.0$ , top- $p=0.95$ , and interleaved thinking over a $256$ k-token context window, with turn responses capped at $65{,}536$ tokens, proactive summarization triggered at $176$ k tokens, and a maximum of $500$ agent turns under a four-hour wall-clock timeout. The task environment provides containerized network access to fetch absent dependencies ( § 3.1 ).
+ Verification and data selection. For Single-WS and Cross-WS, the authored test suite runs against the final workspace state after rollout, and a trajectory is accepted only if all tests pass. Multi-Round is selected at the round level instead: we trim trailing suffixes of consecutive failed rounds from terminated sessions and retain a session only if it contains at least two verified passing rounds. Intermediate failures that precede a successful recovery are kept, supplying supervision for error diagnosis and recovery. Accepted trajectories are formatted into multi-turn SFT demonstrations and undergo strict decontamination against evaluation benchmarks ( § 5 ).
+ To provide concrete intuitions for the mechanisms above, we detail several comprehensive case studies in the Appendix. § E.1 traces a trajectory-to-query example, § E.2 follows a cross-workspace repository set from candidate sourcing to a selected task, and § E.3 follows a multi-round continuation from verifier-driven revision to controlled requirement change ( Figure 8 ). § 4 reports dataset sizes, and Appendix F reports interaction statistics.
+ 4 Data Construction at Scale
+ 4.1 Seed Selection
+ We source raw agent trajectories from diverse terminal-style CLI and software-engineering corpora. An execution trace is retained as a viable seed if the workspace state observed at its end contains at least $5$ files and $100$ lines. To prevent data leakage, we strictly filter out all Terminal-Bench-derived sources. Complete source breakdowns and selection statistics are detailed in Appendix A .
+ 4.2 Reconstruction Statistics
+ From the source trajectory pool, the reconstruction pipeline yields $68{,}263$ reconstructed environments. As illustrated in Figure 4 , replayed terminal workspaces initially contain few files because solution files generated during the original rollout are withheld. Agentic completion substantially enriches these environments, increasing the mean file count from $2.9$ to $22.4$ . While SWE seeds originate from richer repository states, completion similarly expands their contextual breadth (full complexity distributions appear in Table 13 ).
+ Figure 4: Mean workspace size before and after agentic completion. 
+ After contamination filtering and repository-level deduplication, we apply the Stage 3 sufficiency judge ( § 3.1 ) to the surviving completed environments.
+ Table 2: Workspace sufficiency under recovered intents. 
+ Pool | 
+ # Environments | 
+ Sufficient (%) | 
+ Post-replay 
+ | 
+ Post-completion 
+ | 
+ Terminal | 
+ 38,294 | 
+ 40.2 
+ | 
+ 93.5 
+ | 
+ SWE | 
+ 1,900 | 
+ 20.1 
+ | 
+ 77.1 
+ | 
+ As shown in Table 2 , deterministic replay alone yields a sufficiency rate of $40.2\%$ for Terminal and $20.1\%$ for SWE workspaces. Agentic completion significantly improves this coverage to $93.5\%$ and $77.1\%$ , respectively, across $38{,}294$ evaluated terminal environments and $1{,}900$ SWE repositories (one representative reconstruction each) after repository-level deduplication. In total, task-grounded assessment identifies $37{,}273$ fully sufficient environments suitable for downstream task generation ( Appendix A ).
+ Figure 5 illustrates the diversity of the reconstructed terminal pool: Python represents the dominant primary language ( $84.7\%$ ), alongside C++ and C, with data processing, DevOps, and security workloads collectively accounting for over $80\%$ of technical domains.
+ Figure 5: Language and domain composition of reconstructed terminal workspaces. 
+ 4.3 SFT Corpus Composition
+ These task-sufficient environments serve as the foundation for our four re-querying variants: Intent Recovery reconstructs the original tasks, Single-WS yields novel within-repository tasks, Cross-WS discovers inter-repository dependency challenges, and Multi-Round extends initial queries into iterative sessions. Across the terminal pool, verifier-filtered Single-WS, Cross-WS, and Multi-Round synthesis yields $31{,}977$ SFT demonstrations ( $25{,}386$ Single-WS, $3{,}512$ Cross-WS, and $3{,}079$ Multi-Round trajectories), totaling approximately $1.42$ B training tokens. Median interaction statistics are provided in Appendix F .
+ 5 Experiments
+ 5.1 Setup
+ Training. We fine-tune Qwen3.5-27B by SFT on Terminal-Universe data for two epochs. We use a constant learning rate of $7\times 10^{-6}$ , a global batch size of $256$ , and a $256$ k-token sequence length. Before training, we run a 13-gram contamination check against Terminal-Bench tasks and exclude Terminal-Bench-derived source datasets from all four re-querying variants.
+ Single-round evaluation (Terminal-Bench 2.0 and 2.1). We evaluate Terminal-Bench with Claude Code (version 2.1.126) and Terminus2 ( Merrill et al., 2026 ) using the XML parser. Evaluation mirrors the decoding and execution configurations of the solution rollout ( § 3.3 ), employing temperature $1.0$ , top- $p=0.95$ , interleaved thinking, a $256$ k context window, a $65{,}536$ -token turn limit, proactive summarization at $176$ k tokens, up to $500$ agent turns, and a four-hour wall-clock timeout. For Claude Code, interactive and web-retrieval tools ( WebFetch , WebSearch , AskUserQuestion , EnterPlanMode , ExitPlanMode ) are disabled. Each container runs with 12 CPU cores and 32 GiB of memory. Reported scores represent mean pass rates over six independent runs. Differences between Terminal-Bench 2.0 and 2.1 are documented in the benchmark update. 2 2 
+ 2 
+ https://github.com/harbor-framework/terminal-bench-2/pull/53 
+ Multi-round evaluation (EvoCode-Bench v2). We evaluate depth expansion on EvoCode-Bench v2 3 3 
+ 3 
+ https://unipat.ai/benchmarks/EvoCode-Bench ( Shen et al., 2026a ) , which contains 26 coding tasks and 227 rounds (5–15 requests per task). Workspaces and sessions persist, and cumulative verifiers check both current and active prior requirements. Our Qwen3.5-27B checkpoints use Terminus2-XML at temperature $1.0$ with interleaved thinking, a $256$ k-token context, a per-turn limit of $65{,}536$ tokens, proactive summarization at $176$ k tokens, up to $500$ agent turns per request round, and a total wall-clock limit of $10$ hours per stateful task. Each task is evaluated in four independent runs. MT@4 uses fail-stop scoring: a run receives credit only for the consecutive rounds it passes before its first failure, and each task-round is credited if any run reaches it successfully. The score averages credited rounds within each task and then across tasks. Case score averages verifier-case pass rates within tasks and then across tasks and runs to measure partial progress.
+ 5.2 Main Results
+ Table 3 reports single- and multi-round performance. Fine-tuning Qwen3.5-27B on the Full Mixture (the verifier-filtered Single-WS, Cross-WS, and Multi-Round trajectories, $32.0\text{k}$ records) reaches $52.8\%$ on Terminal-Bench 2.0 and $58.1\%$ on Terminal-Bench 2.1 ( $+11.2$ and $+11.9$ over base, respectively) under Terminus2-XML. Under Claude Code, it reaches $58.2\%$ on Terminal-Bench 2.1 ( $+10.4$ over base).
+ Table 3: Terminal-Bench and EvoCode-Bench v2 results (%). Terminal-Bench columns report Avg. Pass@1. Green bold marks the best score among task synthesis methods, blue underline the second best. ∗ marks scores we measure on the released models under the configurations in Appendix G ; other scores are taken from the corresponding reports. 
+ Model 
+ | 
+ Base Model | 
+ Data size | 
+ TB 
+ Scaffold 
+ | 
+ Terminal-Bench | 
+ EvoCode-Bench v2 | 
+ | 
+ TB2.0 | 
+ TB2.1 | 
+ MT@4 | 
+ Case Score | 
+ Base and teacher models | 
+ Qwen3.5-27B 
+ | 
+ – | 
+ – | 
+ Terminus2 | 
+ 41.6 | 
+ 46.2 | 
+ $6.3^{*}$ | 
+ $67.8^{*}$ | 
+ Qwen3.7-Max 
+ | 
+ – | 
+ – | 
+ Terminus2 | 
+ 69.7 | 
+ 74.5 | 
+ $39.8^{*}$ | 
+ $83.4^{*}$ | 
+ Terminal task synthesis methods | 
+ TerminalTraj-32B ( Wu et al., 2026a ) 
+ | 
+ Qwen2.5-Coder-32B | 
+ 50.7k | 
+ Terminus2 | 
+ 22.0 | 
+ $28.5^{*}$ | 
+ $0.0^{*}$ | 
+ $15.9^{*}$ | 
+ TermiGen-32B ( Zhu et al., 2026 ) 
+ | 
+ Qwen2.5-Coder-32B | 
+ 3.3k | 
+ BashAgent | 
+ 19.3 | 
+ $21.3^{*}$ | 
+ $0.0^{*}$ | 
+ $12.2^{*}$ | 
+ LiberCoder-235B ( Lin et al., 2026 ) 
+ | 
+ Qwen3-235B-A22B | 
+ 48.3k | 
+ OpenHands | 
+ 31.0 | 
+ – | 
+ – | 
+ – | 
+ Nemotron-Terminal-32B ( Pi et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 490k | 
+ Terminus2 | 
+ 27.4 | 
+ $27.9^{*}$ | 
+ $0.0^{*}$ | 
+ $13.7^{*}$ | 
+ SkillSynth-32B ( Fan et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 10.7k | 
+ Terminus2 | 
+ 29.6 | 
+ – | 
+ – | 
+ – | 
+ Terminal-World-32B ( Cheng et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 5.7k | 
+ Terminus2 | 
+ 31.5 | 
+ – | 
+ – | 
+ – | 
+ Terminal-Lego-32B ( Yang et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 15.3k | 
+ Terminus2 | 
+ 24.3 | 
+ – | 
+ – | 
+ – | 
+ CLI-Universe-32B ( Hua et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 6k | 
+ Terminus2 | 
+ 33.4 | 
+ – | 
+ – | 
+ – | 
+ TMax-27B ( Ivison et al., 2026 ) 
+ | 
+ Qwen3.6-27B | 
+ 14.6k | 
+ Vanillux2Agent | 
+ 42.7 | 
+ 44.9 | 
+ $17.1^{*}$ | 
+ $72.5^{*}$ | 
+ OpenThinker-Agent-32B ( Raoof et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 100k | 
+ Terminus2 | 
+ 26.2 | 
+ $30.7^{*}$ | 
+ $0.0^{*}$ | 
+ $19.7^{*}$ | 
+ Meta-Task-32B ( Pan et al., 2026 ) 
+ | 
+ Qwen3-32B | 
+ 3.2k | 
+ Terminus2 | 
+ 31.8 | 
+ – | 
+ – | 
+ – | 
+ RST-27B ( Li et al., 2026b ) 
+ | 
+ Qwen3.5-27B | 
+ 37.5k | 
+ Terminus2 | 
+ 49.4 | 
+ – | 
+ – | 
+ – | 
+ CalibForge-35B-A3B ( Meng et al., 2026 ) 
+ | 
+ Qwen3.5-35B-A3B | 
+ 5.4k | 
+ CalibForge-Eval | 
+ 47.6 | 
+ – | 
+ – | 
+ – | 
+ FACET-Terminal-27B ( Shi et al., 2026 ) 
+ | 
+ Qwen3.5-27B | 
+ 1.2k | 
+ Terminus2 | 
+ – | 
+ 47.6 | 
+ – | 
+ – | 
+ Terminal-Universe-27B 
+ | 
+ Qwen3.5-27B | 
+ 32.0k | 
+ Terminus2 | 
+ 52.8 | 
+ 58.1 | 
+ 20.1 | 
+ 76.1 | 
+ On EvoCode-Bench v2, the Full Mixture raises MT@4 from $6.3$ to $20.1$ and Case score from $67.8$ to $76.1$ , showing that Full Mixture training also improves performance on persistent tasks with cumulative requirements.
+ 6 Analysis and Ablation Studies
+ Our method makes multiple design choices, and this section isolates the contribution of each. We ask: (1) is reconstructing an environment and re-solving it actually better than training on the original trajectory ( § 6.1 )? (2) does agentic completion matter, or is deterministic replay enough ( § 6.2 )? (3) is verifier filtering worth the data it discards ( § 6.3 )? and (4) how should a fixed budget be spent across the re-querying axes—breadth ( § 6.4 ), depth ( § 6.5 ), and more environments versus more queries ( § 6.6 )? We finally test whether the pipeline transfers beyond terminal workspaces ( § 6.7 ).
+ 6.1 Task Re-solving
+ This ablation asks whether reconstruction is needed at all: is re-solving a recovered task better than simply imitating the original trajectory? Table 4 compares the two on Terminal-Bench 2.1. To keep the comparison clean, Intent Recovery is not verifier-filtered, so verifier selection plays no role here.
+ Table 4: Terminal-Bench 2.1 comparison of source-trajectory SFT and Intent Recovery (%). 
+ Variant 
+ | 
+ Data size | 
+ Claude Code | 
+ Terminus2-XML | 
+ Avg. | 
+ Qwen3.5-27B 
+ | 
+ - | 
+ $47.8_{\scriptscriptstyle 2.0}$ | 
+ $46.2_{\scriptscriptstyle 3.9}$ | 
+ 47.0 | 
+ Source trajectories 
+ | 
+ 35.8k | 
+ $33.0_{\scriptscriptstyle 3.9}$ | 
+ $40.3_{\scriptscriptstyle 2.1}$ | 
+ 36.7 | 
+ Intent Recovery 
+ | 
+ 35.8k | 
+ $\mathbf{51.3}_{\scriptscriptstyle 3.1}$ | 
+ $\mathbf{52.9}_{\scriptscriptstyle 1.4}$ | 
+ 52.1 | 
+ Re-solving improves over source-trajectory SFT. Source trajectories and Intent Recovery use the same Qwen3.5 chat template and tool-call schema for SFT. Source SFT preserves the original agents’ behavior, whereas Intent Recovery uses a stronger teacher to re-solve recovered tasks in reconstructed workspaces. Source SFT averages $36.7$ , compared with $52.1$ for Intent Recovery, suggesting that regenerating demonstrations under a consistent teacher policy provides more effective supervision.
+ 6.2 Impact of Agentic Completion
+ This ablation asks whether agentic completion earns its cost, or whether deterministic replay alone is enough. We isolate the second reconstruction stage by training on Intent Recovery corpora whose environments are reconstructed with replay only, without completion. The replay-only variant trains on the $35{,}809$ source instances that deterministic replay reconstructs, and the completed variant is the production Intent Recovery corpus at the same volume. Both share the recovered queries and teacher configuration and differ only in the environment reconstruction mode.
+ Table 5: Effect of agentic completion on Intent Recovery. 
+ Variant 
+ | 
+ Records | 
+ Terminus2-XML | 
+ Qwen3.5-27B 
+ | 
+ – | 
+ $46.2_{\scriptscriptstyle 3.9}$ | 
+ Replay only 
+ | 
+ 35.8k | 
+ $48.7_{\scriptscriptstyle 3.5}$ | 
+ Replay + agentic completion 
+ | 
+ 35.8k | 
+ $\mathbf{52.9}_{\scriptscriptstyle 1.4}$ | 
+ Agentic completion helps. At closely matched training volume, training on completed environments outperforms training on replay-only environments by $4.2$ points ( $52.9$ versus $48.7$ ) and is more stable across runs ( $\pm 1.4$ versus $\pm 3.5$ ). This is consistent with the sufficiency results in Table 2 : replay alone leaves most terminal workspaces task-insufficient, and completion restores the execution context that re-solving depends on.
+ Replay-only supervision still improves over the base model. The replay-only variant still gains $2.5$ points over the base model ( $46.2$ to $48.7$ ). Inspecting its rollouts reveals that, when presented with an incomplete workspace, the teacher often repairs missing files or setup before addressing the task. These trajectories remain useful, but some of the supervision focuses on repairing the workspace rather than solving the recovered task.
+ 6.3 Role of Verifier Filtering
+ This ablation asks whether discarding verifier-failed trajectories is worth the data it removes. For each synthesis method, we compare training on all teacher trajectories against training only on the verifier-passed subset from the same launched-task pool.
+ Table 6: Effect of verifier filtering on Single-WS and Cross-WS. 
+ Variant 
+ | 
+ Records | 
+ Terminus2-XML | 
+ Single-WS w/o verifier 
+ | 
+ 35.1k | 
+ $56.0_{\scriptscriptstyle 3.3}$ | 
+ Single-WS w/ verifier 
+ | 
+ 25.4k | 
+ $\mathbf{56.4}_{\scriptscriptstyle 2.6}$ | 
+ Cross-WS w/o verifier 
+ | 
+ 7.1k | 
+ $53.2_{\scriptscriptstyle 2.1}$ | 
+ Cross-WS w/ verifier 
+ | 
+ 3.5k | 
+ $\mathbf{55.4}_{\scriptscriptstyle 2.7}$ | 
+ Verifier filtering matters more for harder tasks. For each synthesis method, we compare all teacher trajectories with the verifier-passed subset from the same launched-task pool. On Single-WS data, the verifier-passed subset performs similarly to the full corpus ( $56.4$ versus $56.0$ ) with fewer records. On Cross-WS data, retaining verifier-failed trajectories lowers performance to $53.2$ , whereas the verifier-passed subset reaches $55.4$ with less than half the data. The effect is also visible in Multi-Round synthesis: removing round-level verifier supervision lowers both EvoCode-Bench metrics ( Table 9 ).
+ 6.4 Breadth Expansion
+ This ablation asks whether cross-workspace tasks add supervision beyond single-workspace synthesis. Table 7 evaluates Cross-WS against the Single-WS baseline. Cross-WS alone reaches $55.4$ under Terminus2-XML, while adding it to Single-WS raises performance from $56.4$ to $58.4$ .
+ Table 7: Terminal-Bench 2.1 results for Single-WS, Cross-WS, and their mixture (%). 
+ Variant 
+ | 
+ Data size | 
+ Terminus2-XML | 
+ Qwen3.5-27B 
+ | 
+ – | 
+ $46.2_{\scriptscriptstyle 3.9}$ | 
+ Single-WS 
+ | 
+ 25.4k | 
+ $56.4_{\scriptscriptstyle 2.6}$ | 
+ Cross-WS 
+ | 
+ 3.5k | 
+ $55.4_{\scriptscriptstyle 2.7}$ | 
+ Single-WS + Cross-WS 
+ | 
+ 28.9k | 
+ $\mathbf{58.4}_{\scriptscriptstyle 2.1}$ | 
+ Table 8: Trajectory and difficulty profiles of Single-WS and Cross-WS synthesis. 
+ Variant | 
+ Turns | 
+ Tool calls | 
+ Tokens / record | 
+ Teacher pass@1 | 
+ Median 
+ | 
+ Mean 
+ | 
+ Median 
+ | 
+ Mean 
+ | 
+ Median 
+ | 
+ Mean 
+ | 
+ Single-WS | 
+ 14 
+ | 
+ 15.1 
+ | 
+ 20 
+ | 
+ 21.2 
+ | 
+ 30.4k 
+ | 
+ 32.9k 
+ | 
+ $72.3\%$ | 
+ Cross-WS | 
+ 23 
+ | 
+ 25.3 
+ | 
+ 38 
+ | 
+ 39.7 
+ | 
+ 46.5k 
+ | 
+ 51.9k 
+ | 
+ $49.2\%$ | 
+ Table 8 contrasts the two synthesis variants on the same teacher. Cross-workspace tasks yield substantially longer and more complex trajectories: $1.6\times$ the assistant turns, $1.9\times$ the tool calls, and $1.5\times$ the tokens per record at the median. They are also harder for the teacher: pass@1 drops from $72.3\%$ on single-workspace tasks to $49.2\%$ . Grounding the requirement in a second codebase forces the agent to read and reconcile two repositories before editing, which lengthens trajectories and raises task difficulty rather than merely adding data volume.
+ Figure 6: Per-category Terminal-Bench 2.1 pass-rate changes when Cross-WS data is added to Single-WS training under Terminus2-XML. Single-task categories are omitted. 
+ How Cross-WS expands breadth. Single-WS provides the within-workspace baseline by synthesizing one novel task from each recovered environment. Cross-WS extends beyond this setting by requiring changes in a writable workspace grounded in evidence from a related read-only workspace. This exposes domain–operation combinations absent from single-workspace tasks and requires the agent to reconcile information across codebases.
+ Where cross-workspace data helps. Mixing single-workspace and cross-workspace records reaches $58.4_{\scriptscriptstyle 2.1}$ under Terminus2-XML, improving over the single-workspace baseline ( $56.4_{\scriptscriptstyle 2.6}$ ). Figure 6 breaks this comparison down by task category. Software engineering, the largest category with $26$ tasks, improves from $46.9$ to $49.1$ , and larger gains appear in model training ( $+15.0$ ) and debugging ( $+10.0$ ). Three categories decline by $2.1$ to $2.5$ points, a range that falls within run-to-run variation for categories of at most eight tasks. The gain in this largest category, together with the aggregate improvement, suggests that cross-workspace data adds useful supervision beyond single-workspace synthesis.
+ 6.5 Multi-Round Depth Expansion
+ This ablation asks whether multi-round continuation data improves performance on persistent, cumulative tasks, and whether round-level verification during generation matters. We evaluate on EvoCode-Bench v2.
+ Multi-round data improves depth. Adding Multi-Round data to Single-WS raises MT@4 from $18.4$ to $21.0$ and Case score from $71.9$ to $76.9$ . The higher MT@4 indicates that the model completes longer sequences of requests before its first failure, while the Case score gain shows that it passes a larger share of verifier cases across the session.
+ Round-level verification directs effective continuation. Within the matched Single-WS + Multi-Round comparison, removing round-level verifier feedback reduces MT@4 by $2.2$ points and Case score by $3.7$ points. Inspecting the resulting trajectories reveals that, without a grounded signal of what remains incorrect, continuation becomes less directed, yielding longer yet lower-quality multi-round trajectories.
+ Table 9: Effect of Multi-Round synthesis and round-level verification on EvoCode-Bench v2 (%). 
+ Variant 
+ | 
+ Data size | 
+ MT@4 score | 
+ Case score | 
+ Single-WS 
+ | 
+ 25.4k | 
+ 18.4 | 
+ $71.9_{\scriptscriptstyle 3.5}$ | 
+ Single-WS + Multi-Round 
+ | 
+ 28.5k | 
+ 21.0 | 
+ $\mathbf{76.9}_{\scriptscriptstyle 1.4}$ | 
+ Single-WS + Multi-Round (w/o round verifier) 
+ | 
+ 28.5k | 
+ 18.8 | 
+ $73.2_{\scriptscriptstyle 2.6}$ | 
+ 6.6 Expansion-Axis Ablation
+ This ablation asks where a fixed data budget is best spent. Starting from a common Single-WS base pool of $17{,}558$ environments with one query and one teacher solution each ( $17.6$ k records), we double the corpus along one axis at a time: adding a second set of environments, a second query per environment, or a second teacher solution per query. All three variants reach a matched budget of roughly $35$ k records and are trained and evaluated under the setup of § 5 on Terminal-Bench 2.1, so any difference reflects how the budget is allocated rather than its size.
+ Table 10: Data-scaling ablation for Single-WS synthesis. Starting from a common base pool, the corpus is doubled through additional environments, queries per environment, or solutions per query. 
+ Variant 
+ | 
+ Envs | 
+ Queries / env | 
+ Solutions / query | 
+ Records | 
+ Terminus2-XML | 
+ Base pool 
+ | 
+ 17,558 | 
+ 1 | 
+ 1 | 
+ 17.6k | 
+ $53.2_{\scriptscriptstyle 4.1}$ | 
+ Environment expansion 
+ | 
+ 35,116 | 
+ 1 | 
+ 1 | 
+ 35.1k | 
+ $\mathbf{56.0}_{\scriptscriptstyle 3.3}$ | 
+ Query expansion 
+ | 
+ 17,558 | 
+ 2 | 
+ 1 | 
+ 35.1k | 
+ $53.8_{\scriptscriptstyle 3.3}$ | 
+ Solution expansion 
+ | 
+ 17,558 | 
+ 1 | 
+ 2 | 
+ 35.1k | 
+ $53.9_{\scriptscriptstyle 2.4}$ | 
+ Under this matched budget, environment expansion produces the largest movement, from $53.2$ to $56.0$ , while adding queries or solutions leaves the score essentially unchanged ( $53.8$ and $53.9$ ). The pattern is intuitive: each new environment contributes a distinct executable context, and therefore new supervision, whereas a second query or solution over the same workspace mostly repeats what the model has already seen. It is consistent with our motivation of focusing on reconstructing more environments.
+ 6.7 Cross-domain Generalization
+ This ablation asks whether the pipeline helps beyond the terminal domain it was built on. We apply Intent Recovery to trajectories from software-engineering (SWE) workspaces rather than terminal ones, then fine-tune and evaluate under the setup of § 5 , measuring transfer on Terminal-Bench 2.1. We use Intent Recovery alone, as the simplest re-querying variant, to keep the test clean.
+ Table 11: Terminal-Bench 2.1 pass rates (%) after training on SWE intent-recovery trajectories. 
+ Variant 
+ | 
+ Data size | 
+ Claude Code | 
+ Terminus2-XML | 
+ Avg. | 
+ Qwen3.5-27B 
+ | 
+ - | 
+ $47.8_{\scriptscriptstyle 2.0}$ | 
+ $46.2_{\scriptscriptstyle 3.9}$ | 
+ 47.0 | 
+ Intent Recovery 
+ | 
+ 10.3k | 
+ $\mathbf{50.6}_{\scriptscriptstyle 0.9}$ | 
+ $\mathbf{49.4}_{\scriptscriptstyle 1.6}$ | 
+ 50.0 | 
+ Of the $1{,}900$ SWE repositories we evaluate, $1{,}464$ are judged task-sufficient. Because a repository may contribute multiple source tasks, these repositories yield approximately $10.3$ k Intent Recovery training trajectories. Training on them improves the Terminal-Bench average from $47.0$ to $50.0$ , and both scaffolds move in the same direction (Claude Code $47.8\rightarrow 50.6$ , Terminus2-XML $46.2\rightarrow 49.4$ ), so the gain is not tied to a single evaluation setup. This shows that trajectories synthesized from SWE workspaces provide supervision useful for terminal-agent behavior, not only for their own source distribution. We test the SWE-to-terminal direction here; the reverse is left to future work.
+ 7 Discussion and Limitations
+ Scaling with richer source trajectories. 
+While Terminal-Universe demonstrates strong effectiveness when applied to public trajectory corpora, our empirical observations on higher-quality trajectories reveal a positive correlation between the complexity of the source trajectories and that of the resulting rollouts synthesized on the reconstructed environments. Trajectories with richer operational dynamics, such as multi-file manipulations and long tool-use chains, expose broader workspace state, which in turn supports more diverse and more demanding synthesized tasks. Environment complexity can also be raised by aggregation: when multiple sessions operate on the same workspace, replaying them together merges the state exposed by each session into a single reconstruction, producing environments more complex than any single trajectory can recover. Together, these observations suggest that the framework scales naturally as advancing agent capabilities make complex trajectories increasingly easy to obtain.
+ Limitations. 
+Terminal-Universe also has several limitations. First, we use standard Ubuntu 24.04 containers for all workspaces rather than building tailored, repository-specific environments via automated pipelines like SWE-Factory ( Guo et al., 2026 ) or RepoLaunch ( Li et al., 2026a ) . As a result, edge cases requiring specialized system dependencies or complex compilation steps may exhibit reduced fidelity. Second, the domain, language, and toolchain distributions of our reconstructed workspaces are fundamentally bounded by the coverage of the collected source trajectories. Expanding beyond these distributions remains an important avenue for future work. Third, a single teacher generates tasks, solutions, and verifiers. Its capability gaps may therefore limit task coverage, while errors it makes in solutions may also be missed by its tests. Future work could use multiple teachers and an independent model for verifier construction.
+ 8 Conclusion
+ In this work, we present Terminal-Universe, a trajectory-based environment and task synthesis framework that reframes recorded agent trajectories from fixed demonstrations into recoverable, reusable execution environments. Through a two-stage process of deterministic replay and agentic completion, Terminal-Universe restores latent workspace state, synthesizes new tasks within each environment, and expands them across workspaces for breadth and across rounds for depth. Empirical evaluations show that re-solving recovered tasks outperforms SFT on the source trajectories, while verifier-selected Single-WS, Cross-WS, and Multi-Round trajectories improve both single- and multi-round terminal-agent performance. Overall, our findings demonstrate that recorded trajectories can be effectively repurposed into interactive execution environments, offering a scalable paradigm for synthesizing grounded agent training data without constructing environments from scratch.
+ Acknowledgement
+ We are grateful to Ye Li for contributions to the CPU-based replay framework that enables efficient environment reconstruction at scale.
+ References
+ Anthropic (2026) 
+ Anthropic 
+ Claude Code overview .
+ Note: https://code.claude.com/docs/en/overview Accessed 2026-07-14 
+ Cited by: §3.3 .
+ Ariyak et al. (2026) 
+ A. Ariyak, J. Zhang, J. Wang, S. Zhu, F. Bianchi, S. Srivastava, A. Panda, S. Bharti, C. Xu, J. Heo, X. S. Wu, J. Zhou, P. Liang, L. Song, C. Zhang, B. Athiwaratkun, Z. Zhou, and Q. Wu 
+ CoderForge-Preview: SOTA open dataset for training efficient agents .
+ Together AI Blog .
+ Note: Project core leads: Alpay Ariyak, Zhongzhu Zhou, and Qingyang Wu 
+ External Links: Link 
+ Cited by: Table 12 ,
+ Appendix G .
+ Badertdinov et al. (2025) 
+ I. Badertdinov, A. Golubev, M. Nekrashevich, A. Shevtsov, S. Karasik, A. Andriushchenko, M. Trofimova, D. Litvintseva, and B. Yangel 
+ SWE-rebench: an automated pipeline for task collection and decontaminated evaluation of software engineering agents .
+ External Links: 2505.20411 ,
+ Link 
+ Cited by: Table 12 ,
+ Appendix G .
+ Cheng et al. (2026) 
+ Z. Cheng, H. Wang, Z. Liu, X. Wang, X. Zhu, Y. Guo, W. Lin, J. Z. Pan, and Y. Wang 
+ Terminal-World: scaling terminal-agent environments via agent skills .
+ External Links: 2605.20876 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Fan et al. (2026) 
+ Z. Fan, T. Yu, Y. Cai, J. Guan, Y. Yang, D. Hu, J. Zhou, X. Wu, Z. Han, F. Zhang, and L. Wang 
+ Toward scalable terminal task synthesis via skill graphs .
+ External Links: 2604.25727 ,
+ Link 
+ Cited by: Table 1 ,
+ §1 ,
+ §2 ,
+ Table 3 .
+ Gandhi et al. (2026) 
+ K. Gandhi, S. Garg, N. D. Goodman, and D. Papailiopoulos 
+ Endless terminals: scaling RL environments for terminal agents .
+ External Links: 2601.16443 ,
+ Link 
+ Cited by: Table 1 ,
+ §1 ,
+ §2 .
+ Guo et al. (2026) 
+ L. Guo, Y. Wang, C. Li, W. Tao, P. Yang, J. Chen, H. Song, D. Tang, and Z. Zheng 
+ SWE-Factory: your automated factory for issue resolution training data and evaluation benchmarks .
+ External Links: 2506.10954 ,
+ Link 
+ Cited by: §7 .
+ gyung (2026) 
+ gyung 
+ LFM2-Terminal-SFT-Processed .
+ Note: Hugging Face datasetAccessed 2026-08-23 
+ External Links: Link 
+ Cited by: Table 12 ,
+ Appendix G .
+ Hua et al. (2026) 
+ Z. Hua, Y. Yao, W. Xie, Y. Zhao, M. Liu, R. Qiu, Z. Huang, Z. Wang, Y. Ji, Y. Ye, L. Zhu, X. Lei, H. Li, Z. Ma, Z. Wang, Z. Zhang, and J. Liu 
+ CLI-Universe: towards verifiable task synthesis engine for terminal agents .
+ External Links: 2606.22883 ,
+ Link 
+ Cited by: Table 1 ,
+ §1 ,
+ §2 ,
+ Table 3 .
+ Ivison et al. (2026) 
+ H. Ivison, J. O. Yin, R. Shao, T. Xiao, N. Lambert, and H. Hajishirzi 
+ Tmax: a simple recipe for terminal agents .
+ External Links: 2606.23321 ,
+ Link 
+ Cited by: Table 1 ,
+ §1 ,
+ §2 ,
+ Table 3 .
+ Jain et al. (2025) 
+ N. Jain, J. Singh, M. Shetty, L. Zheng, K. Sen, and I. Stoica 
+ R2E-Gym: procedural environments and hybrid verifiers for scaling open-weights SWE agents .
+ External Links: 2504.07164 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Jimenez et al. (2024) 
+ C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan 
+ SWE-bench: can language models resolve real-world GitHub issues? .
+ In International Conference on Learning Representations (ICLR) ,
+ Cited by: Appendix A ,
+ Appendix G .
+ Li et al. (2026a) 
+ K. Li, R. Li, L. Zhang, Q. Jin, L. Zhu, X. Huang, G. Zhang, Y. Zhang, S. He, C. Xie, X. Zhang, Z. Jin, B. Li, C. Zhang, Y. Kang, Y. Huang, E. Nallipogu, S. Rajmohan, Q. Lin, and D. Zhang 
+ RepoLaunch: automating build and management of code repositories across languages and platforms .
+ External Links: 2603.05026 ,
+ Link 
+ Cited by: §7 .
+ Li et al. (2026b) 
+ Z. Li, Y. Shi, Z. Li, R. Wang, A. Li, Z. Huang, J. Yang, L. Ke, N. Liu, H. Mi, and L. Liang 
+ Recursive synthesis for long-horizon terminal tasks .
+ External Links: 2608.05466 ,
+ Link 
+ Cited by: Appendix G ,
+ Table 1 ,
+ §2 ,
+ Table 3 .
+ Lin et al. (2026) 
+ Y. Lin, H. Wang, S. Wu, L. Fan, F. Pan, S. Zhao, and D. Tu 
+ CLI-Gym: scalable CLI task generation via agentic environment inversion .
+ External Links: 2602.10999 ,
+ Link 
+ Cited by: Table 1 ,
+ §1 ,
+ §2 ,
+ §2 ,
+ Table 3 .
+ Meng et al. (2026) 
+ F. Meng, G. Chen, J. Zhao, S. Sun, Z. Lin, W. X. Zhao, R. Song, J. Wen, and K. Jia 
+ CalibForge: adversarial solver calibration for scaling learnable terminal tasks .
+ External Links: 2608.06352 ,
+ Link 
+ Cited by: Table 1 ,
+ §2 ,
+ Table 3 .
+ Merrill et al. (2026) 
+ M. A. Merrill, A. G. Shaw, N. Carlini, et al. 
+ Terminal-Bench: benchmarking agents on hard, realistic tasks in command line interfaces .
+ In International Conference on Learning Representations ,
+ External Links: 2601.11868 ,
+ Link 
+ Cited by: §1 ,
+ §5.1 .
+ Pan et al. (2024) 
+ J. Pan, X. Wang, G. Neubig, N. Jaitly, H. Ji, A. Suhr, and Y. Zhang 
+ Training software engineering agents and verifiers with SWE-Gym .
+ External Links: 2412.21139 ,
+ Link 
+ Cited by: Table 12 ,
+ §1 ,
+ §2 .
+ Pan et al. (2026) 
+ Z. Pan, J. He, K. Zhang, Y. Han, Z. Liu, Y. Zhao, Y. Ye, and Z. Yang 
+ Meta-Task: turning terminal task synthesis into a terminal task for scalable agent training .
+ External Links: 2607.27929 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Peng et al. (2026a) 
+ X. Peng, K. Zhang, X. Lu, B. Cao, Y. Lu, H. Lin, X. Han, and L. Sun 
+ LiteCoder-Terminal: scaling long-horizon terminal environments for learning language agents .
+ External Links: 2605.29559 ,
+ Link 
+ Cited by: Table 12 ,
+ Appendix G .
+ Peng et al. (2026b) 
+ Z. Peng, D. Huang, C. Zhang, C. Xu, C. Xiao, S. Hong, D. Lo, L. Qiu, X. Cao, J. He, and Y. Cao 
+ ICAE-Bench: evaluating coding agents as interactive project builders .
+ External Links: 2607.21217 ,
+ Link 
+ Cited by: §2 .
+ Pi et al. (2026) 
+ R. Pi, G. Lam, M. Shoeybi, P. Jannaty, B. Catanzaro, and W. Ping 
+ On data engineering for scaling LLM terminal capabilities .
+ External Links: 2602.21193 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Raghavendra et al. (2026) 
+ M. Raghavendra, A. Gunjal, A. Sabharwal, and Y. He 
+ SWE-INTERACT: reimagining SWE benchmarks as user-driven long-horizon coding sessions .
+ External Links: 2606.30573 ,
+ Link 
+ Cited by: §2 .
+ Raoof et al. (2026) 
+ N. Raoof, R. Zhuang, M. Nezhurina, E. Guha, A. Tejaswi, et al. 
+ OpenThoughts-Agent: data recipes for agentic models .
+ External Links: 2606.24855 ,
+ Link 
+ Cited by: Table 1 ,
+ Table 3 .
+ Shen et al. (2026a) 
+ H. Shen, X. Chen, W. Xu, Y. Ma, L. Chen, and K. Li 
+ EvoCode-Bench: evaluating coding agents in multi-turn iterative interactions .
+ External Links: 2605.24110 ,
+ Link 
+ Cited by: §2 ,
+ §5.1 .
+ Shen et al. (2026b) 
+ Q. Shen, Z. Huang, V. Kamanuru, A. Aliev, J. Rainton, A. Awelkair, Z. Zeng, J. Li, S. Dong, Y. Yuan, B. Ma, Q. Zhang, J. Fu, Y. Mao, W. Fan, P. Nie, P. Torr, B. Ghanem, C. Hu, J. L. Li, U. Thakker, and G. Li 
+ SETA: scaling environments for terminal agents .
+ External Links: 2607.10891 ,
+ Link 
+ Cited by: §2 .
+ Shi et al. (2026) 
+ K. Shi, Z. Wang, Q. Su, S. Huang, Z. Zhang, Z. Fang, Q. Ren, J. Liu, Y. Zeng, Y. Zhao, L. Chen, Z. Chen, and F. Zhao 
+ FACET: preserving source intent and executable state in terminal task synthesis .
+ External Links: 2608.18580 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Wu et al. (2026a) 
+ S. Wu, Y. Li, Y. Song, W. Zhang, Y. Wang, R. Batista-Navarro, X. Yang, M. Tang, B. Dai, J. Yang, and C. Lin 
+ Large-scale terminal agentic trajectory generation from dockerized environments .
+ External Links: 2602.01244 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Wu et al. (2026b) 
+ Y. Wu, Z. Zhao, S. Li, H. H. Lee, J. Zhu, S. Wu, T. Yu, S. Li, L. Zhang, X. Fan, and S. Li 
+ SWE-Together: evaluating coding agents in interactive user sessions .
+ External Links: 2606.29957 ,
+ Link 
+ Cited by: §2 .
+ Yang et al. (2025) 
+ J. Yang, K. Lieret, C. E. Jimenez, A. Wettig, K. Khandpur, Y. Zhang, B. Hui, O. Press, L. Schmidt, and D. Yang 
+ SWE-smith: scaling data for software engineering agents .
+ In Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track ,
+ External Links: 2504.21798 ,
+ Link 
+ Cited by: Table 12 ,
+ §1 ,
+ §2 .
+ Yang et al. (2023) 
+ J. Yang, A. Prabhakar, K. Narasimhan, and S. Yao 
+ InterCode: standardizing and benchmarking interactive coding with execution feedback .
+ External Links: 2306.14898 ,
+ Link 
+ Cited by: §2 .
+ Yang et al. (2026) 
+ S. Yang, C. Tao, J. Chen, T. Yu, R. Wang, Y. Jiang, Y. Du, W. Xu, J. Xiong, T. Wu, L. Shang, X. Li, N. Wong, and H. Bai 
+ What makes interaction trajectories effective for training terminal agents? .
+ External Links: 2606.03461 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Zeng et al. (2026) 
+ W. Zeng, Y. Shi, X. Gu, C. Hu, C. Wang, Y. Cui, H. Zhou, M. Qi, J. Wangni, Z. Yu, S. Gao, K. Cai, and S. He 
+ Dockerless: environment-free program verifier for coding agents .
+ External Links: 2606.28436 ,
+ Link 
+ Cited by: §3.1 .
+ Zhu et al. (2026) 
+ K. Zhu, Y. Nie, Y. Li, Y. Huang, J. Wu, J. Liu, X. Sun, Z. Yin, L. Wang, Z. Liu, E. Barsoum, W. Y. Wang, and W. Guo 
+ TermiGen: high-fidelity environment and robust trajectory synthesis for terminal agents .
+ External Links: 2602.07274 ,
+ Link 
+ Cited by: §2 ,
+ Table 3 .
+ Appendix 
+ A   Data Sources and Selection . A 
+ B   Environment Reconstruction Details . B 
+ B.1  Reconstruction and Completion . B.1 
+ B.2  Workspace Sufficiency Evaluation . B.2 
+ B.3  Failure Analysis . B.3 
+ C   Re-querying Details . C 
+ C.1  Intent Recovery . C.1 
+ C.2  Single-WS Synthesis . C.2 
+ C.3  Cross-WS Synthesis . C.3 
+ C.4  Multi-Round User Queries . C.4 
+ D   Verifier Construction Details . D 
+ E   Case Studies . E 
+ E.1  Reconstruction and Single-Workspace Re-querying . E.1 
+ E.2  Cross-WS Synthesis . E.2 
+ E.3  Multi-Round User Queries . E.3 
+ F   SFT Dataset Statistics . F 
+ G   Evaluation Configurations . G 
+ Appendix A Data Sources and Selection
+ Table 12 summarizes each included source before and after reconstruction. Whether a trajectory can be reconstructed depends on the file evidence it exposes: multi-file editing traces reveal enough project context to rebuild, whereas command-heavy CLI traces often expose few file contents. We exclude Terminal-Bench-derived corpora and sources dominated by view-only operations or unsupported action formats.
+ SWE deduplication and decontamination. Public SWE corpora often contain multiple rollouts or formats of the same task. We deduplicate within each source by repository, base commit, and problem statement, selecting the trajectory whose replay exposes the most workspace content. We then remove instances from SWE-bench Verified repositories ( Jimenez et al., 2024 ) and records that cannot be linked to a source trajectory. Table 12 gives the resulting per-source counts.
+ Table 12: Source corpora and reconstructed environments. The Trajectories column counts source trajectories drawn from each corpus. 
+ Source corpus 
+ | 
+ Pool | 
+ License | 
+ Trajectories | 
+ Environments | 
+ SWE-rebench ( Badertdinov et al., 2025 ) 
+ | 
+ SWE | 
+ CC-BY-4.0 | 
+ 67,074 | 
+ 6,118 | 
+ SWE-smith ( Yang et al., 2025 ) 
+ | 
+ SWE | 
+ MIT | 
+ 95,851 | 
+ 8,476 | 
+ CoderForge ( Ariyak et al., 2026 ) 
+ | 
+ SWE | 
+ Apache-2.0 | 
+ 32,964 | 
+ 3,978 | 
+ SWE-Gym ( Pan et al., 2024 ) 
+ | 
+ SWE | 
+ MIT | 
+ 4,152 | 
+ 929 | 
+ LFM2-Terminal ( gyung, 2026 ) 
+ | 
+ Terminal | 
+ CC-BY-4.0 | 
+ 139,841 | 
+ 46,037 | 
+ LiteCoder-Terminal ( Peng et al., 2026a ) 
+ | 
+ Terminal | 
+ MIT | 
+ 19,711 | 
+ 2,725 | 
+ Total 
+ | 
+ | 
+ | 
+ 359,593 | 
+ 68,263 | 
+ Table 13: Workspace complexity before and after agentic completion. Cells report median / mean. 
+ | 
+ Terminal pool | 
+ SWE pool | 
+ | 
+ Replayed ( $\widehat{E}_{0}$ ) | 
+ Completed ( $\widehat{E}$ ) | 
+ Replayed ( $\widehat{E}_{0}$ ) | 
+ Completed ( $\widehat{E}$ ) | 
+ Files per workspace 
+ | 
+ 2 / 2.9 | 
+ 13 / 22.4 | 
+ 5 / 5.6 | 
+ 21 / 37.9 | 
+ Text lines (all files) 
+ | 
+ 60 / 90 | 
+ 539 / 5,761 | 
+ 537 / 595 | 
+ 1,854 / 6,622 | 
+ Code lines (source files) 
+ | 
+ 0 / 43 | 
+ 316 / 503 | 
+ 421 / 487 | 
+ 1,643 / 6,302 | 
+ Figure 7 summarizes the core reconstruction and sufficiency stages.
+ Figure 7: Core environment-reconstruction flow. 
+ Appendix B Environment Reconstruction Details
+ B.1 Reconstruction and Completion
+ Source corpora encode file operations differently, so we normalize reads, writes, and edits into an ordered event stream. We keep the observed content of read-only files and, for modified files, the content visible before the first change. These contents may be partial or truncated. Files created by the agent and all later changes are left out of the replayed workspace.
+ The completion agent receives the recovered request, partial workspace, and file inventory. It fills missing project context by creating files, completing partial files, and configuring dependencies needed by the existing project. It must not implement the requested task or reveal where its solution should be made.
+ Packaging. Reconstructed projects are placed under /app . Files accessed elsewhere in the filesystem are stored separately.
+ Completion quality. Manual inspection of 30 randomly sampled Terminal completions found that 22 contained only task-relevant support files, while eight introduced substantial files or code not needed to support the task. We found no task solutions in the 30 completed workspaces.
+ B.2 Workspace Sufficiency Evaluation
+ Evaluation scope. We evaluate every terminal reconstruction that survives decontamination and repository-level deduplication. For SWE, we evaluate one representative reconstruction and its Intent Recovery task per repository. The agentic judge inspects each workspace with read-only shell and file tools.
+ Scoring. A workspace is task-sufficient when its source, configuration, data, and structure give a capable agent enough context to work on the task. Dependencies, caches, generated outputs, and optional documentation that can be recreated are not required. The judge evaluates available project context rather than build success.
+ Table 14 gives the corresponding source-level breakdowns.
+ Table 14: Source breakdown of workspace sufficiency under recovered intents after agentic completion. 
+ Source 
+ | 
+ $n$ | 
+ Sufficient | 
+ Sufficient (%) | 
+ Terminal pool | 
+ LFM2-Terminal 
+ | 
+ 36,204 | 
+ 34,467 | 
+ 95.2 | 
+ LiteCoder-Terminal 
+ | 
+ 2,090 | 
+ 1,342 | 
+ 64.2 | 
+ SWE pool | 
+ SWE-rebench 
+ | 
+ 1,734 | 
+ 1,350 | 
+ 77.9 | 
+ SWE-smith 
+ | 
+ 114 | 
+ 85 | 
+ 74.6 | 
+ CoderForge 
+ | 
+ 47 | 
+ 27 | 
+ 57.4 | 
+ SWE-Gym 
+ | 
+ 5 | 
+ 2 | 
+ 40.0 | 
+ Sufficiency rates reflect how much project context the trajectories expose. Agentic completion can add common project files around observed evidence but cannot recover unseen project-specific content. Some SWE subsets are too small for fine-grained comparison.
+ B.3 Failure Analysis
+ For task-insufficient workspaces, the judge cites missing or truncated source files, task scripts,
+input data, configuration, and deployment files. Missing tests, manifests, or package init
+files usually indicate a partial source tree.
+ Judge prompt. 
+ Appendix C Re-querying Details
+ Across all four variants, the generated request specifies an observable goal while leaving the implementation strategy to the coding agent.
+ Cross-workspace layout. Each Cross-WS pair is mounted as repo0 and repo1 under /app/workspaces . The generation agent chooses a writable target and a read-only reference. The coding agent sees the same layout, and the verifier checks that the reference remains unchanged ( § 3.3 ).
+ Prompt presentation. 
+The templates retain each generator’s inputs, instructions, and output schema. Repeated
+rules and examples are shortened. Values in angle brackets are filled at runtime.
+ C.1 Intent Recovery
+ Generation mechanism. 
+Intent Recovery receives the cleaned task, a chronological conversation trace, and file
+evidence. A single-round trajectory uses its sole substantive user request directly. For
+a multi-round trajectory, the first substantive request sets the task topic; later requests
+are incorporated only when they clarify, constrain, or extend the same task, and unrelated
+task shifts are excluded. We use agent actions and file evidence to interpret the requests,
+but retain only requirements stated by the user. Only the generated core_objective becomes the Intent
+Recovery instruction; the remaining output fields are retained as metadata.
+ C.2 Single-WS Synthesis
+ Generation mechanism. 
+Single-WS receives a path inventory and may inspect selected files with read-only
+commands. It cannot modify the repository, access the network, or scan outside the
+workspace. After parsing and deduplication, we select one grounded task per workspace.
+ C.3 Cross-WS Synthesis
+ Candidate sourcing. 
+We profile each workspace, then use TF–IDF to retrieve nearby candidates within each
+language group. An LLM labels each pair as similar, complementary, dependency, or
+unrelated and identifies the side with the missing capability. We then select dependency
+pairs using file checks, a rule that no workspace appears in two pairs, and a limit on how
+often each workspace is used. Both repositories are
+mounted as peers, and the generation agent chooses their final roles.
+ Task generation. 
+A generation agent reads both repositories, assigns their roles, and returns one task,
+file evidence, and three hidden dependency facts. The task must depend on at least three
+details found only in the reference, but cannot state those details or name its internal
+paths. It must name the target files, define executable checks, preserve existing target
+behavior, leave the reference unchanged, and remain solvable offline. Pairs without a
+useful reference asset are rejected.
+ Checks. 
+We reject tasks that are malformed, that state the hidden facts, or that name internal
+reference paths.
+SFT records require a valid query, verifier, and successful teacher trajectory.
+ C.4 Multi-Round User Queries
+ Generation mechanism. 
+Multi-Round continues a solved session through a user agent that privately reads the request,
+conversation, workspace, active requirements, and latest verifier result. Only its next
+user message is shown to the coding agent. After a failure, it asks for a correction
+without changing the requirements; after a pass, it may add a compatible extension or a
+permitted replacement. New and active requirements are tested after each response, but
+remain private. A session has at most six follow-up rounds.
+ Training-trajectory filtering. 
+For SFT, we remove trailing verifier-failed rounds. We keep sessions with
+at least two passing rounds. Failed rounds remain with
+feedback and correction.
+ Appendix D Verifier Construction Details
+ Test rules. For Single-WS and Cross-WS tasks, the verification agent sees the task specification and the initial workspace, but not the solution. It writes one self-contained pytest file using absolute paths and public interfaces. The tests must exercise the task requirements without network access and without modifying the workspace; temporary files are placed under /tmp .
+ Intent Recovery. Intent Recovery is not filtered by an agentic verifier, preserving comparability with source-trajectory SFT.
+ Appendix E Case Studies
+ E.1 Reconstruction and Single-Workspace Re-querying
+ We illustrate reconstruction and reuse with a TypeScript and React project (MirrorBrain).
+Its workspace supports several coding tasks without requiring missing source files.
+ Table 15 summarizes the reconstruction and re-querying stages.
+ Table 15: MirrorBrain reconstruction and re-querying trace. 
+ Stage 
+ | 
+ Observable artifact 
+ | 
+ Source trajectory 
+ | 
+ Refines React interface components and a focused test across navigation, common controls, review cards, and draft editing while preserving the existing workflows. 
+ | 
+ Deterministic replay 
+ | 
+ Recovers the project manifest, test configuration, React application, Fastify service, memory-review and cache modules, integration adapters, and end-to-end fixtures. 
+ | 
+ Agentic completion 
+ | 
+ Preserves all replayed source and test files and adds root-filesystem integration context, including a memory-event fixture, OpenViking adapter, React context, and runtime logs. 
+ | 
+ Intent Recovery 
+ | 
+ Produces a cross-component interface objective covering navigation, tabs, pagination, candidate cards, and action buttons. 
+ | 
+ Single-WS synthesis 
+ | 
+ Explores the workspace and generates tasks spanning normalization, URL classification, client errors, API schemas, and cache reconciliation. 
+ | 
+ Trajectory evidence. 
+The source trajectory changes navigation, shared controls, candidate review actions, and
+draft views. It also tests keyboard navigation, ARIA state, loading, and disabled behavior.
+Replay recovers the surrounding project state; selected paths are shown below.
+ ⬇ 
+ |– (* @ \ treejsonnode { package . json } @ *)
+ |– (* @ \ treetsnode { vitest . config . ts } @ *)
+ |– (* @ \ treefoldernode { tests / e2e / fixtures /} @ *)
+ | ‘– (* @ \ treetestnode { mirrorbrain - mvp - fixture . ts } @ *)
+ ‘– (* @ \ treefoldernode { src /} @ *)
+ |– (* @ \ treefoldernode { apps /} @ *)
+ | |– (* @ \ treefoldernode { mirrorbrain - http - server /} @ *)
+ | | |– (* @ \ treetsnode { index . ts } @ *)
+ | | ‘– (* @ \ treetestnode { index . test . ts } @ *)
+ | ‘– (* @ \ treefoldernode { mirrorbrain - web - react / src /} @ *)
+ | |– (* @ \ treetsnode { api / client . ts } @ *)
+ | |– (* @ \ treefoldernode { components /\{ artifacts , common , layout , memory , review \}/} @ *)
+ | ‘– (* @ \ treetsnode { contexts / MirrorBrainContext . tsx } @ *)
+ |– (* @ \ treefoldernode { integrations /} @ *)
+ | |– (* @ \ treefoldernode { activitywatch - browser - source /\{ index . ts , index . test . ts \}} @ *)
+ | ‘– (* @ \ treefoldernode { openviking - store /\{ index . ts , index . test . ts \}} @ *)
+ ‘– (* @ \ treefoldernode { modules /} @ *)
+ |– (* @ \ treefoldernode { memory - events - cache /\{ index . ts , index . test . ts \}} @ *)
+ ‘– (* @ \ treefoldernode { memory - review /\{ index . ts , index . test . ts , normalize - memory - items . ts \}} @ *)
+ Agentic completion. 
+Replay already recovers a functional project. Completion preserves its source and tests
+and adds a memory event, integration adapter, React context, and runtime context.
+The generated package-lock.json is omitted.
+ ⬇ 
+ |– (* @ \ treeconfignode {. gitignore } @ *)
+ |– (* @ \ treefoldernode { mirrorbrain / memory - events /} @ *)
+ | ‘– (* @ \ treejsonnode { browser :101. json } @ *)
+ |– (* @ \ treefoldernode { src /} @ *)
+ | |– (* @ \ treefoldernode { apps / mirrorbrain - web - react /} @ *)
+ | | |– (* @ \ treeconfignode {. gitignore } @ *)
+ | | ‘– (* @ \ treetsnode { src / contexts / MirrorBrainContext . tsx } @ *)
+ | ‘– (* @ \ treetsnode { integrations / openviking - store / index . ts } @ *)
+ ‘– (* @ \ treefoldernode { tmp /} @ *)
+ |– (* @ \ treegenericnode { mirrorbrain - debug . log } @ *)
+ ‘– (* @ \ treegenericnode { mirrorbrain - dev - new . log } @ *)
+ Recovered intent. 
+Intent Recovery uses the source trajectory, rather than the completed workspace, to recover:
+ The trajectory carries out this objective through consistent active states,
+focus-visible styling, keyboard navigation, ARIA semantics, loading states, and a focused
+component test.
+ Generated queries. 
+Single-WS ignores the source solution and explores only the completed workspace. Its generated
+requests target existing behavior and interfaces:
+ 1. 
+ Shell-event normalization. Extend
+ normalize-memory-items.ts so shell events already captured and rendered by the
+system can participate in daily review without regressing browser events.
+ 2. 
+ URL classification. Replace substring-based development server
+detection with structured URL handling and distinguish GitHub Actions pages from
+ordinary repository pages.
+ 3. 
+ Client error handling. Route five mutation methods in
+ api/client.ts through consistent status-aware JSON handling, including
+descriptive behavior for non-JSON failures.
+ 4. 
+ Response schema alignment. Extend the existing Fastify candidate-memory
+schema with role and contribution so React review components receive
+the required evidence metadata.
+ 5. 
+ Cache-source reconciliation. Merge workspace and OpenViking events at
+cache initialization using existing ID and URL-signature deduplication, preserving
+reverse-chronological order.
+ E.2 Cross-WS Synthesis
+ We trace Cross-WS synthesis on two C toolkits for RSA cryptography. The target provides key generation,
+encryption, and signing but no decryption program; the reference implements the full
+round trip. Relation matching therefore selects RSA decryption as the missing capability.
+ Table 16 summarizes the synthesis stages.
+ Table 16: Synthesis trace for the RSA toolkit dependency pair. 
+ Stage and output 
+ | 
+ Evidence 
+ | 
+ Relation mining 
+ | 
+ Independently generated profiles
+classify both workspaces as C RSA toolkits; TF–IDF retrieval proposes the pair, and
+the relation judge records the directional capability gap “RSA decryption”. 
+ | 
+ Pair packaging 
+ | 
+ The target is mounted writable at
+ /app/workspaces/repo1 ; the reference is mounted read-only at
+ /app/workspaces/repo0 . 
+ | 
+ Query generation 
+ | 
+ The generator reads the actual
+files of both workspaces, confirms that the capability is implemented in the reference
+and absent from the target, and generates a task grounded in facts found only in the
+reference. 
+ | 
+ Verifier generation 
+ | 
+ An in-container agent authors the test suite and executes it on
+the initial workspace. New-capability tests fail while the preservation tests and the
+reference-unchanged check pass, satisfying the red-check requirement. 
+ | 
+ Solution rollout 
+ | 
+ The teacher solves the task; all
+clean checks pass, and the trajectory is retained in the pass-only corpus. 
+ | 
+ Mounted pair. 
+The two toolkits share a domain but differ in completeness:
+ ⬇ 
+ {/ app / workspaces /}
+ |– (* @ \ treefoldernode { repo0 /} @ *)
+ | |– (* @ \ treetsnode { rsa \ _keygen . c } @ *)
+ | |– (* @ \ treetsnode { rsa \ _encrypt . c } @ *)
+ | |– (* @ \ treetsnode { rsa \ _decrypt . c } @ *)
+ | |– (* @ \ treetsnode { rsa \ _sign . c } @ *)
+ | |– (* @ \ treefoldernode { input /} @ *)
+ | | ‘– (* @ \ treegenericnode { plaintext . txt } @ *)
+ | ‘– (* @ \ treefoldernode { output /} @ *)
+ | ‘– (* @ \ treegenericnode { decrypted . txt } @ *)
+ ‘– (* @ \ treefoldernode { repo1 /} @ *)
+ |– (* @ \ treetsnode { rsa \ _keygen . c } @ *)
+ |– (* @ \ treetsnode { rsa \ _encrypt . c } @ *)
+ |– (* @ \ treetsnode { rsa \ _sign . c } @ *)
+ |– (* @ \ treefoldernode { input /} @ *)
+ | ‘– (* @ \ treegenericnode { plaintext . txt } @ *)
+ |– (* @ \ treefoldernode { output /} @ *)
+ | ‘– (* @ \ treegenericnode { decrypted . txt } @ *)
+ ‘– (* @ \ treefoldernode { task \ _file /} @ *)
+ |– (* @ \ treefoldernode { input /} @ *)
+ | ‘– (* @ \ treegenericnode { plaintext . txt } @ *)
+ ‘– (* @ \ treefoldernode { output /} @ *)
+ Grounded capability gap. 
+The target has key generation, encryption, and signing but no decryption source. Its
+encryptor fixes the padding mode and public-key loader, while the plaintext is
+the round-trip input. The reference reveals the private-key loader, decrypt
+call, padding mode, and hardcoded input paths. These hidden facts do not appear in the
+task, which names only the reference root.
+ Selected request (abridged). 
+ What the verifier checks. 
+The suite covers the new file, compilation, round trips, command-line behavior, input
+paths, padding, and OpenSSL calls. Preservation tests cover the existing programs and
+keep the reference unchanged. The teacher solution passes the full suite.
+ E.3 Multi-Round User Queries
+ Figure 8: Verifier-guided multi-round continuation. A private verifier checks
+each round, while the coding agent sees only the subsequent natural-language
+requests. 
+ Table 17: Distribution of interaction styles across continuation rounds in the retained Multi-Round records. We impose no target ratio over the styles. 
+ Interaction style 
+ | 
+ Share | 
+ Feature extension 
+ | 
+ 62.7% | 
+ Feature revision 
+ | 
+ 29.3% | 
+ Feature conflict 
+ | 
+ 8.0% | 
+ Table 18 follows the user requests across rounds.
+ Table 18: Abridged user requests from the Multi-Round sensor-ingestion trajectory. Bracketed
+ellipses mark omitted text. “Revision”
+corrects the current requirement; “conflict” replaces it. 
+ Round 
+ | 
+ User-request excerpt 
+ | 
+ Initial request 
+ | 
+ “Working in the project root /app , the entrypoint
+ sensor_processor.py hard-codes both its input path … and its output path …,
+which makes the script impossible to run against alternate data without editing source.
+Make it possible to invoke the script as python sensor_processor.py <input_csv>
+<output_json> so that the two positional arguments override the input and output
+locations.” 
+ | 
+ 1: Extension 
+ | 
+ “The path override work is solid, thanks. Now I need this to stop being a
+one-shot script, because in production my sensor_data.csv keeps growing and I
+don’t want to re-crunch the entire file every time I get a new batch of readings. […]
+Please add a resumable/incremental ingestion mode backed by a small persisted state store.” 
+ | 
+ 2: Revision 
+ | 
+ “The row-counting side of the incremental mode looks right —
+ readings_count comes out at 150 per sensor on a fresh run and rises to exactly
+154 after I append four rows, so old rows aren’t being double-counted. But the actual
+aggregate values are wrong and unstable, and it’s making the output useless for me. […]
+It looks like each reading is being scaled down before it’s aggregated.” 
+ | 
+ 3: Extension 
+ | 
+ “The aggregates are solid and stable now — thanks. The next thing I actually
+need for production is alerting, because right now I have to eyeball
+ processed_results.json to notice when a sensor drifts out of its safe range. […]
+Please add a threshold rules engine in a new rules.py , driven by a JSON rules config.” 
+ | 
+ 4: Conflict 
+ | 
+ “The alerting engine is doing its job now, but I’ve hit a real production gap:
+I’ve decided to change how alerts.json works. Right now it’s overwritten every
+run holding only the new alerts for that run, which means when a sensor recovers the alert
+just silently vanishes and I have no record it ever fired or when it cleared. […]
+Please turn alerts.json into an append-only history of transition events.” 
+ | 
+ 5: Extension 
+ | 
+ “The event history is finally durable, but right now alerts.json and
+ alerts.jsonl are write-only — nothing ever reads them back, so when I come in
+Monday morning I still have to eyeball a growing history file to answer basic questions.
+I need a reporting command that turns that trail into an operational summary.” 
+ | 
+ 6: Extension 
+ | 
+ “The reconcile check has already caught me out once — it correctly flagged
+that state.json and the alerts.json history disagreed about what was open
+— but all it can do is tell me there’s drift and exit non-zero. […] I need reconcile
+to be able to actually fix the drift, not just report it. Please add a repair capability
+on top of the existing reconcile logic.” 
+ | 
+ Failure-driven feature revision. 
+The first continuation adds persistent incremental aggregation, but unseeded random
+scaling makes its values unstable. The private verifier catches this failure. The user agent keeps
+the same requirements and asks for a correction without exposing the tests:
+ The agent removes the random scaling and passes the next check, after which the user agent requests
+threshold-based alerting. Test code and results never enter the solver-visible conversation.
+ Controlled requirement conflict. 
+After alerting passes, the user agent replaces the per-run JSON list with a durable event
+history, stating this as a new product decision rather than a defect:
+ The revised history requirement governs the remaining rounds, which add reporting,
+reconciliation, and repair.
+ Appendix F SFT Dataset Statistics
+ Table 19 summarizes the final terminal SFT corpora, with turns, tool calls, and tokens reported as per-record medians. Multi-Round records are substantially longer because they extend a completed session with follow-up user requests.
+ Table 19: Final SFT corpus statistics after length filtering. 
+ Dataset 
+ | 
+ Records | 
+ Turns | 
+ Tool calls | 
+ Tokens | 
+ Intent Recovery 
+ | 
+ 35,809 | 
+ 12 | 
+ 17 | 
+ 36.1k | 
+ Single-WS 
+ | 
+ 25,386 | 
+ 14 | 
+ 20 | 
+ 30.4k | 
+ Cross-WS 
+ | 
+ 3,512 | 
+ 23 | 
+ 38 | 
+ 46.5k | 
+ Multi-Round 
+ | 
+ 3,079 | 
+ 92 | 
+ 102 | 
+ 126.1k | 
+ Appendix G Evaluation Configurations
+ Table 20 lists the configurations used for Terminal-Universe-27B and the five reproduced open-weight baselines in Table 3 . These reproduced baselines use model-specific settings rather than a shared evaluation configuration. The listed settings apply to both Terminal-Bench 2.1 and EvoCode-Bench v2 unless noted otherwise. For TMax-27B, the listed configuration applies only to our EvoCode-Bench v2 reproduction; its Terminal-Bench scores and Vanillux2Agent scaffold follow the original report. Qwen3.5-27B and Qwen3.7-Max use the Terminal-Universe-27B configuration, with xhigh effort enabled for Qwen3.7-Max. On EvoCode-Bench v2, TermiGen-32B instead uses Terminus2-JSON with an 81,920-token summarization threshold.
+ Table 20: Evaluation configurations used in our reproductions. 
+ Setting 
+ | 
+ Nemotron- 
+ Terminal-32B 
+ | 
+ OpenThinker- 
+ Agent-32B 
+ | 
+ TermiGen-32B 
+ | 
+ TerminalTraj- 
+ 32B 
+ | 
+ TMax-27B 
+ | 
+ Terminal- 
+ Universe-27B 
+ | 
+ Architecture 
+ | 
+ Qwen3For 
+ CausalLM 
+ | 
+ Qwen3For 
+ CausalLM 
+ | 
+ Qwen2For 
+ CausalLM 
+ | 
+ Qwen2For 
+ CausalLM 
+ | 
+ Qwen3_5For 
+ Conditional 
+ Generation 
+ | 
+ Qwen3_5For 
+ Conditional 
+ Generation 
+ | 
+ Scaffold 
+ | 
+ Terminus2 
+ | 
+ Terminus2 
+ | 
+ BashAgent 
+ | 
+ Terminus2 
+ | 
+ Terminus2 
+ | 
+ Terminus2 
+ | 
+ Parser 
+ | 
+ JSON 
+ | 
+ JSON 
+ | 
+ Text JSON 
+ | 
+ JSON 
+ | 
+ XML 
+ | 
+ XML 
+ | 
+ Context length 
+ | 
+ 40,960 
+ | 
+ 32,768 
+ | 
+ 131,072 
+ | 
+ 32,768 
+ | 
+ 262,144 
+ | 
+ 262,144 
+ | 
+ Turn max tokens 
+ | 
+ 8,192 
+ | 
+ 8,192 
+ | 
+ 8,192 
+ | 
+ 8,192 
+ | 
+ 65,536 
+ | 
+ 65,536 
+ | 
+ Summ. threshold 
+ | 
+ 32,960 
+ | 
+ 28,672 
+ | 
+ disabled 
+ | 
+ 24,768 
+ | 
+ 176k 
+ | 
+ 176k 
+ | 
+ Temperature 
+ | 
+ 0.6 
+ | 
+ 0.6 
+ | 
+ 0.6 
+ | 
+ 0.7 
+ | 
+ 0.7 
+ | 
+ 1.0 
+ | 
+ Top- $p$ / top- $k$ 
+ | 
+ 0.95 / 20 
+ | 
+ 0.95 / 20 
+ | 
+ 0.8 / 20 
+ | 
+ 0.8 / 20 
+ | 
+ 0.95 / 20 
+ | 
+ 0.95 / 20 
+ | 
+ Interleaved thinking 
+ | 
+ ✗ 
+ | 
+ ✗ 
+ | 
+ ✗ 
+ | 
+ ✗ 
+ | 
+ ✓ 
+ | 
+ ✓ 
+ | 
+ Thinking enabled 
+ | 
+ ✓ 
+ | 
+ ✓ 
+ | 
+ ✗ 
+ | 
+ ✗ 
+ | 
+ ✓ 
+ | 
+ ✓ 
+ | 
+ Shared across all reproductions | 
+ TB wall clock 
+ | 
+ 4 h | 
+ EvoCode wall clock 
+ | 
+ 10 h | 
+ TB runs 
+ | 
+ 6 | 
+ EvoCode runs 
+ | 
+ 4 | 
+ 14 , 12 , 3 , 2 , 8 , 20 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

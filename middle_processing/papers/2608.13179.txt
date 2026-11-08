@@ -1,0 +1,1442 @@
+Teach the Magnitude, Not the Direction: Verifier-Bounded Credit Assignment for Multi-Turn Multi-step LLM Agents 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Related Work 
+
+ Tool use for LLM-based agents. 
+
+ Agentic Reinforcement Learning. 
+
+ On-policy distillation. 
+
+ 3 Method 
+
+ 3.1 Unified Objective 
+
+ 3.2 Turn-Level Credit Assignment 
+
+ 3.3 Token-Level Credit: Self-Teacher Signal 
+
+ Teacher–student divergence. 
+
+ Token weight. 
+
+ 3.4 Stabilization via Selective Gating 
+
+ Direction gate. 
+
+ Entropy gate. 
+
+ Composed gating. 
+
+ 4 Experiments 
+
+ 4.1 Experimental Setup 
+
+ Benchmarks. 
+
+ Base models. 
+
+ Baselines. 
+
+ Implementation details. 
+
+ 4.2 Main Results 
+
+ RL outperforms distillation 
+
+ CrEST closes both gaps simultaneously. 
+
+ 4.3 Training Dynamics Analysis 
+
+ 4.4 Ablation Studies 
+
+ Effect of hierarchical credit decomposition. 
+
+ Both gates are necessary. 
+
+ 5 Conclusion 
+
+ 6 Limitations 
+
+ References 
+
+ A Gradient Analysis 
+
+ A.1 (P1) Direction Preservation 
+
+ A.2 (P2) Absolute Perturbation Bound 
+
+ A.3 (P3) Sign-Consistent Amplification 
+
+ A.4 Discussion: Relationship to Adaptive Preconditioning 
+
+ B Complete Algorithm 
+
+ C Experimental Details 
+
+ C.1 Training Configuration 
+
+ C.2 OPSD Stabilization and Teacher Update Strategies 
+
+ C.3 Modulation Strength Sensitivity 
+
+ License: CC BY-NC-ND 4.0
+
+arXiv:2608.13179v1 [cs.AI] 13 Aug 2026
+
+ † † footnotetext: ∗ Equal contributions. Work was done during Zechuan and Siyuan’s internship in Ant Group.
+ † † footnotetext: † Corresponding Authors. 
+ Teach the Magnitude, Not the Direction: Verifier-Bounded Credit Assignment for Multi-Turn Multi-step LLM Agents
+
+ Zechuan Wang 1,3,∗ 
+
+ Siyuan Lu 1,2,3,4,∗ 
+
+ Hongxuan Zhang 3,5 
+
+ Linjian Mo 3 
+
+ Chenyi Zhuang 3 
+
+ Leilei Gan 1,† 
+
+ Affiliation: 1 Zhejiang University 
+
+ Affiliation: 2 Shanghai Innovation Institute 
+
+ Affiliation: 3 AWorld Team, Inclusion AI
+
+ Affiliation: 4 Westlake University 
+
+ Affiliation: 5 Nanjing University
+
+ Abstract 
+
+ Reinforcement learning with verifiable rewards (RLVR) offers a verifier-bounded performance ceiling for training multi-turn tool-use agents, yet its trajectory-level credit assignment conflates heterogeneous per-turn outcomes into a single reward signal. On-policy distillation provides dense per-token supervision but is either teacher-bounded or prone to gradient concentration collapse. We introduce CrEST , a hierarchical credit assignment framework that retains RL’s verifier-bounded ceiling while incorporating dense token-level signals from a privileged self-teacher. CrEST resolves credit at two levels: turn-segmented verified advantages address inter-turn dilution, while entropy-gated self-teacher modulation refines intra-turn token contributions. Experiments on BFCL V3 and WildToolBench show that CrEST consistently outperforms both RL and distillation baselines across two model scales, with the largest gains on long-trajectory and strict session-level metrics. Our work demonstrates that the teacher’s role in policy optimization can be reduced from determining update directions to modulating update magnitudes, unlocking dense credit assignment without sacrificing the verifier-bounded ceiling.
+
+ 1 Introduction
+
+ Large language models ( Hurst et al., 2024 ; Comanici et al., 2025 ; Qwen et al., 2025 ; Liu et al., 2024 ) are evolving from pure question-answering systems into autonomous agents capable of reasoning, acting, and interacting with diverse environments ( Merrill et al., 2026 ; Jimenez et al., 2024 ; Xie et al., 2024 ; Liu et al., 2026 ; Froger et al., 2025 ; Towers et al., 2026 ) .
+These scenarios share a common structure: agents must handle multi-turn sessions (sequences of user requests) where each turn requires multi-step execution (chains of actions and observations) ( Shridhar et al., 2021 ; Wei et al., 2025a ; Xie et al., 2024 ; OpenClaw, 2026 ) .
+
+ Figure 1: Comparison of credit assignment strategies on a 2-turn trajectory (Turn 1 succeeds, Turn 2 fails). GRPO broadcasts a single trajectory-level reward uniformly, erroneously reinforcing failed-turn tokens. OPSD provides dense token-level signal but concentrates gradient on low-entropy format tokens, with a teacher-bounded ceiling. CrEST (Ours) combines turn-level advantages (inter-turn credit) with entropy-gated self-teacher modulation (intra-turn credit), correctly assigning negative advantage to Turn 2 while focusing gradient mass on high-uncertainty content tokens in Turn 1.
+
+ Reinforcement learning ( Schulman et al., 2017 ; Ahmadian et al., 2024 ) , particularly RL with verifiable rewards (RLVR) ( Shao et al., 2024 ; Qian et al., 2026 ) , is now the dominant post-training paradigm for tool-use agents ( Liu et al., 2025 ; Zhang et al., 2025a ; Yu et al., 2026b ) , offering a verifier-bounded performance ceiling determined solely by reward quality. Yet standard objectives broadcast a single trajectory-level reward across all tokens.
+Within a single turn, where all actions serve one query, this is merely noisy ( Lu et al., 2026 ) . In multi-turn sessions ( Li et al., 2023 ; Patil et al., 2025 ; Yu et al., 2026a ) , however, turns carry independent outcomes yet share one reward signal, making credit assignment ill-posed: on WildToolBench, no model exceeds 15% session accuracy, and performance degrades sharply with turn count ( Laban et al., 2025 ) .
+
+ On-policy distillation (OPD) ( Lu and Thinking Machines, 2025 ; Li and others, 2026 ; Song and Zheng, 2026 ) provides a natural credit assignment mechanism, where the teacher inherently scores each token in the student’s trajectory and distinguishes which tokens are preferable from the teacher’s perspective.
+However, this requires a same-family, tokenizer-matched teacher ( Fu et al., 2026 ) , which is a rare constraint satisfied in practice.
+On-policy self-distillation (OPSD) ( Zhao et al., 2026 ; Hübotter et al., 2026 ; Shenfeld et al., 2026 ; Penaloza et al., 2026 ) removes this dependency by using the student itself as self-teacher, conditioned on privileged information such as ground truth or successful demonstrations from rollout group peers.
+Yet OPSD is brittle and restricts exploration.
+First, Zhao et al. (2026) ; Brown (2026) found that without per-token KL clipping, OPSD collapses within ∼ {\sim} 100 training steps due to gradient concentration on a few tokens.
+Second, OPSD’s performance ceiling remains teacher-bounded ( Kim et al., 2026 ) , which means that the student cannot surpass the teacher’s privileged distribution.
+
+ This raises a central question: Can we design a training approach that maintains the verifier-bounded performance ceiling of RL while providing token-level signal to address the credit assignment challenges of multi-turn multi-step LLM agents training? 
+
+ We propose CrEST (Hierarchical Cr edit Assignment via E ntropy-Gated S elf- T eacher), which addresses both levels through a unified policy gradient with structured per-token advantages ( Figure 1 ).
+At the turn level, CrEST uses turn-segmented verifier rewards to prevent rewards from being diluted across long multi-turn trajectories.
+At the token level, to prevent gradient concentration on a few tokens, CrEST uses an entropy-gated self-teacher to modulate token-level contributions within each turn.
+Additionally, CrEST employs the verified reward to determine all gradient directions, ensuring the performance ceiling remains verifier-bounded without requiring an external same-family teacher.
+The two level credit assignment are complementary—neither alone recovers the full performance.
+
+ Our main contributions are:
+
+ 1. 
+
+ We identify and formalize the two-level credit assignment problem in multi-turn multi-step agentic RL, and provide a gradient-geometric analysis explaining why existing dense-signal methods fail in this setting ( Appendix A ).
+
+ 2. 
+
+ We propose CrEST , a hierarchical credit assignment framework combining turn-segmented advantage with entropy-gated self-teacher token reweighting. CrEST is verifier-bounded by construction and introduces only one hyperparameter ( λ \lambda ) beyond standard GRPO ( Section 3 ).
+
+ 3. 
+
+ We demonstrate that CrEST achieves 52.0% average accuracy on BFCL V3 (Qwen3-4B) and 9.38% session accuracy on WildToolBench (Qwen3-8B), consistently outperforming all baselines across both benchmarks and model scales ( Section 4 ).
+
+ 2 Related Work
+
+ Tool use for LLM-based agents.
+
+ LLM tool-use research spans a complexity spectrum, from reasoning before function-calling ( Zhang et al., 2025a ; Qian et al., 2026 ) to tool-integrated reasoning (TIR) for fulfilling user’s query ( Li et al., 2025 ; Jin et al., 2025 ; Feng et al., 2025 ; Zheng et al., 2025 ) . Most relevant to our work, multi-turn multi-step benchmarks ( Zhang et al., 2025b ; Yu et al., 2026a ; Patil et al., 2025 ) evaluate agents across sessions of multiple queries, each requiring its own execution chain.
+These settings expose two challenges absent in single-turn work: cross-turn state consistency and error propagation across turns. Empirically, agent performance degrades substantially with turn count; Yu et al. (2026a) report session accuracy below 15% across 57 LLMs, motivating training-time methods that respect the turn structure of multi-turn sessions.
+
+ Agentic Reinforcement Learning.
+
+ RL-based post-training has become the standard approach for aligning LLM agents with task objectives ( Shao et al., 2024 ; Yu et al., 2026b ; Wang et al., 2025 ) .
+Some methods focus on reward design: Lu et al. (2026) decompose trajectory rewards into fine-grained per-step process scores combining state correctness and execution accuracy, while Qian et al. (2026) and Zhang et al. (2025a) ground rewards directly in environment feedback from tool execution.
+Despite these advances, most existing methods compute a single advantage per trajectory (or per-step within a single turn), leaving the inter-turn credit assignment problem unaddressed—when turns within the same session have heterogeneous outcomes, trajectory-level or step-level averaging still mislabels tokens in failed turns.
+MT-GRPO ( Wei et al., 2025b ) attempts per-agent-step advantage computation, yet still lacks intra-step token-level credit assignment, treating all tokens within each step identically.
+
+ On-policy distillation.
+
+ On-policy distillation (OPD) ( Lu and Thinking Machines, 2025 ) replaces RL’s sparse reward with dense per-token reverse KL against a same-family teacher, providing token-level credit assignment throughout the trajectory ( Li and others, 2026 ) .
+OPD converges faster than RL at moderate compute budgets, but its ceiling is teacher-bounded and requires tokenizer-matched, recipe-matched teachers ( Brown, 2026 ) . When such teachers are unavailable, self-distillation methods use the student itself conditioned on privileged information like expert demonstrations ( Shenfeld and others, 2026 ) , feedback ( Hübotter et al., 2026 ) and ground-truth answers ( Zhao et al., 2026 ) .
+More recently, hybrid methods attempt to combine RL’s verifier-bounded direction with distillation’s dense signal: SDAR ( Lu and others, 2026 ) gates self-distillation as an auxiliary loss alongside RL, and RLSD ( Yang and others, 2026 ) uses self-distillation for update magnitudes while relying on verifiable rewards for directions.
+However, these hybrids either lack principled control over gradient concentration ( Zhao et al., 2026 ; Brown, 2026 ) or do not address the inter-turn credit assignment structure unique to multi-turn settings.
+
+ 3 Method
+
+ Multi-turn multi-step training faces a hierarchical credit assignment problem: at the coarse level, trajectories mix successes and failures across turns; at the fine level, individual turns conflate high-value decisions with low-entropy formatting.
+ CrEST addresses both levels through a unified policy gradient framework with structured per-token advantages ( Equation 1 ):
+
+ • 
+
+ Inter-turn (coarse) : Turn-segmented verified-reward advantages ( Section 3.2 ) isolate per-turn outcomes, preventing dilution from trajectory-level averaging.
+
+ • 
+
+ Intra-turn (fine) : Entropy-gated self-teacher signals ( Section 3.3 ) refine per-token contributions, concentrating gradient mass on high-uncertainty content tokens.
+
+ The two levels are complementary : without inter-turn segmentation, no amount of intra-turn refinement can rescue tokens in failed turns; without intra-turn reweighting, pivot decisions in successful turns remain indistinguishable from formatting tokens. Critically, verified reward determines all gradient directions while the self-teacher only modulates magnitudes , ensuring the performance ceiling stays verifier-bounded ( Appendix A ).
+
+ Figure 2: Overview of CrEST . Left (Inter-turn) : A group of G G rollouts is scored by the environment verifier per turn; group-relative advantages A turn A_{\text{turn}} are computed independently for each turn, providing the gradient direction . Right (Intra-turn) : Within each turn, a privileged self-teacher (conditioned on ground truth) provides per-token divergence Δ t \Delta_{t} ; an entropy gate concentrates modulation on high-uncertainty content tokens (e.g., get_flight , "JFK" ) while suppressing format tokens, yielding the magnitude factor ϕ t \phi_{t} . Bottom : The final per-token advantage 𝒜 t = A [ t ] turn × ϕ t \mathcal{A}_{t}=A_{[t]}^{\text{turn}}\times\phi_{t} combines verifier-bounded direction with teacher-modulated magnitude.
+
+ 3.1 Unified Objective
+
+ CrEST is a standard on-policy policy gradient with a structured per-token advantage . Given a prompt x x and an on-policy rollout y ∼ π θ ( ⋅ ∣ x ) y\sim\pi_{\theta}(\cdot\mid x) , the objective is:
+
+ | 
+ J ⁡ ( θ ) = 𝔼 x ∼ 𝒟 , y ∼ π θ ( ⋅ | x ) ​ [ ∑ t 𝒜 t ⋅ log ⁡ π θ ​ ( y t ∣ y < t , x ) ] J(\theta)=\mathbb{E}_{\begin{subarray}{c}x\sim\mathcal{D},\;y\sim\pi_{\theta}(\cdot|x)\end{subarray}}\left[\sum_{t}\mathcal{A}_{t}\cdot\log\pi_{\theta}(y_{t}\mid y_{<t},x)\right] | 
+ | 
+ (1) | 
+
+ where the per-token advantage 𝒜 t \mathcal{A}_{t} exposes the hierarchical structure:
+
+ | 
+ 𝒜 t = A [ t ] turn ⏟ inter-turn : which turn? ⋅ ϕ t ⏟ intra-turn : which token? \mathcal{A}_{t}=\underbrace{A_{[t]}^{\mathrm{turn}}}_{\begin{subarray}{c}\text{{inter-turn}:}\\
+\text{\emph{which turn?}}\end{subarray}}\cdot\ \underbrace{\phi_{t}}_{\begin{subarray}{c}\text{{intra-turn}:}\\
+\text{\emph{which token?}}\end{subarray}} | 
+ | 
+ (2) | 
+
+ A [ t ] turn A_{[t]}^{\mathrm{turn}} is a turn-segmented verified-reward advantage ( Section 3.2 ) that resolves which turn contributed to success or failure. ϕ t ∈ [ 1 ,  1 + λ ​ ϵ ] \phi_{t}\in[1,\;1{+}\lambda\epsilon] is a magnitude modulation factor ( Section 3.3 ) that refines which tokens within that turn deserve stronger updates, derived from a privileged self-teacher gated by student uncertainty.
+
+ Table 1: Design space of hierarchical credit assignment. Methods differ in how they allocate credit across turns ( A [ t ] turn A_{[t]}^{\mathrm{turn}} ) and tokens ( ϕ t \phi_{t} ). MT-GRPO computes per-turn advantages but propagates discounted future-outcome credit to earlier turns ( cumulative ), whereas CrEST computes each turn’s advantage from that turn’s reward only ( independent ). OPD and OPSD share the same slot ( ϕ t ∝ Δ t \phi_{t}\propto\Delta_{t} with no verified-reward base, hence teacher-bounded); they differ only in teacher source (external same-family vs. self with privileged context).
+
+ Method | 
+ A [ t ] turn A_{[t]}^{\mathrm{turn}} | 
+ ϕ t \phi_{t} | 
+
+ GRPO | 
+ trajectory-level | 
+ 1 1 | 
+
+ MT-GRPO | 
+ per-turn (cumulative) | 
+ 1 1 | 
+
+ OPD / OPSD | 
+ — | 
+ ∝ Δ t \propto\Delta_{t} | 
+
+ CrEST (Ours) | 
+ per-turn (independent) | 
+ 1 + λ t eff ​ ( w t − 1 ) 1+\lambda_{t}^{\mathrm{eff}}(w_{t}-1) | 
+
+ The factorization in Equation 2 reveals why both levels are necessary: A [ t ] turn A_{[t]}^{\mathrm{turn}} provides the correct sign (reinforce or suppress) for each turn’s tokens, but treats all tokens within a turn uniformly; ϕ t \phi_{t} refines the magnitude of each token’s contribution, but cannot change sign (proof in Appendix A ). Together, they ensure gradient direction is determined entirely by verified rewards (verifier-bounded), while token-level allocation benefits from dense teacher signals. Table 1 shows how existing methods occupy restricted subspaces of this design.
+
+ 3.2 Turn-Level Credit Assignment
+
+ Instead of computing a single trajectory-level reward averaged across turns, we compute group-relative advantages within each turn independently ( Figure 2 , left). For a trajectory containing turns { 1 , … , K } \{1,\dots,K\} , each turn k k receives its own verified reward R k R_{k} from the environment. Within a GRPO group of G G rollouts, the advantage for turn k k in rollout i i is:
+
+ | 
+ A k ( i ) = R k ( i ) − mean ⁡ ( { R k ( j ) } j = 1 G ) std ⁡ ( { R k ( j ) } j = 1 G ) + ϵ A_{k}^{(i)}=\frac{R_{k}^{(i)}-\mathrm{mean}(\{R_{k}^{(j)}\}_{j=1}^{G})}{\mathrm{std}(\{R_{k}^{(j)}\}_{j=1}^{G})+\epsilon} | 
+ | 
+ (3) | 
+
+ All tokens within turn k k of rollout i i share the advantage A k ( i ) A_{k}^{(i)} . This ensures that a failed turn receives negative advantage regardless of whether other turns in the same trajectory succeeded.
+
+ 3.3 Token-Level Credit: Self-Teacher Signal
+
+ The modulation factor ϕ t \phi_{t} uses a privileged self-teacher (the same model conditioned on ground-truth context) to refine per-token gradient magnitude within each turn ( Figure 2 , right):
+
+ | 
+ ϕ t = 1 + λ t eff ⋅ ( w t − 1 ) \phi_{t}=1+\lambda_{t}^{\mathrm{eff}}\cdot(w_{t}-1) | 
+ | 
+ (4) | 
+
+ When λ t eff = 0 \lambda_{t}^{\mathrm{eff}}=0 , ϕ t = 1 \phi_{t}=1 (no teacher influence); when λ t eff > 0 \lambda_{t}^{\mathrm{eff}}>0 and w t > 1 w_{t}>1 , ϕ t > 1 \phi_{t}>1 (teacher amplifies the gradient). We now define the two components: the raw teacher signal ( Δ t → w t \Delta_{t}\to w_{t} ) and the gating mechanisms that control it ( Section 3.4 ).
+
+ Teacher–student divergence.
+
+ For each response token t t , let π T ( ⋅ ∣ h t T ) \pi_{T}(\cdot\mid h_{t}^{T}) denote the self-teacher—the same model conditioned on ground truth as privileged context, following Zhao et al. (2026) —and π θ ( ⋅ ∣ h t ) \pi_{\theta}(\cdot\mid h_{t}) the student:
+
+ | 
+ Δ t = log ⁡ π T ​ ( y t ∣ h t T ) − log ⁡ π θ ​ ( y t ∣ h t ) τ \Delta_{t}=\frac{\log\pi_{T}(y_{t}\mid h_{t}^{T})-\log\pi_{\theta}(y_{t}\mid h_{t})}{\tau} | 
+ | 
+ (5) | 
+
+ where τ \tau is a temperature that smooths the divergence signal.
+
+ Token weight.
+
+ The raw teacher preference is converted into a bounded multiplicative weight:
+
+ | 
+ w t = clip ⁡ ( exp ⁡ ( sign ⁡ ( A [ t ] turn ) ⋅ Δ t ) ,  1 − ϵ ,  1 + ϵ ) w_{t}=\mathrm{clip}\!\Big(\exp\!\big(\mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t}\big),\;1{-}\epsilon,\;1{+}\epsilon\Big) | 
+ | 
+ (6) | 
+
+ The sign ⁡ ( A [ t ] turn ) ⋅ Δ t \mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t} construction aligns teacher preference with the verifier’s direction: for positive-advantage tokens, teacher agreement increases w t w_{t} ; for negative-advantage tokens, teacher agreement with the “this was bad” signal also increases w t w_{t} . This guarantees direction preservation (P1): sign ⁡ ( 𝒜 t ) = sign ⁡ ( A [ t ] turn ) \mathrm{sign}(\mathcal{A}_{t})=\mathrm{sign}(A_{[t]}^{\mathrm{turn}}) for all t t , i.e., the gradient direction is determined entirely by verified reward (proof in Appendix A ).
+
+ 3.4 Stabilization via Selective Gating
+
+ The self-teacher provides dense per-token signals, but unconstrained use leads to concentration collapse ( Brown, 2026 ) : gradient mass flows to a small set of tokens where teacher–student divergence is largest, often low-entropy formatting rather than high-value decisions. We stabilize the intra-turn reweighting through a composed gating function λ t eff \lambda_{t}^{\mathrm{eff}} ( Equation 10 ) that controls where (agreement with verifier) and how much (student uncertainty) the teacher signal is applied.
+
+ Direction gate.
+
+ | 
+ g t dir = [ sign ( A [ t ] turn ) ⋅ Δ t > 0 ] g_{t}^{\mathrm{dir}}=\mathbf{1}\!\left[\mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t}>0\right] | 
+ | 
+ (7) | 
+
+ When teacher and verifier disagree on the direction of update, g t dir = 0 g_{t}^{\mathrm{dir}}=0 and the teacher signal is fully suppressed. This is the key mechanism ensuring the performance ceiling remains verifier-bounded rather than teacher-bounded.
+
+ Entropy gate.
+
+ To prevent gradient concentration on low-entropy format tokens, we modulate the reweighting strength by the student’s token-level uncertainty, using surprisal u t = − log ⁡ π θ ​ ( y t ∣ h t ) u_{t}=-\log\pi_{\theta}(y_{t}\mid h_{t}) as a lightweight proxy:
+
+ | 
+ g t ent \displaystyle g_{t}^{\mathrm{ent}} | 
+ = σ ⁡ ( u t − 𝔼 ⁡ [ u ] std ⁡ ( u ) + ϵ ) \displaystyle=\sigma\!\left(\frac{u_{t}-\mathbb{E}[u]}{\mathrm{std}(u)+\epsilon}\right) | 
+ | 
+ (8) | 
+
+ | 
+ m t ent \displaystyle m_{t}^{\mathrm{ent}} | 
+ = 1 + ρ ⁡ ( 2 ​ g t ent − 1 ) \displaystyle=1+\rho\,(2\,g_{t}^{\mathrm{ent}}-1) | 
+ | 
+ (9) | 
+
+ where σ \sigma is the sigmoid function and statistics are computed over response tokens. The Z-score normalization centers surprisal around the mean and scales by standard deviation, mapping to [ 0 , 1 ] [0,1] via sigmoid. For low-uncertainty format tokens, m t ent < 1 m_{t}^{\mathrm{ent}}<1 reduces modulation strength; for high-uncertainty content tokens, m t ent > 1 m_{t}^{\mathrm{ent}}>1 increases it. The range [ 1 − ρ ,  1 + ρ ] [1{-}\rho,\;1{+}\rho] redistributes gradient budget without zeroing out any token.
+
+ Composed gating.
+
+ The direction and entropy gates compose into a single effective gating function:
+
+ | 
+ λ t eff = clip ⁡ ( λ ⋅ g t dir ⋅ m t ent ⏟ safety & focus ,  0 , λ ) \lambda_{t}^{\mathrm{eff}}=\mathrm{clip}\!\left(\lambda\cdot\underbrace{g_{t}^{\mathrm{dir}}\cdot m_{t}^{\mathrm{ent}}}_{\text{safety \& focus}},\;0,\;\lambda\right) | 
+ | 
+ (10) | 
+
+ This yields ϕ t = 1 + λ t eff ​ ( w t − 1 ) ∈ [ 1 , 1 + λ ​ ϵ ] \phi_{t}=1+\lambda_{t}^{\mathrm{eff}}(w_{t}-1)\in[1,1{+}\lambda\epsilon] , ensuring three formal properties ( Appendix A ): (P1) direction preservation ( sign ⁡ ( 𝒜 t ) = sign ⁡ ( A [ t ] turn ) \mathrm{sign}(\mathcal{A}_{t})=\mathrm{sign}(A_{[t]}^{\mathrm{turn}}) always), (P2) bounded bias ( ‖ Bias ‖ ≤ λ ​ ϵ ⋅ ‖ ∇ J GRPO ‖ ≈ 8.4 % \|\mathrm{Bias}\|\leq\lambda\epsilon\cdot\|\nabla J_{\mathrm{GRPO}}\|\approx 8.4\% with λ = 0.3 , ϵ = 0.28 \lambda{=}0.3,\epsilon{=}0.28 ), and (P3) sign-consistent amplification ( ϕ t ≥ 1 \phi_{t}\geq 1 when active).
+
+ λ \lambda is the only tunable hyperparameter controlling teacher influence strength. The remaining values— τ = 2.0 \tau{=}2.0 (divergence temperature), ϵ = 0.28 \epsilon{=}0.28 (clip bound, inherited from OPSD stabilization), ρ = 0.5 \rho{=}0.5 (entropy redistribution range)—are fixed constants requiring no tuning (ablation in Section 4 ).
+
+ The complete training procedure, consolidating all equations into executable pseudocode, is provided in Appendix B .
+
+ 4 Experiments
+
+ 4.1 Experimental Setup
+
+ Benchmarks.
+
+ We conduct experiments on two multi-turn multi-step tool-use benchmarks: (1) Berkeley Function-Calling Leaderboard (BFCL) V3 ( Patil et al., 2025 ) . Under our processed protocol, we use 100 fixed IDs from the multi-turn Base split for training and 400 non-overlapping examples for evaluation: 100 examples each from Base , Missing Functions , Missing Parameters , and Long-Context . (2) WildToolBench ( Yu et al., 2026a ) contains 256 multi-turn sessions designed to capture real-world interaction challenges, including compositional tasks, implicit intent through pronoun reference or ellipsis, and task switching between goal-directed queries and casual chat. The benchmark evaluates both action correctness and parameter accuracy. We allocate 128 sessions for training and reserve the remaining ones for evaluation.
+
+ The turn index is semantically aligned within each rollout group: all rollouts use the same fixed session and the same ordered list of user turns, so turn k k denotes the same benchmark request across the group. This assumption is specific to these benchmarks and does not directly extend to variable turn structures, terminal-only rewards, or strongly coupled turns without local verification. BFCL rewards compare post-execution environment states with annotated per-turn target executions, including result-coverage checks for read-only tools; WildToolBench rewards path-match calls against human-verified valid paths and score action correctness, parameter correctness, and path completion.
+
+ Base models.
+
+ We evaluate on two model scales from the Qwen3 family ( Yang et al., 2025 ) : Qwen3-4B-Instruct , 1 1 
+ 1 
+
+ https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507 an instruction-tuned model, and Qwen3-8B , a thinking model. Both have native tool-calling support and represent practical deployment sizes where post-training efficiency matters most.
+
+ Baselines.
+
+ We compare against four training methods spanning RL-based and distillation-based paradigms:
+
+ GRPO ( Shao et al., 2024 ) applies standard Group Relative Policy Optimization with binary trajectory-level reward (1 if all turns succeed, 0 otherwise). Advantages are averaged across all tokens in the trajectory regardless of per-turn outcomes.
+
+ MT-GRPO ( Wei et al., 2025b ) computes advantages at the per-agent-step granularity, providing finer-grained credit assignment than trajectory-level methods. However, within each step, all tokens still share the same advantage, lacking token-level differentiation.
+
+ EnvTuning ( Lu et al., 2026 ) uses fine-grained process rewards that combine per-turn state correctness and execution accuracy, aggregating per-turn scores into a trajectory-level reward via weighted averaging. Despite richer reward signals, it still computes a single trajectory-level advantage.
+
+ OPD ( Lu and Thinking Machines, 2025 ) performs on-policy distillation with a same-family, same-variant teacher, providing dense per-token supervision via reverse KL. To satisfy the tokenizer-matched constraint, we pair each student with a teacher of the same model variant: Qwen3-4B-Instruct uses Qwen3-235B-A22B-Instruct 2 2 
+ 2 
+
+ https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507 as teacher, while Qwen3-8B uses Qwen3-32B. OPD’s performance ceiling is teacher-bounded.
+
+ OPSD ( Zhao et al., 2026 ) uses on-policy self-distillation where the student itself, conditioned on ground-truth context, serves as the privileged teacher. This removes the external teacher dependency but risks training instability from gradient concentration.
+
+ Implementation details.
+
+ All methods are trained with the same on-policy rollout infrastructure, group size G = 16 G{=}16 , and learning rate schedule. For CrEST , we set λ = 0.3 \lambda{=}0.3 , ϵ = 0.28 \epsilon{=}0.28 , τ = 2.0 \tau{=}2.0 , and ρ = 0.5 \rho{=}0.5 ; only λ \lambda is tuned, while the other values are fixed design choices across all experiments. Each method uses a single training seed. We evaluate each trained policy with three decodes at temperature 10 − 6 10^{-6} ; these runs measure decoding consistency rather than training variance, and should not be interpreted as independent training replicates. Full training configuration and OPSD stabilization details are provided in Appendix C .
+
+ Table 2: Main results on BFCL V3 multi-turn and WildToolBench benchmarks. Best results per model in bold , second-best underlined . Methods are grouped by training paradigm: RL-based (top), distillation-based (middle), and our method (bottom).
+
+ Method | 
+ BFCL V3 Multi-Turn (%) | 
+ WildToolBench (%) | 
+
+ Average | 
+ Base | 
+ Miss Func | 
+ Miss Param | 
+ Long Context | 
+ Task Acc. | 
+ Session Acc. | 
+
+ Qwen3-4B-Instruct | 
+ 22.12 | 
+ 26.5 | 
+ 21.0 | 
+ 15.5 | 
+ 25.5 | 
+ 37.89 | 
+ 3.13 | 
+
+ + GRPO | 
+ 43.63 | 
+ 53.5 | 
+ 42.5 | 
+ 31.5 | 
+ 47.0 | 
+ 40.23 | 
+ 4.69 | 
+
+ + MT-GRPO | 
+ 49.25 | 
+ 63.0 | 
+ 46.0 | 
+ 35.0 | 
+ 53.0 | 
+ 43.36 | 
+ 6.25 | 
+
+ + EnvTuning | 
+ 47.25 | 
+ 60.0 | 
+ 47.0 | 
+ 32.0 | 
+ 50.0 | 
+ 44.92 | 
+ 4.69 | 
+
+ + OPD | 
+ 44.50 | 
+ 52.0 | 
+ 43.0 | 
+ 38.0 | 
+ 45.0 | 
+ 42.58 | 
+ 6.25 | 
+
+ + OPSD | 
+ 38.75 | 
+ 46.0 | 
+ 41.0 | 
+ 26.0 | 
+ 42.0 | 
+ 38.88 | 
+ 4.69 | 
+
+ + CrEST | 
+ 52.00 (+29.88) | 
+ 67.0 (+40.5) | 
+ 48.0 (+27.0) | 
+ 38.0 (+22.5) | 
+ 60.0 (+34.5) | 
+ 48.44 (+10.55) | 
+ 7.03 (+3.90) | 
+
+ Qwen3-8B | 
+ 33.38 | 
+ 41.5 | 
+ 38.5 | 
+ 27.0 | 
+ 26.5 | 
+ 43.75 | 
+ 4.69 | 
+
+ + GRPO | 
+ 43.25 | 
+ 53.0 | 
+ 46.0 | 
+ 36.0 | 
+ 38.0 | 
+ 45.43 | 
+ 5.47 | 
+
+ + MT-GRPO | 
+ 44.00 | 
+ 57.0 | 
+ 45.0 | 
+ 36.0 | 
+ 38.0 | 
+ 49.61 | 
+ 7.03 | 
+
+ + EnvTuning | 
+ 46.00 | 
+ 54.0 | 
+ 45.0 | 
+ 40.0 | 
+ 45.0 | 
+ 49.02 | 
+ 7.81 | 
+
+ + OPD | 
+ 44.75 | 
+ 50.0 | 
+ 52.0 | 
+ 39.0 | 
+ 38.0 | 
+ 45.25 | 
+ 3.91 | 
+
+ + OPSD | 
+ 41.75 | 
+ 48.0 | 
+ 43.0 | 
+ 39.0 | 
+ 37.0 | 
+ 43.95 | 
+ 3.91 | 
+
+ + CrEST | 
+ 50.00 (+16.62) | 
+ 60.0 (+18.5) | 
+ 51.0 (+12.5) | 
+ 42.0 (+15.0) | 
+ 47.0 (+20.5) | 
+ 52.34 (+8.59) | 
+ 9.38 (+4.69) | 
+
+ 4.2 Main Results
+
+ Table 2 reports BFCL V3 and WildToolBench performance for both model scales across all baselines. CrEST outperforms every baseline on average and achieves the best result on nearly all individual splits across both benchmarks and both model scales.
+
+ RL outperforms distillation
+
+ Two patterns stand out in Table 2 . First, RL-based methods (GRPO, MT-GRPO, EnvTuning) systematically outperform distillation-based methods (OPD, OPSD) at both model scales. The clearest signal is OPSD: on Qwen3-4B BFCL Avg it scores 38.75 % 38.75\% , falling below GRPO ( 43.63 % 43.63\% ) despite using a privileged ground-truth-conditioned teacher, giving direct empirical evidence for the teacher-bounded ceiling argued in Section 3 .
+Second, within the RL family, finer-grained credit assignment helps: on Qwen3-4B BFCL Avg, MT-GRPO ( 49.25 % 49.25\% ) and EnvTuning ( 47.25 % 47.25\% ) both improve clearly over trajectory-level GRPO ( 43.63 % 43.63\% ), yet every token within a step still shares a single advantage. The remaining headroom for dense per-token supervision, on top of verifier-determined directions, is exactly the room CrEST is designed to fill.
+
+ CrEST closes both gaps simultaneously.
+
+ CrEST reaches 52.00 % 52.00\% on Qwen3-4B-Instruct and 50.00 % 50.00\% on Qwen3-8B, surpassing the strongest RL baseline at each scale and achieving the best or tied-best result in 13 of 14 cells. OPD is best on Qwen3-8B Missing Functions , while CrEST ties OPD on Qwen3-4B Missing Parameters .
+The margins are largest on the splits that stress hierarchical credit assignment: on BFCL Long Context (the longest-trajectory split), CrEST improves over the strongest baseline by + 7.0 +7.0 on 4B and + 2.0 +2.0 on 8B; on WildToolBench Session Accuracy (the strictest end-to-end multi-turn metric), by + 0.78 +0.78 on 4B and + 1.57 +1.57 on 8B.
+These are exactly the regimes where credit dilution is worst, validating that turn-segmented advantages and entropy-gated modulation address complementary failure modes.
+
+ 4.3 Training Dynamics Analysis
+
+ (a) Training rollout accuracy.
+
+ (b) Top- p p % token gradient share.
+
+ Figure 3: Training dynamics on BFCL V3 (Qwen3-4B). (a) CrEST achieves both faster convergence and a higher ceiling than GRPO, surpassing the OPSD ceiling (dashed) by step 20, while OPSD plateaus and declines. (b) Top- p p % token gradient share: OPSD concentrates > > 77% of gradient on the top-5% tokens, so its signal is dominated by a few tokens; CrEST ’s entropy gate redistributes gradient budget to high-uncertainty content tokens.
+
+ Figure 3(a) compares training rollout accuracy on BFCL V3 (Qwen3-4B). CrEST reaches 0.60 0.60 accuracy within ∼ 20 {\sim}20 steps and converges to ∼ 0.70 {\sim}0.70 , while GRPO rises slowly to ∼ 0.57 {\sim}0.57 by step 160. OPSD plateaus at ∼ 0.49 {\sim}0.49 and declines thereafter, empirically confirming the teacher-bounded ceiling discussed by Lu and Thinking Machines (2025) and Brown (2026) . CrEST surpasses this ceiling by step 20 and continues improving, validating that our direction gate successfully decouples gradient magnitude (teacher-informed) from gradient direction (verifier-determined).
+
+ Figure 3(b) provides a mechanistic explanation for the performance gap. We measure the fraction of total gradient magnitude captured by the top- p p % of tokens (ranked by per-token advantage magnitude) for each method. OPSD exhibits extreme concentration: the top-1% of tokens account for ∼ 42 % {\sim}42\% of the total gradient signal, and the top-5% account for ∼ 77 % {\sim}77\% . This matches the gradient-geometric analysis of Brown (2026) : a handful of pivot tokens dominate the update, causing instability. GRPO, by contrast, is far more diffuse (top-10% ≈ \approx 31%), but at the cost of treating all tokens equally. CrEST occupies the desirable middle ground: more concentrated than GRPO (top-10% ≈ \approx 57%), confirming that the self-teacher signal provides meaningful token differentiation, but far less extreme than OPSD, confirming that the entropy gate prevents concentration collapse.
+
+ 4.4 Ablation Studies
+
+ Table 3: Hierarchical ablation on BFCL V3 (Qwen3-4B-Instruct). Neither inter-turn nor intra-turn credit assignment alone recovers the full CrEST performance.
+
+ Method | 
+ Avg | 
+ Base | 
+ M.Func | 
+ M.Param | 
+ L.Ctxt | 
+
+ GRPO (baseline) | 
+ 43.63 | 
+ 53.5 | 
+ 42.5 | 
+ 31.5 | 
+ 47.0 | 
+
+ + Inter-turn only | 
+ 47.88 | 
+ 62.0 | 
+ 44.0 | 
+ 35.5 | 
+ 50.0 | 
+
+ + Intra-turn only | 
+ 48.75 | 
+ 61.0 | 
+ 50.0 | 
+ 32.0 | 
+ 52.0 | 
+
+ + Both ( CrEST ) | 
+ 52.00 | 
+ 67.0 | 
+ 48.0 | 
+ 38.0 | 
+ 60.0 | 
+
+ Effect of hierarchical credit decomposition.
+
+ Table 3 isolates the contribution of each credit assignment level.
+The Intra-turn only variant retains the trajectory-level GRPO group-relative advantage A i traj A_{i}^{\mathrm{traj}} for every token and applies only the teacher modulation, 𝒜 t = A i traj ​ ϕ t \mathcal{A}_{t}=A_{i}^{\mathrm{traj}}\phi_{t} ; it uses neither turn segmentation nor process rewards.
+Inter-turn segmentation alone improves average accuracy over GRPO ( 43.63 → 47.88 43.63\to 47.88 ), with the largest gain on Base ( + 8.5 +8.5 ) where cross-turn reward dilution is most severe.
+Intra-turn modulation alone yields + 5.12 +5.12 points, with particular strength on Miss Func ( + 7.5 +7.5 ) where distinguishing content tokens from format tokens matters most. Combining both levels achieves + 8.37 +8.37 points ( 43.63 → 52.00 43.63\to 52.00 ), with Long Context showing the strongest synergy.
+Neither component alone approaches the full model, confirming that the two levels address complementary failure modes: turn segmentation provides correct per-turn reward direction, while entropy gating allocates gradient budget to high-value tokens within each turn.
+
+ Table 4: Gating ablation on BFCL V3 (Qwen3-4B-Instruct). Removing the direction gate caps performance at the teacher-bounded ceiling; removing the entropy gate causes gradient concentration on format tokens; removing both leads to training instability.
+
+ Variant | 
+ Avg | 
+ Base | 
+ M.Func | 
+ M.Param | 
+ L.Ctxt | 
+
+ CrEST | 
+ 52.00 | 
+ 67.0 | 
+ 48.0 | 
+ 38.0 | 
+ 60.0 | 
+
+ + w/o Direction gate | 
+ 46.75 | 
+ 60.0 | 
+ 47.0 | 
+ 28.0 | 
+ 52.0 | 
+
+ + w/o Entropy gate | 
+ 46.25 | 
+ 59.0 | 
+ 50.0 | 
+ 27.0 | 
+ 49.0 | 
+
+ + w/o Both gates | 
+ 43.50 | 
+ 53.0 | 
+ 43.0 | 
+ 27.0 | 
+ 51.0 | 
+
+ Both gates are necessary.
+
+ Table 4 ablates the direction gate and entropy gate individually and jointly. Removing the direction gate drops average accuracy from 52.00 % 52.00\% to 46.75 % 46.75\% ( − 5.25 -5.25 ), with Miss Param suffering the largest decline ( 38.0 → 28.0 38.0\to 28.0 ), consistent with the teacher overriding verifier signals on ambiguous parameter tokens. Removing the entropy gate yields a similar degradation ( 52.00 → 46.25 52.00\to 46.25 ), with Long Context dropping from 60.0 60.0 to 49.0 49.0 , where long sequences amplify gradient concentration on format tokens. Removing both gates ( 43.50 % 43.50\% ) falls to GRPO-level performance, confirming that uncontrolled self-distillation provides no benefit over standard RL. A sensitivity analysis of λ \lambda is provided in Section C.3 .
+
+ 5 Conclusion
+
+ We presented CrEST , a hierarchical credit assignment framework for multi-turn multi-step agent training. By decomposing per-token advantages into turn-segmented verified rewards and entropy-gated self-teacher modulation, CrEST resolves the two-level credit assignment problem that afflicts standard RL in multi-turn settings: inter-turn reward dilution and intra-turn token uniformity. Experiments on BFCL V3 and WildToolBench demonstrate that CrEST consistently outperforms both RL and distillation baselines across two model scales, with ablations confirming that the two levels address complementary failure modes. Our central finding is that a self-teacher need not determine gradient directions to be useful—restricting it to magnitude modulation, gated by student uncertainty, unlocks dense credit assignment while preserving the verifier-bounded ceiling that makes RL effective.
+
+ Several directions for future work are worth exploring. The magnitude-only modulation principle demonstrated here could be applied to other structured generation tasks beyond tool use, such as multi-hop retrieval or collaborative dialogue, where hierarchical outcome structure is present. Additionally, the design space between our fixed self-teacher and fully online co-training remains largely unexplored; adaptive scheduling of teacher influence strength λ \lambda across training stages may yield further gains. Finally, combining CrEST with complementary advances in reward design (e.g., progress reward from Lu et al. (2026) ) could compound the benefits of both finer reward signals and better credit allocation.
+
+ 6 Limitations
+
+ Our evaluation is conducted on two multi-turn tool-use benchmarks at the 4B and 8B scale. While these represent distinct interaction paradigms (structured function-calling and naturalistic agentic sessions), broader validation across additional benchmarks and larger model scales would further strengthen the generality claims. Additionally, the entropy gate uses per-token surprisal as a proxy for token importance, which is effective for separating format tokens from content tokens in tool-use trajectories but remains a heuristic that may not optimally capture token informativeness in all generation contexts.
+
+ References
+
+ Ahmadian et al. (2024) 
+ A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker 
+
+ Back to basics: revisiting reinforce-style optimization for learning from human feedback in llms .
+
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+
+ pp. 12248–12267 .
+
+ Cited by: §1 .
+
+ Brown (2026) 
+ W. Brown 
+
+ On SFT, RL, and on-policy distillation .
+
+ Note: https://x.com/willccbb/status/2050038277454143918 Blog post 
+
+ Cited by: §1 ,
+ §2 ,
+ §3.4 ,
+ §4.3 ,
+ §4.3 .
+
+ Comanici et al. (2025) 
+ G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al. 
+
+ Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities .
+
+ arXiv preprint arXiv:2507.06261 .
+
+ Cited by: §1 .
+
+ Feng et al. (2025) 
+ J. Feng, S. Huang, X. Qu, G. Zhang, Y. Qin, B. Zhong, C. Jiang, J. Chi, and W. Zhong 
+
+ Retool: reinforcement learning for strategic tool use in llms .
+
+ arXiv preprint arXiv:2504.11536 .
+
+ Cited by: §2 .
+
+ Froger et al. (2025) 
+ R. Froger, P. Andrews, M. Bettini, A. Budhiraja, R. S. Cabral, V. Do, E. Garreau, J. Gaya, H. Laurençon, M. Lecanu, et al. 
+
+ Are: scaling up agent environments and evaluations .
+
+ arXiv preprint arXiv:2509.17158 .
+
+ Cited by: §1 .
+
+ Fu et al. (2026) 
+ Y. Fu, H. Huang, K. Jiang, J. Liu, Z. Jiang, Y. Zhu, and D. Zhao 
+
+ Revisiting on-policy distillation: empirical failure modes and simple fixes .
+
+ arXiv preprint arXiv:2603.25562 .
+
+ Cited by: §1 .
+
+ Hübotter et al. (2026) 
+ J. Hübotter, F. Lübeck, L. Behric, A. Baumann, M. Bagatella, D. Marta, I. Hakimi, I. Shenfeld, T. K. Buening, C. Guestrin, et al. 
+
+ Reinforcement learning via self-distillation .
+
+ arXiv preprint .
+
+ Cited by: §1 ,
+ §2 .
+
+ Hurst et al. (2024) 
+ A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al. 
+
+ Gpt-4o system card .
+
+ arXiv preprint arXiv:2410.21276 .
+
+ Cited by: §1 .
+
+ Jimenez et al. (2024) 
+ C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan 
+
+ Swe-bench: can language models resolve real-world github issues? .
+
+ In International Conference on Learning Representations ,
+
+ Vol. 2024 , pp. 54107–54157 .
+
+ Cited by: §1 .
+
+ Jin et al. (2025) 
+ B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han 
+
+ Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+
+ arXiv preprint arXiv:2503.09516 .
+
+ Cited by: §2 .
+
+ Kim et al. (2026) 
+ J. Kim, X. Luo, M. Kim, S. Lee, D. Kim, J. Jeon, D. Li, and Y. Yang 
+
+ Why does self-distillation (sometimes) degrade the reasoning capability of llms? .
+
+ arXiv preprint arXiv:2603.24472 .
+
+ Cited by: §1 .
+
+ Laban et al. (2025) 
+ P. Laban, H. Hayashi, Y. Zhou, and J. Neville 
+
+ Llms get lost in multi-turn conversation .
+
+ arXiv preprint arXiv:2505.06120 .
+
+ Cited by: §1 .
+
+ Li et al. (2023) 
+ M. Li, Y. Zhao, B. Yu, F. Song, H. Li, H. Yu, Z. Li, F. Huang, and Y. Li 
+
+ Api-bank: a comprehensive benchmark for tool-augmented llms .
+
+ In Proceedings of the 2023 conference on empirical methods in natural language processing ,
+
+ pp. 3102–3116 .
+
+ Cited by: §1 .
+
+ Li et al. (2025) 
+ X. Li, H. Zou, and P. Liu 
+
+ Torl: scaling tool-integrated rl .
+
+ arXiv preprint arXiv:2503.23383 .
+
+ Cited by: §2 .
+
+ Li et al. (2026) 
+ Y. Li et al. 
+
+ Rethinking on-policy distillation of large language models: phenomenology, mechanism, and recipe .
+
+ arXiv preprint arXiv:2604.13016 .
+
+ Cited by: §1 ,
+ §2 .
+
+ Liu et al. (2024) 
+ A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al. 
+
+ Deepseek-v3 technical report .
+
+ arXiv preprint arXiv:2412.19437 .
+
+ Cited by: §1 .
+
+ Liu et al. (2025) 
+ Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin 
+
+ Understanding r1-zero-like training: a critical perspective .
+
+ arXiv preprint arXiv:2503.20783 .
+
+ Cited by: §1 .
+
+ Liu et al. (2026) 
+ Z. Liu, A. Sims, K. Duan, C. Chen, S. Yu, X. Zhou, H. Xu, S. Xiong, B. Liu, C. Tan, W. Wang, H. Zhu, W. Shi, D. Yang, M. Q. Shieh, Y. W. Teh, W. S. Lee, and M. Lin 
+
+ GEM: a gym for generalist LLMs .
+
+ In The Fourteenth International Conference on Learning Representations ,
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Lu and Thinking Machines (2025) 
+ K. Lu and Thinking Machines 
+
+ On-policy distillation of language models .
+
+ Note: https://thinkingmachines.ai/blog/on-policy-distillation/ Blog post 
+
+ Cited by: §1 ,
+ §2 ,
+ §4.1 ,
+ §4.3 .
+
+ Lu et al. (2026) 
+ S. Lu, Z. Wang, H. Zhang, Q. Wu, L. Gan, C. Zhuang, J. Gu, and T. Lin 
+
+ Don’t just fine-tune the agent, tune the environment .
+
+ In The Fourteenth International Conference on Learning Representations ,
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §2 ,
+ §4.1 ,
+ §5 .
+
+ Lu et al. (2026) 
+ Z. Lu et al. 
+
+ Self-distilled agentic reinforcement learning .
+
+ arXiv preprint arXiv:2605.15155 .
+
+ Cited by: §2 .
+
+ Merrill et al. (2026) 
+ M. A. Merrill, A. G. Shaw, N. Carlini, B. Li, H. Raj, I. Bercovich, L. Shi, J. Y. Shin, T. Walshe, E. K. Buchanan, et al. 
+
+ Terminal-bench: benchmarking agents on hard, realistic tasks in command line interfaces .
+
+ arXiv preprint arXiv:2601.11868 .
+
+ Cited by: §1 .
+
+ OpenClaw (2026) 
+ OpenClaw 
+
+ OpenClaw .
+
+ Note: https://github.com/openclaw/openclaw Open-source personal AI assistant, version 2026.3.8, accessed 2026-03-09 
+
+ Cited by: §1 .
+
+ Patil et al. (2025) 
+ S. G. Patil, H. Mao, F. Yan, C. C. Ji, V. Suresh, I. Stoica, and J. E. Gonzalez 
+
+ The berkeley function calling leaderboard (bfcl): from tool use to agentic evaluation of large language models .
+
+ In Forty-second International Conference on Machine Learning ,
+
+ Cited by: §1 ,
+ §2 ,
+ §4.1 .
+
+ Penaloza et al. (2026) 
+ E. Penaloza, D. Vattikonda, N. Gontier, A. Lacoste, L. Charlin, and M. Caccia 
+
+ Privileged information distillation for language models .
+
+ arXiv preprint arXiv:2602.04942 .
+
+ Cited by: §1 .
+
+ Qian et al. (2026) 
+ C. Qian, E. C. Acikgoz, Q. He, H. Wang, X. Chen, D. Hakkani-Tur, G. Tur, and H. Ji 
+
+ Toolrl: reward is all tool learning needs .
+
+ Advances in Neural Information Processing Systems 38 , pp. 105523–105553 .
+
+ Cited by: §1 ,
+ §2 ,
+ §2 .
+
+ Qwen et al. (2025) 
+ Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu 
+
+ Qwen2.5 technical report .
+
+ Cited by: §1 .
+
+ Schulman et al. (2017) 
+ J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov 
+
+ Proximal policy optimization algorithms .
+
+ arXiv preprint arXiv:1707.06347 .
+
+ Cited by: §1 .
+
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. 
+
+ Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+
+ arXiv preprint arXiv:2402.03300 .
+
+ Cited by: §1 ,
+ §2 ,
+ §4.1 .
+
+ Shenfeld et al. (2026) 
+ I. Shenfeld, M. Damani, J. Hübotter, and P. Agrawal 
+
+ Self-distillation enables continual learning .
+
+ arXiv preprint arXiv:2601.19897 .
+
+ Cited by: §1 .
+
+ Shenfeld et al. (2026) 
+ I. Shenfeld et al. 
+
+ Self-distillation enables continual learning .
+
+ arXiv preprint arXiv:2601.19897 .
+
+ Cited by: §2 .
+
+ Shridhar et al. (2021) 
+ M. Shridhar, X. Yuan, M. Cote, Y. Bisk, A. Trischler, and M. Hausknecht 
+
+ {ALFW}orld: aligning text and embodied environments for interactive learning .
+
+ In International Conference on Learning Representations ,
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Song and Zheng (2026) 
+ M. Song and M. Zheng 
+
+ A survey of on-policy distillation for large language models .
+
+ arXiv preprint arXiv:2604.00626 .
+
+ Cited by: §1 .
+
+ Towers et al. (2026) 
+ M. Towers, A. Kwiatkowski, J. Balis, G. De Cola, T. Deleu, M. Goulão, K. Andreas, M. Krimmel, A. Kg, R. Perez-Vicente, et al. 
+
+ Gymnasium: a standard interface for reinforcement learning environments .
+
+ Advances in Neural Information Processing Systems 38 .
+
+ Cited by: §1 .
+
+ Wang et al. (2025) 
+ Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, X. Jin, K. Yu, M. N. Nguyen, L. Liu, et al. 
+
+ Ragen: understanding self-evolution in llm agents via multi-turn reinforcement learning .
+
+ arXiv preprint arXiv:2504.20073 .
+
+ Cited by: §2 .
+
+ Wei et al. (2025a) 
+ J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and A. Glaese 
+
+ Browsecomp: a simple yet challenging benchmark for browsing agents .
+
+ arXiv preprint arXiv:2504.12516 .
+
+ Cited by: §1 .
+
+ Wei et al. (2025b) 
+ Q. Wei, S. Zeng, C. Li, W. Brown, O. Frunza, W. Deng, Y. Nevmyvaka, Y. K. Zhao, A. Garcia, and M. Hong 
+
+ Reinforcing multi-turn reasoning in LLM agents via turn-level reward design and credit assignment .
+
+ In First Workshop on Multi-Turn Interactions in Large Language Models ,
+
+ External Links: Link 
+
+ Cited by: §2 ,
+ §4.1 .
+
+ Xie et al. (2024) 
+ T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, et al. 
+
+ Osworld: benchmarking multimodal agents for open-ended tasks in real computer environments .
+
+ Advances in Neural Information Processing Systems 37 , pp. 52040–52094 .
+
+ Cited by: §1 .
+
+ Yang et al. (2025) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. 
+
+ Qwen3 technical report .
+
+ arXiv preprint arXiv:2505.09388 .
+
+ Cited by: §4.1 .
+
+ Yang et al. (2026) 
+ C. Yang et al. 
+
+ Self-distilled RLVR .
+
+ arXiv preprint arXiv:2604.03128 .
+
+ Cited by: §2 .
+
+ Yu et al. (2026a) 
+ P. Yu, W. Liu, Y. Yang, J. Li, Z. Zhang, X. Feng, and feng zhang 
+
+ Benchmarking LLM tool-use in the wild .
+
+ In The Fourteenth International Conference on Learning Representations ,
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §2 ,
+ §4.1 .
+
+ Yu et al. (2026b) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al. 
+
+ Dapo: an open-source llm reinforcement learning system at scale .
+
+ Advances in Neural Information Processing Systems 38 , pp. 113222–113244 .
+
+ Cited by: §1 ,
+ §2 .
+
+ Zhang et al. (2025a) 
+ S. Zhang, Y. Dong, J. Zhang, J. Kautz, B. Catanzaro, A. Tao, Q. Wu, Z. Yu, and G. Liu 
+
+ Nemotron-research-tool-n1: tool-using language models with reinforced reasoning .
+
+ arXiv preprint arXiv:2505.00024 2 ( 10 ).
+
+ Cited by: §1 ,
+ §2 ,
+ §2 .
+
+ Zhang et al. (2025b) 
+ Y. Zhang, M. Wang, X. Li, K. Ren, C. Zhu, and U. Naseem 
+
+ TurnBench-ms: a benchmark for evaluating multi-turn, multi-step reasoning in large language models .
+
+ Findings of the Association for Computational Linguistics: EMNLP , pp. 19892–19924 .
+
+ Cited by: §2 .
+
+ Zhao et al. (2026) 
+ S. Zhao, Z. Xie, M. Liu, J. Huang, G. Pang, F. Chen, and A. Grover 
+
+ Self-distilled reasoner: on-policy self-distillation for large language models .
+
+ arXiv preprint arXiv:2601.18734 .
+
+ Cited by: §C.2 ,
+ §C.2 ,
+ §1 ,
+ §2 ,
+ §3.3 ,
+ §4.1 .
+
+ Zheng et al. (2025) 
+ Y. Zheng, D. Fu, X. Hu, X. Cai, L. Ye, P. Lu, and P. Liu 
+
+ Deepresearcher: scaling deep research via reinforcement learning in real-world environments .
+
+ In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing ,
+
+ pp. 414–431 .
+
+ Cited by: §2 .
+
+ Appendix A Gradient Analysis
+
+ We prove the three properties stated in § 3 . Recall the structured per-token advantage:
+
+ | 
+ 𝒜 t \displaystyle\mathcal{A}_{t} | 
+ = A [ t ] turn ⋅ ϕ t , \displaystyle=A_{[t]}^{\mathrm{turn}}\cdot\phi_{t}, | 
+ | 
+ (11) | 
+
+ | 
+ ϕ t \displaystyle\phi_{t} | 
+ = 1 + λ t eff ⋅ ( w t − 1 ) \displaystyle=1+\lambda_{t}^{\mathrm{eff}}\cdot(w_{t}-1) | 
+ | 
+
+ and the resulting policy gradient:
+
+ | 
+ ∇ θ J ​ ( θ ) = 𝔼 ⁡ [ ∑ t 𝒜 t ​ ∇ θ ​ log ⁡ π θ ​ ( y t ) ] \nabla_{\theta}J(\theta)=\mathbb{E}\!\left[\sum_{t}\mathcal{A}_{t}\nabla_{\theta}\log\pi_{\theta}(y_{t})\right] | 
+ | 
+ (12) | 
+
+ A.1 (P1) Direction Preservation
+
+ Proposition A.1 (Direction Preservation) . 
+
+ For all tokens t t , sign ⁡ ( 𝒜 t ) = sign ⁡ ( A [ t ] turn ) \mathrm{sign}(\mathcal{A}_{t})=\mathrm{sign}(A_{[t]}^{\mathrm{turn}}) . 
+
+ Proof. 
+
+ We show ϕ t > 0 \phi_{t}>0 always holds, so multiplication by ϕ t \phi_{t} preserves the sign of A [ t ] turn A_{[t]}^{\mathrm{turn}} . 
+
+ Case 1: g t dir = 0 g_{t}^{\mathrm{dir}}=0 (direction gate off). Then λ t eff = 0 \lambda_{t}^{\mathrm{eff}}=0 by Eq. 10 , so ϕ t = 1 > 0 \phi_{t}=1>0 . 
+
+ Case 2: g t dir = 1 g_{t}^{\mathrm{dir}}=1 (direction gate on). This requires sign ⁡ ( A [ t ] turn ) ⋅ Δ t > 0 \mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t}>0 by Eq. 7 , which implies exp ⁡ ( sign ⁡ ( A [ t ] turn ) ⋅ Δ t ) > 1 \exp(\mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t})>1 . After clipping, w t ∈ [ 1 , 1 + ϵ ] w_{t}\in[1,1+\epsilon] , so w t − 1 ≥ 0 w_{t}-1\geq 0 . Since λ t eff ≥ 0 \lambda_{t}^{\mathrm{eff}}\geq 0 : 
+
+ | 
+ ϕ t = 1 + λ t eff ⏟ ≥  0 ​ ( w t − 1 ) ⏟ ≥  0 ≥ 1 > 0 \phi_{t}=1+\underbrace{\lambda_{t}^{\mathrm{eff}}}_{\geq\,0}\underbrace{(w_{t}-1)}_{\geq\,0}\geq 1>0 | 
+ | 
+ (13) | 
+
+ In both cases ϕ t > 0 \phi_{t}>0 , so sign ⁡ ( 𝒜 t ) = sign ⁡ ( A [ t ] turn ⋅ ϕ t ) = sign ⁡ ( A [ t ] turn ) \mathrm{sign}(\mathcal{A}_{t})=\mathrm{sign}(A_{[t]}^{\mathrm{turn}}\cdot\phi_{t})=\mathrm{sign}(A_{[t]}^{\mathrm{turn}}) .
+∎ 
+
+ Interpretation. The scalar coefficient of each token’s policy-gradient contribution has the same sign as the inter-turn-only coefficient (i.e., CrEST with ϕ t = 1 \phi_{t}{=}1 ). The teacher signal modulates the magnitude of each token’s contribution but cannot flip its scalar sign. This is a local, token-wise anchoring property: reweighting can still change how token gradients cancel in the aggregate, so it does not imply that aggregate gradient directions, stationary points, or a global performance ceiling are determined solely by the verifier.
+
+ A.2 (P2) Absolute Perturbation Bound
+
+ Proposition A.2 (Absolute Perturbation Bound) . 
+
+ For a sampled trajectory, let
+ g t = A [ t ] turn ​ ∇ θ ​ log ⁡ π θ ​ ( y t ∣ h t ) g_{t}=A_{[t]}^{\mathrm{turn}}\nabla_{\theta}\log\pi_{\theta}(y_{t}\mid h_{t}) denote the per-token inter-turn gradient contribution. Let ∇ θ J ^ \widehat{\nabla_{\theta}J} and ∇ θ J ^ TG \widehat{\nabla_{\theta}J}_{\mathrm{TG}} denote the reweighted and inter-turn-only single-trajectory gradients, respectively. The teacher-induced perturbation satisfies: 
+
+ | 
+ ‖ ∑ t ( ϕ t − 1 ) ​ g t ‖ ≤ λ ​ ϵ ​ ∑ t ‖ g t ‖ . \left\|\sum_{t}(\phi_{t}-1)g_{t}\right\|\leq\lambda\epsilon\sum_{t}\|g_{t}\|. | 
+ | 
+ (14) | 
+
+ The bound is absolute; it is not relative to ‖ ∑ t g t ‖ \left\|\sum_{t}g_{t}\right\| . 
+
+ Proof. 
+
+ The difference between the reweighted and inter-turn-only gradients on one sampled trajectory is: 
+
+ | 
+ ∇ θ J ^ − ∇ θ J ^ TG = ∑ t ( ϕ t − 1 ) ​ g t . \widehat{\nabla_{\theta}J}-\widehat{\nabla_{\theta}J}_{\mathrm{TG}}=\sum_{t}(\phi_{t}-1)g_{t}. | 
+ | 
+ (15) | 
+
+ If g t dir = 0 g_{t}^{\mathrm{dir}}=0 , then ϕ t = 1 \phi_{t}=1 . If g t dir = 1 g_{t}^{\mathrm{dir}}=1 , then ϕ t − 1 = λ t eff ​ ( w t − 1 ) \phi_{t}-1=\lambda_{t}^{\mathrm{eff}}(w_{t}-1) , with λ t eff ≤ λ \lambda_{t}^{\mathrm{eff}}\leq\lambda and w t − 1 ≤ ϵ w_{t}-1\leq\epsilon by Eqs. 10 and 6 . Thus, for every token, | ϕ t − 1 | ≤ λ ​ ϵ |\phi_{t}-1|\leq\lambda\epsilon . Applying the triangle inequality gives: 
+
+ | 
+ ‖ ∑ t ( ϕ t − 1 ) ​ g t ‖ ≤ ∑ t | ϕ t − 1 | ​ ‖ g t ‖ ≤ λ ​ ϵ ​ ∑ t ‖ g t ‖ . \left\|\sum_{t}(\phi_{t}-1)g_{t}\right\|\leq\sum_{t}|\phi_{t}-1|\,\|g_{t}\|\leq\lambda\epsilon\sum_{t}\|g_{t}\|. | 
+ | 
+ (16) | 
+
+ ∎ 
+
+ Interpretation. The teacher-induced perturbation is controlled in absolute magnitude by the sum of per-token inter-turn gradient norms. With the default settings ( λ = 0.3 \lambda=0.3 , ϵ = 0.28 \epsilon=0.28 ), each token’s advantage coefficient can be amplified by at most 8.4 % 8.4\% ; this is not a relative bound on the aggregate gradient, which may be small because token contributions cancel. Reducing λ \lambda still makes the per-token modulation arbitrarily weak, smoothly approaching the inter-turn-only ablation.
+
+ A.3 (P3) Sign-Consistent Amplification
+
+ Proposition A.3 (Sign-Consistent Amplification) . 
+
+ When g t dir = 1 g_{t}^{\mathrm{dir}}=1 , ϕ t ≥ 1 \phi_{t}\geq 1 . That is, the teacher can only amplify the gradient magnitude along the verifier-approved direction, never suppress it. 
+
+ Proof. 
+
+ This was established in the proof of (P1), Case 2: g t dir = 1 ⟹ w t ≥ 1 ⟹ ϕ t = 1 + λ t eff ​ ( w t − 1 ) ≥ 1 g_{t}^{\mathrm{dir}}=1\implies w_{t}\geq 1\implies\phi_{t}=1+\lambda_{t}^{\mathrm{eff}}(w_{t}-1)\geq 1 .
+∎ 
+
+ Interpretation. Combined with (P1), this means: for every token, either the teacher has no effect ( ϕ t = 1 \phi_{t}=1 , when the direction gate is off) or the teacher increases the magnitude of the update in the direction already approved by the verified reward ( ϕ t > 1 \phi_{t}>1 ). The teacher signal is therefore a selective token-level amplifier. This does not imply that the aggregate parameter update or its stationary points are unchanged, because token gradients can cancel differently after reweighting.
+
+ A.4 Discussion: Relationship to Adaptive Preconditioning
+
+ The modulation factor ϕ t \phi_{t} can be interpreted as a form of token-level adaptive preconditioning on the policy gradient. Standard GRPO applies a uniform scale to all tokens within a trajectory (or turn). Our method replaces this with a per-token scale that is:
+
+ • 
+
+ Larger on tokens where the privileged teacher agrees with the verifier direction and the student is uncertain (high surprisal).
+
+ • 
+
+ Equal to 1 1 on tokens where the teacher disagrees, or the student is already confident.
+
+ This is analogous to how natural gradient methods or Adam apply per-parameter adaptive learning rates, except that our formal guarantee is token-wise scalar-sign preservation rather than preservation of the aggregate parameter-gradient direction. In our case, the “curvature proxy” is the teacher–student divergence gated by student uncertainty, and the adaptation is at the token level rather than the parameter level.
+
+ The key difference from OPSD is that OPSD uses the teacher signal as the advantage itself (both direction and magnitude), whereas our method uses it only as a magnitude modulator on top of verified reward. Thus, OPSD’s token-level optimization target is teacher-defined, while CrEST keeps each token’s scalar update sign anchored to the verifier; this distinction is not a guarantee about the aggregate optimum or a global performance ceiling.
+
+ Appendix B Complete Algorithm
+
+ Algorithm 1 provides the complete pseudocode for a single CrEST training step, consolidating all equations from Section 3 into an executable procedure.
+
+ Algorithm 1 CrEST Training Step
+
+ 0: 
+
+  Prompt batch 𝒟 \mathcal{D} , policy π θ \pi_{\theta} , group size G G , hyperparams λ , τ , ϵ , ρ \lambda,\tau,\epsilon,\rho 
+
+ 1: 
+
+   for each prompt x ∈ 𝒟 x\in\mathcal{D} do 
+
+ 2: 
+
+   Sample G G rollouts { y ( i ) } i = 1 G ∼ π θ ( ⋅ | x ) \{y^{(i)}\}_{i=1}^{G}\sim\pi_{\theta}(\cdot|x) 
+
+ 3: 
+
+   Obtain per-turn verified rewards { R k ( i ) } \{R_{k}^{(i)}\} 
+
+ 4: 
+
+    // Inter-turn: turn-segmented advantage 
+
+ 5: 
+
+    for each turn k k do 
+
+ 6: 
+
+     A k ( i ) ← ( R k ( i ) − μ k ) / ( σ k + ϵ ) A_{k}^{(i)}\leftarrow(R_{k}^{(i)}-\mu_{k})/(\sigma_{k}+\epsilon) ( Equation 3 ) 
+
+ 7: 
+
+    end for 
+
+ 8: 
+
+    // Intra-turn: entropy-gated self-teacher 
+
+ 9: 
+
+   Compute privileged teacher logprobs log ⁡ π T ​ ( y t ∣ h t T ) \log\pi_{T}(y_{t}\mid h_{t}^{T}) 
+
+ 10: 
+
+    for each token t t in rollout i i do 
+
+ 11: 
+
+     Δ t ← ( log ⁡ π T − log ⁡ π θ ) / τ \Delta_{t}\leftarrow(\log\pi_{T}-\log\pi_{\theta})/\tau ( Equation 5 ) 
+
+ 12: 
+
+     w t ← clip ⁡ ( exp ⁡ ( sign ⁡ ( A [ t ] turn ) ⋅ Δ t ) ,  1 − ϵ ,  1 + ϵ ) w_{t}\leftarrow\mathrm{clip}(\exp(\mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t}),\;1{-}\epsilon,\;1{+}\epsilon) ( Equation 6 ) 
+
+ 13: 
+
+     g t dir ← 𝟏 [ sign ( A [ t ] turn ) ⋅ Δ t > 0 ] g_{t}^{\mathrm{dir}}\leftarrow\mathbf{1}[\mathrm{sign}(A_{[t]}^{\mathrm{turn}})\cdot\Delta_{t}>0] ( Equation 7 ) 
+
+ 14: 
+
+     g t ent ← σ ⁡ ( ( u t − 𝔼 ⁡ [ u ] ) / ( std ⁡ ( u ) + ϵ ) ) g_{t}^{\mathrm{ent}}\leftarrow\sigma((u_{t}-\mathbb{E}[u])/(\mathrm{std}(u)+\epsilon)) ( Equation 8 ) 
+
+ 15: 
+
+     λ t eff ← clip ⁡ ( λ ⋅ g t dir ⋅ ( 1 + ρ ⁡ ( 2 ​ g t ent − 1 ) ) ,  0 , λ ) \lambda_{t}^{\mathrm{eff}}\leftarrow\mathrm{clip}(\lambda\cdot g_{t}^{\mathrm{dir}}\cdot(1+\rho(2g_{t}^{\mathrm{ent}}-1)),\;0,\;\lambda) ( Equation 10 ) 
+
+ 16: 
+
+     𝒜 t ← A [ t ] turn ⋅ ( 1 + λ t eff ⋅ ( w t − 1 ) ) \mathcal{A}_{t}\leftarrow A_{[t]}^{\mathrm{turn}}\cdot(1+\lambda_{t}^{\mathrm{eff}}\cdot(w_{t}-1)) 
+
+ 17: 
+
+    end for 
+
+ 18: 
+
+   end for 
+
+ 19: 
+
+  Update θ \theta via policy gradient with per-token advantages { 𝒜 t } \{\mathcal{A}_{t}\} 
+
+ Appendix C Experimental Details
+
+ C.1 Training Configuration
+
+ All experiments use the following shared configuration:
+
+ • 
+
+ Hardware : Single-node 8 × 8{\times} H200 GPUs. For methods requiring a teacher (OPSD, CrEST ), 4 GPUs serve the teacher via SGLang and 4 GPUs handle student training and rollout generation, with tensor parallelism = 2 =2 and sequence parallelism enabled. For OPD with Qwen3-4B-Instruct, the external teacher (Qwen3-235B-A22B-Instruct) requires an additional 8 GPUs for deployment, resulting in a 16-GPU setup (8 for teacher, 8 for student).
+
+ • 
+
+ Rollout : On-policy sampling with group size G = 16 G{=}16 , temperature 1.0 1.0 , max generation length 10,000 10{,}000 tokens per rollout.
+
+ • 
+
+ Batch size : 32 32 prompts per step × \times 16 16 samples per prompt = 512 =512 rollouts per step.
+
+ • 
+
+ Optimizer : Adam with β 1 = 0.9 \beta_{1}{=}0.9 , β 2 = 0.999 \beta_{2}{=}0.999 , weight decay 0.01 0.01 , gradient clipping 1.0 1.0 .
+
+ • 
+
+ Learning rate : 1 × 10 − 6 1{\times}10^{-6} , constant schedule.
+
+ • 
+
+ Training steps : The main Qwen3-4B BFCL V3 runs use method-specific schedules: 145 145 steps for GRPO, 150 150 for MT-GRPO, 160 160 for EnvTuning, 100 100 for OPD, 89 89 for OPSD, and 160 160 for CrEST . We do not assume a single universal step count across methods.
+
+ • 
+
+ PPO clipping : ϵ low = 0.2 \epsilon_{\mathrm{low}}{=}0.2 , ϵ high = 0.28 \epsilon_{\mathrm{high}}{=}0.28 .
+
+ • 
+
+ KL penalty : β KL = 0.0 \beta_{\mathrm{KL}}{=}0.0 (no explicit KL regularization; clipping provides implicit constraint).
+
+ For CrEST -specific hyperparameters: λ = 0.3 \lambda{=}0.3 (modulation strength), ϵ = 0.28 \epsilon{=}0.28 (clip bound), τ = 2.0 \tau{=}2.0 (temperature for Δ t \Delta_{t} ), and ρ = 0.5 \rho{=}0.5 (entropy gate range). Only λ \lambda is tuned; the remaining values are fixed design choices across all benchmarks and model scales.
+
+ Each method is trained with a single training seed. Evaluation uses three decodes at temperature 10 − 6 10^{-6} ; these repeated decodes measure decoding consistency rather than training variance and are not independent training replicates.
+
+ The self-teacher is constructed by conditioning the same model on ground-truth tool-call results for preceding turns, providing privileged context without requiring an external teacher model or tokenizer alignment.
+
+ C.2 OPSD Stabilization and Teacher Update Strategies
+
+ (a) OPSD teacher update strategies.
+
+ (b) Modulation strength λ \lambda sensitivity.
+
+ Figure 4: Analysis of OPSD teacher update strategies and modulation strength on BFCL V3 (Qwen3-4B). (a) Comparison of OPSD teacher update strategies: the online teacher collapses catastrophically within ∼ 20 {\sim}20 steps, while fixed and EMA teachers are both stable, with the fixed teacher achieving marginally higher and more consistent accuracy; we adopt the fixed teacher with per-token KL clipping (threshold 0.2 0.2 ) for the OPSD baseline in all experiments. (b) Effect of the modulation strength λ \lambda on training accuracy: λ = 0.3 \lambda{=}0.3 provides the best trade-off; higher values over-concentrate gradients.
+
+ Directly applying OPSD ( Zhao et al., 2026 ) to multi-turn tool-use trajectories results in training collapse within ∼ 20 {\sim}20 steps, consistent with findings reported by the original authors. To establish a fair OPSD baseline, we investigated three teacher update strategies ( Figure 4(a) ):
+
+ • 
+
+ Online teacher (updated with policy): Catastrophic collapse by step 20—training accuracy drops from ∼ 0.45 {\sim}0.45 to near zero, caused by pivot-token concentration shifting direction each update.
+
+ • 
+
+ Fixed teacher (frozen at initialization): The most stable strategy, maintaining training accuracy around 0.44 0.44 – 0.48 0.48 throughout. However, the static teacher distribution defines the token-level optimization target and produces an observed plateau.
+
+ • 
+
+ EMA teacher (exponential moving average, α = 0.995 \alpha{=}0.995 ): Comparable stability to the fixed teacher but no improvement—the teacher converges to a lagged copy of the student, erasing the privileged information advantage.
+
+ Based on these results, our OPSD baseline adopts the fixed teacher with per-token KL clipping (clip threshold 0.2 0.2 ) as recommended by Zhao et al. (2026) . This prevents collapse but leaves the student at the observed plateau associated with a teacher-defined optimization target shown in Figure 4(a) . This empirical observation directly motivates CrEST ’s design: rather than using the teacher signal as the optimization target, we use it solely as a gradient magnitude modulator anchored to the verified token sign.
+
+ C.3 Modulation Strength Sensitivity
+
+ Figure 4(b) varies the modulation strength λ \lambda , which controls how aggressively the entropy gate selectively amplifies token updates. At λ = 0 \lambda{=}0 (inter-turn-only CrEST , ϕ t = 1 \phi_{t}{=}1 ), final accuracy is ∼ 0.63 {\sim}0.63 . At λ = 0.3 \lambda{=}0.3 , entropy-gated modulation raises final accuracy to ∼ 0.69 {\sim}0.69 (+6%) by emphasizing high-uncertainty content tokens and reducing amplification on low-entropy format tokens. At λ = 0.5 \lambda{=}0.5 , over-concentration causes early gains but stagnation below λ = 0.1 \lambda{=}0.1 by step 80, ending at ∼ 0.61 {\sim}0.61 . The sweet spot at λ = 0.3 \lambda{=}0.3 confirms that calibrated selective amplification, not maximal concentration, best resolves intra-turn credit ambiguity.
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

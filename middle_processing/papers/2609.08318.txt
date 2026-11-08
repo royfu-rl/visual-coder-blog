@@ -1,0 +1,1475 @@
+AttnCompress: Dynamic Attention-Guided Trajectory Compression for Software Engineering Agents 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract. 
+ 1 Introduction 
+ 2 Background & Related Work 
+ 2.1 LLM-based SE Agents & Workflow 
+ 2.2 The Context Challenge in SE 
+ Information Density Variance. 
+ Dynamic Relevance. 
+ 2.3 Related Work 
+ 2.3.1 Selection-based Compression 
+ 2.3.2 Heuristic-based Compression 
+ 2.3.3 Summarization-based Compression 
+ 3 Approach 
+ 3.1 Overview 
+ 3.2 Phase 1: Structure-Aware Segmentation via PPL Spikes 
+ PPL Calculation. 
+ Boundary Detection. 
+ 3.3 Phase 2: Importance Estimation via Proxy Attention 
+ Input Construction. 
+ Scoring Metric. 
+ Selection Strategy. 
+ 3.4 Phase 3: Dynamic Rolling Maintenance 
+ The Context Buffer. 
+ Periodic Global Refresh. 
+ 3.5 Implementation 
+ 4 Experimental Design 
+ 4.1 Research Questions 
+ RQ1: Cost-Effectiveness Trade-off. 
+ RQ2: Component Contribution. 
+ RQ3: Generalization Capabilities. 
+ 4.2 Experimental Setup 
+ 4.2.1 Datasets 
+ 4.2.2 Baselines 
+ 4.2.3 Metrics 
+ 5 Results 
+ 5.1 RQ1: Cost-Effectiveness Trade-off 
+ Pass Rate Analysis. 
+ Efficiency and Latency. 
+ 5.2 RQ2: Component Contribution 
+ Analysis of PPL-based Segmentation. 
+ Analysis of Proxy Attention. 
+ Analysis of Dynamic Rolling Window. 
+ Hyperparameter Sensitivity. 
+ 5.3 RQ3: Generalization Capabilities 
+ Proxy Model Robustness. 
+ Multi-Language Generalization. 
+ 6 Threats to Validity 
+ 7 Conclusions 
+ References 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2609.08318v1 [cs.SE] 08 Sep 2026
+ AttnCompress: Dynamic Attention-Guided Trajectory Compression for Software Engineering Agents
+ DOI: 10.1145/3832149 Journal: PACMSE Volume: 3 ISSTA ISSTA058 10 issta26main-p483-p CCS: Software and its engineering Automatic programming 
+ Zhengran Zeng
+ Note: Both authors contributed equally to this research.
+ Affiliation: Peking University , Beijing , China 
+ email: zhengranzeng@stu.pku.edu.cn 
+ , 
+ Yixin Li
+ Affiliation: Peking University , Beijing , China 
+ email: leason_lyx@stu.pku.edu.cn 
+ , 
+ Rui Xie
+ Note: Those authors are the corresponding authors.
+ Affiliation: Peking University , Beijing , China 
+ email: ruixie@pku.edu.cn 
+ , 
+ Wei Ye
+ Affiliation: Peking University , Beijing , China 
+ email: wye@pku.edu.cn 
+ and 
+ Shikun Zhang
+ Affiliation: Peking University , Beijing , China 
+ email: zhangsk@pku.edu.cn 
+ Received 2026-06-25
+ Abstract.
+ The transition from human-centric assistance to Autonomous Software Engineering (ASE) agents has enabled the resolution of complex real-world SE tasks. However, the trial-and-error nature of these agents generates lengthy interaction trajectories, creating severe bottlenecks in terms of context window limits and cost. While context compression offers a potential remedy, prior approaches suffer from static pruning strategies and granularity mismatches, often failing to preserve the semantic dependencies and syntactic details crucial for SE tasks.
+To strictly preserve critical task evidence while reducing context length, we introduce AttnCompress , a dynamic attention-guided trajectory compression framework.
+Unlike existing approaches, AttnCompress bridges the gap between semantic integrity and dynamic adaptability through three key mechanisms: (1) structure-aware segmentation via perplexity (PPL) spikes to preserve the syntactic structure of code and logs; (2) relevance estimation using proxy attention weights to quantify the precise relevance of historical blocks to the agent’s current reasoning; and (3) a dynamic rolling window to re-evaluate and recall historical context as the task evolves.
+Extensive evaluation on SWE-Bench-Verified and Multi-SWE-Bench demonstrates that AttnCompress achieves a pass rate of 53.17%, outperforming prior state-of-the-art baselines while reducing token consumption by 21.6% and total costs by 33.6%. The framework proves to be model-agnostic and generalizes effectively across diverse programming languages.
+ Keywords: 
+Software Engineering Agents, Large Language Models, Context Compression
+ † † cc-license: by 
+ 1. Introduction
+ The advent of Large Language Models (LLMs) has catalyzed a paradigm shift in software engineering (SE), transitioning from human-centric assistance to Autonomous Software Engineering (ASE) agents ( Liu et al., 2024a ; Yang et al., 2025b ) . Capable of perceiving, reasoning, and acting, these agents have demonstrated remarkable potential in resolving complex real-world GitHub issues, as evidenced by benchmarks like SWE-Bench ( Jimenez et al., 2024 ) and its extensions ( Zan et al., 2025 ; , 2025 ; Yang et al., 2025c ) . More broadly, SE agents have also been applied to a wide range of software engineering tasks that require sustained interaction with large codebases, including repository-level code understanding, feature implementation and test generation ( Jin et al., 2024 ; Xu et al., 2025 ) . Unlike simple Q&A tasks, SE agents operate through long-horizon interactions, engaging in iterative “trial-and-error” workflows involving codebase analysis, file editing, test execution, and debugging ( Bouzenia and Pradel, 2025 ) . This process inevitably generates lengthy interaction trajectories.
+ However, this extended context poses a severe efficiency bottleneck. As the trajectory grows, the accumulation of verbose logs, redundant file contents, and obsolete error stacks leads to rapidly growing token consumption. Such overhead results in increased latency, substantial API expenditures, and potentially surpassing the maximum context length of LLMs, which poses a significant barrier to industrial scalability. Furthermore, the “Lost-in-the-Middle” phenomenon suggests that feeding excessive noise to the model can degrade its reasoning performance ( Liu et al., 2024b ; Hsieh et al., 2024 ) .
+ To mitigate this, context compression has become essential. Current research broadly falls into three categories: heuristic-based pruning, which removes historical messages based on rules (e.g., ObsMask ( Lindenbauer et al., 2025 ) ); summarization-based methods, which utilize LLMs to condense history into shorter text (e.g., AgentDiet ( Xiao et al., 2025 ) ); and selection-based methods, which employ a small model to predict and filter out less important tokens (e.g., Lingua ( Jiang et al., 2023 ) ). While these methods alleviate the context burden to some extent, they suffer from two critical limitations when applied to the dynamic nature of SE tasks:
+ First, inability to handle dynamic context dependencies. Existing methods typically employ a “static, one-pass” strategy, where compression is performed once based on the agent’s current view of the task, producing a finalized reduced context. For instance, ObsMask mechanically removes observations older than a fixed window, while AgentDiet performs step-wise trajectory rewriting: at each step, it invokes a cost-efficient LLM to rewrite a previous step (typically a fixed lag behind the current step) into a shorter form. Such approaches are irrevocable and neglect the non-linear nature of debugging. In SE tasks, agents often exhibit focus shifting ( Ou et al., 2025 ; Xuan et al., 2014 ) , such as abandoning a hypothesis about a database error to investigate a network configuration mentioned twenty turns earlier. Static methods sever these long-range semantic dependencies because once a block of context is deemed “irrelevant” and removed, it cannot be recovered when the agent’s focus shifts, leading to context-induced hallucinations.
+ Second, granularity mismatch and precision loss. There is a trade-off between semantic integrity and compression rate that prior works fail to balance. On one hand, coarse-grained methods like ObsMask operate at the message level, forcing the retention of entire verbose logs even if only a single error line is relevant. Conversely, summarization-based methods like AgentDiet employ an additional LLM to rewrite context. While this reduces length, the generative nature of summarization poses a severe risk to SE tasks which demand verbatim accuracy. Such methods often abstract away critical details (e.g., specific line numbers or variable names) and, more critically, are prone to hallucinating ( Maharaj et al., 2025 ) non-existent code behaviors or incorrect error references, thereby misleading the agent. Furthermore, relying on an extra strong LLM for every step incurs prohibitive computational overhead. On the other hand, fine-grained token-level selection (e.g., Lingua ( Pan et al., 2024 ) ) disregards the syntactic structure of code. Arbitrarily dropping tokens can break JSON objects or function definitions, rendering the context incomprehensible for the LLM.
+ To address these challenges, we introduce AttnCompress , a dynamic attention-guided trajectory compression framework designed specifically for the dynamic workflows of SE agents. Our approach bridges the gap between semantic integrity and dynamic adaptability through three key mechanisms:
+ (1) 
+ Structure-Aware Segmentation via PPL Spikes: To resolve the granularity mismatch , we utilize a small proxy model to monitor the Perplexity (PPL) fluctuations ( Shi et al., 2025 ) of the output stream. By identifying PPL spikes, which naturally occur at semantic boundaries (e.g., the switch from code to error logs), we segment the trajectory into semantically coherent blocks rather than arbitrary tokens. This strategy mitigates the risk of breaking syntactic structures like JSON objects and function bodies after compression.
+ (2) 
+ Relevance Estimation via Proxy Attention: Instead of relying on heuristic rules or heavy summarization models, we leverage the attention distribution of a cost-effective small model (e.g., Qwen3-4B-Instruct ( Qwen Team, 2025 ) ). We calculate the attention weights projected from the generation start token of the next response to historical blocks, enabling us to quantify the precise relevance of each block to the immediate reasoning step.
+ (3) 
+ Dynamic Context Maintenance: To overcome the static limitation, we introduce a rolling window mechanism. Unlike static pruning, our framework maintains a dynamic buffer where recent history is continuously re-evaluated against the agent’s shifting intent. This allows previously suppressed information to be recalled if it becomes relevant again, effectively mitigating the risk of information loss during goal shifting.
+ Our contributions are as follows:
+ • 
+ We propose a dynamic attention-guided trajectory compression framework that leverages the attention distribution of a cost-effective proxy model to quantify the relevance between historical context and the agent’s current work.
+ • 
+ We introduce a PPL-based block segmentation algorithm that preserves the syntactic structure of code and logs during compression.
+ • 
+ Extensive evaluation on SWE-Bench-Verified ( Jimenez et al., 2024 ) and Multi-SWE-Bench-Flash ( Zan et al., 2025 ) demonstrates that AttnCompress achieves a pass rate of 53.17%, outperforming prior SOTA Agent Diet while reducing token consumption by 21.6% and total costs by 33.6%.
+ 2. Background & Related Work
+ 2.1. LLM-based SE Agents & Workflow
+ In Autonomous Software Engineering (ASE), LLM-based agents are commonly deployed to address GitHub issues, implement feature requests, comprehend codebases, and generate tests in an end-to-end manner ( Liu et al., 2024a ; Yang et al., 2024 ; Xu et al., 2025 ) . As illustrated in the left panel of Figure 1 , the operational workflow typically follows an iterative ReAct (Reasoning and Acting) pattern ( Yao et al., 2023 ) . The process begins with 1) constructing task input, where the user query is combined with detailed descriptions of available tools (e.g., search, edit, and bash utilities). Subsequently, the agent enters a cyclic interaction loop:
+ • 
+ LLM Processing: Based on the current history, the LLM generates a Thought for reasoning and an Action to interact with the environment.
+ • 
+ Environment Execution: The environment executes the action using specific tools (e.g., searching the codebase or running a script) and yields an Observation , which contains the execution results such as file contents or error logs.
+ This cycle repeats until the issue is resolved (“Done!”). While this mechanism enables complex problem-solving, it incurs a significant context overhead. As shown in the statistical breakdown in the right panel of Figure 1 , (derived from the trajectories in RQ1), the distribution of tokens in interaction traces is highly imbalanced. Observation tokens account for the vast majority (62.6%) of the total context, significantly outweighing Action (24.8%), Thought (8.6%), and Task Input (4%). This data underscores that verbose environmental feedback is the primary contributor to context bloat, making the compression of observations the critical bottleneck for efficiency.
+ Figure 1 . The typical workflow of a ReAct-based SE agent (left) and the token distribution across trace components (right). The statistical analysis reveals that Observation content (e.g., logs and code retrieval) dominates the context window (62.6%), posing a major challenge for long-horizon tasks. 
+ 2.2. The Context Challenge in SE
+ While extensive context provides necessary information, it introduces two fundamental challenges specific to software engineering tasks: Information Density Variance and Dynamic Relevance .
+ (a) Granularity Mismatch 
+ (b) Focus Shifting Problem 
+ Figure 2 . Challenges in SE context compression. (a) Granularity Mismatch: A case from django-11133 showing that within a large file output, only a small function ( make_bytes ) is useful. (b) Focus Shifting Problem: A debugging timeline where the agent shifts focus from auth_service.py to utils.py . 
+ Information Density Variance.
+ The information density within an agent’s trajectory is highly uneven. A significant portion of the context often consists of verbose logs or irrelevant code snippets.
+As illustrated in Figure 2(a) , we present a real-world example from the SWE-Bench instance django-11133 . The agent retrieves the content of response.py to inspect the HttpResponse implementation. This action generates a massive output where over 700 lines are essentially noise (highlighted in red as “Low-Information Lines”). The agent effectively needs only the make_bytes method (approximately 15 lines, highlighted in green) to proceed.
+This variance creates a practical granularity challenge for compression. If compression operates at a coarse unit such as a full message or a full tool output, the method tends to either keep large chunks of noise or discard large chunks that may still contain small but critical details. If compression operates at an overly fine unit such as individual tokens, it risks breaking code and structured logs. This motivates a segmentation strategy that identifies semantically coherent units within long observations so that the agent can retain complete and meaningful parts while discarding irrelevant parts.
+ Dynamic Relevance.
+ The relevance of historical information in SE tasks fluctuates as the agent’s debugging focus and hypotheses evolve. As illustrated in Figure 2(b) , the agent initially inspects the whole repository (Turns 1-10), then shifts its focus to auth_service.py (Turns 11-20) to address the error, believing the root cause lies therein. During this phase, static compression methods (e.g., ObsMask , LLMSummary , and AgentDiet ) deem the previously viewed utils.py as irrelevant “old” context and permanently prune it. However, in Turn 21, execution feedback reveals that the root cause is actually an incorrect regex pattern defined in utils.py . Since the specific details of utils.py were discarded, the agent cannot “look back” to verify the pattern, forcing a redundant re-opening of the file (Turn 22). This inefficiency highlights the need for a dynamic mechanism that can recall previously suppressed blocks when the agent’s focus shifts back to them.
+ To quantify how frequently this phenomenon occurs in practice, we randomly sampled 100 trajectories from LLMSummary runs and audited them using an LLM-assisted review followed by human verification. We found that 40 of these trajectories exhibited the focus shifting problem, indicating that this challenge is not merely illustrative but occurs in a substantial portion of real agent debugging workflows.
+ 2.3. Related Work
+ Prior work on context reduction for LLMs and agents can be grouped into three categories. Each category addresses part of the long-context problem but exhibits limitations for SE agent trajectories.
+ 2.3.1. Selection-based Compression
+ Selection-based compression aims to improve LLM efficiency by identifying and retaining only the most informative parts of the input. A significant body of work relies on training dedicated modules to score content relevance. For instance, RECOMP ( Xu et al., 2024 ) trains an abstractive compressor to paraphrase documents, while CPC ( Liskavets et al., 2025 ) employs a trained context-aware sentence encoder to judge similarity. Similarly, methods like Provence ( Chirkova et al., 2025 ) and LLMLingua-2 ( Pan et al., 2024 ) utilize distillation techniques to train classifier models that predict the necessity of individual tokens. Alternatively, non-training approaches such as FilCo ( Wang et al., 2023 ) and Selective Context ( Li et al., 2023 ) rely on information-theoretic metrics, calculating the self-information of tokens to prune those with low density.
+However, these approaches encounter two fundamental limitations in the context of SE agents. First, the heavy reliance on specific training restricts their plug-and-play capability and generalizability across diverse SE scenarios. Second, most selection methods operate at a token granularity. Token-level selectors disregard syntactic boundaries, where removing ostensibly low-information tokens, such as brackets, colons, or indentation, which can corrupt the Abstract Syntax Tree (AST) of code or the structure of JSON logs, rendering the context incomprehensible to the LLM. These shortcomings underscore the necessity for a structure-aware compression strategy that respects the semantic coherence of software artifacts.
+ 2.3.2. Heuristic-based Compression
+ Another category relies on simple heuristics, such as keeping only the most recent turns, applying FIFO-style eviction, or masking older observations. ObsMask ( Lindenbauer et al., 2025 ) is a representative approach that directly drops tool outputs from older dialogue history. Moreover, Pan et al. (2025) propose reformatting code to remove tokens related to whitespaces and indentations. These methods are attractive due to simplicity and low overhead, and they can reduce context length substantially in practice.
+ However, heuristic strategies typically lack semantic awareness. They assume that old content is less useful, and they do not distinguish between a verbose but unimportant log and a short but critical clue. Meanwhile, as discussed in Section 2.2 , SE tasks often require revisiting earlier evidence after a hypothesis shift. Heuristic deletion can therefore discard essential information and cause irreversible information loss, reducing agent success rates on complex tasks.
+ 2.3.3. Summarization-based Compression
+ A third family of methods compresses context by utilizing LLMs to summarize or rewrite historical information.
+This strategy is widely adopted in practical agent systems, often in an ad-hoc manner to handle context saturation. For instance, tools like Gemini-Cli ( Google, 2025 ) and Claude Code ( Anthropic, 2025 ) trigger LLM-based compression only when the context window reaches a predefined threshold. Others rely on rigid heuristics: Trae Agent ( Team et al., 2025 ) truncates tool responses to a fixed size (e.g., 16KB), while SWE-agent ( Yang et al., 2024 ) employs configurable regex patterns to remove specific text blocks.
+In the research domain, AgentDiet ( Xiao et al., 2025 ) proposes a more systematic approach. It utilizes an additional LLM to refine or shorten messages, aiming to remove irrelevant parts while keeping key content.
+ These approaches can preserve high-level semantics, but they introduce new issues in SE settings. First, they strongly depend on the summarization model’s ability to retain precise details that are often indispensable for SE tasks, including exact file paths, line numbers, error codes, and variable names. If these details are dropped or altered by hallucinating, the agent may lose grounding and propose incorrect patches. Second, using an extra LLM for summarization increases runtime overhead and latency, and it can complicate deployment when the agent is expected to run at scale or under tight response constraints.
+ In summary, existing techniques either prune too aggressively without adapting to dependency shifts, or compress by rewriting content in ways that may lose critical debugging details. These limitations motivate methods that can both preserve structural integrity and dynamically select context based on the agent’s current needs. Although chunking, relevance scoring, and rolling context maintenance are not new in isolation, AttnCompress differs by unifying PPL-based block segmentation, proxy-attention selection, and dynamic re-evaluation in one training-free middleware built for multi-turn SE agent trajectories, explicitly targeting the granularity mismatch and focus-shifting challenges discussed above.
+ 3. Approach
+ 3.1. Overview
+ We formalize AttnCompress as a plug-and-play middleware positioned between the SE Agent’s trajectory manager and the backend LLM. As illustrated in Figure 3 , the workflow consists of three consecutive phases: Structure-Aware Segmentation , Attention-based Scoring , and Dynamic Context Maintenance .
+ Given a raw trajectory consisting of multiple interaction turns $T=\{(a_{1},o_{1}),\dots,(a_{t},o_{t})\}$ , where $a_{t}$ represents the agent’s action and $o_{t}$ represents the observation from the environment (typically the output of tool executions, often containing verbose code or logs), our goal is to maintain a compressed trajectory $T^{\prime}=\{(a_{1},o^{\prime}_{1}),\dots,(a_{t},o^{\prime}_{t})\}$ in real-time. The objective is to ensure $|T^{\prime}|\ll|T|$ while maximizing the retention of semantic information relevant to the current reasoning step $s_{t}$ , thereby accommodating a longer interaction history within a limited context window.
+ Figure 3 . Overview of the AttnCompress Framework. The system intercepts the raw trajectory, segments observations into blocks, scores them via a proxy model’s attention, and dynamically maintains a compressed context using a rolling window mechanism. 
+ 3.2. Phase 1: Structure-Aware Segmentation via PPL Spikes
+ To address the “granularity mismatch” problem in compression, where token-level pruning destroys syntax and message-level pruning retains excessive noise, we introduced an adaptive segmentation algorithm based on Perplexity (PPL) spike detection ( Shi et al., 2025 ) . This algorithm utilizes a small model (Proxy Model) as a probe to perceive semantic boundaries within text. Prior work has empirically shown that perplexity-based boundary detection can preserve the syntactic integrity of long code contexts more effectively than fixed-size or heuristic chunking ( Shi et al., 2025 ) .
+ PPL Calculation.
+ For any given tool output text $O$ (e.g., file content read by cat or error traces from pytest ), we first split it into lines $L=\{l_{1},\dots,l_{n}\}$ . We use the proxy model to calculate the log probability of each token $x$ and compute the average perplexity $PPL(l_{i})$ for each line $l_{i}$ :
+ (1) | 
+ | 
+ $PPL(l_{i})=\exp\left(-\frac{1}{|l_{i}|}\sum_{x\in l_{i}}\log P(x\mid x_{<context})\right)$ | 
+ | 
+ Typically, at boundaries where semantic content shifts drastically (e.g., from the end of a function definition to the start of a new one, or from a normal log stream to an error stack), the model exhibits higher “surprise,” manifested as local peaks in the PPL curve.
+ Boundary Detection.
+ We determine split boundaries by detecting “spikes” in the $PPL$ sequence. To adapt to the fluctuating PPL baselines of different text contents, we employ an adaptive thresholding strategy:
+ (1) 
+ Diff Calculation: Compute the PPL difference between adjacent lines $D_{i}=|PPL(l_{i})-PPL(l_{i-1})|$ .
+ (2) 
+ Adaptive Threshold: Calculate the mean $\mu$ and standard deviation $\sigma$ of the difference sequence. Define the spike threshold $\tau=\mu+h\cdot\sigma$ , where $h$ is a sensitivity coefficient.
+ (3) 
+ Segmentation: Mark all local maxima points where $D_{i}>\tau$ as split boundaries. Additionally, to avoid fragmentation, minute blocks with length only one line are merged with the preceding block.
+ Finally, the raw output $O$ is transformed into a series of semantic blocks $B=\{b_{1},b_{2},\dots,b_{m}\}$ , where each block acts as a relatively independent unit in terms of syntax or semantics.
+ Besides, introducing overlapping regions between adjacent blocks is a feasible engineering improvement that could further improve cross-boundary coherence, but it would introduce additional hyperparameters (e.g., overlap size). We therefore adopt only the simplest non-overlapping segmentation scheme in this paper.
+ 3.3. Phase 2: Importance Estimation via Proxy Attention
+ To evaluate the dynamic relevance of historical blocks to the current task, we leverage the attention weights of the proxy model as a filtering signal, which prior work has shown can identify tokens semantically salient to a query ( Luo et al., 2025 ) .
+ Input Construction.
+ To calculate relevance, we construct an input sequence that incorporates the current context. The input sequence is formed by concatenating three components: (1) Context History (using the compressed trajectory $T^{\prime}_{1:t-1}$ or raw trajectory $T_{1:t-1}$ ), (2) The New Observation $O_{new}$ , and (3) a single special Query Token $q_{gen}$ appended at the very end (e.g., the generation start token in the chat template, such as <|im_start|> , which corresponds to $T[t].start\_token$ in Algorithm 1 ). In a causal LLM, this token must attend to the preceding context before generating the agent’s next response. This construction allows the model to aggregate the attention from the entire preceding context onto this final token, representing the agent’s “current reasoning state."
+ Scoring Metric.
+ We feed the constructed sequence into the proxy model to perform a forward pass. Crucially, this process is computationally efficient: the logits required for PPL-based segmentation (Phase 1) and the attention maps required for scoring (Phase 2) are extracted simultaneously in a single inference pass. We utilize the attention map from a specific layer (the last layer is used in our experiments). For each candidate block $b_{i}$ , its importance score $Score(b_{i})$ is defined as the average attention weight projected from the single query token $q_{gen}$ to the tokens within the block:
+ (2) | 
+ | 
+ $Score(b_{i})=\frac{1}{|b_{i}|}\sum_{t\in b_{i}}A(q_{gen},t)$ | 
+ | 
+ Here, $A(q_{gen},t)$ denotes the attention weight from the query token $q_{gen}$ to a token $t$ inside block $b_{i}$ . This metric effectively captures the semantic alignment between the agent’s current state and the historical information.
+ Selection Strategy.
+ Based on the calculated scores, we apply a Greedy Selection strategy. Let $B=\{b_{1},\dots,b_{m}\}$ be all candidate blocks segmented from the tool output context, and let $|b_{i}|$ denote the number of tokens in block $b_{i}$ . Given a compression ratio $\rho\in(0,1)$ , we set a token budget $L_{\text{budget}}=\rho\cdot\sum_{i=1}^{m}|b_{i}|$ .
+We then sort all blocks in descending order of $Score(b_{i})$ and greedily add blocks to the retention set until the accumulated retained tokens reach $L_{\text{budget}}$ . Unselected blocks are discarded.
+ 3.4. Phase 3: Dynamic Rolling Maintenance
+ In SE tasks, the agent’s focus shifts continuously as the programming process evolves, leading to task focus drift . Traditional static compression (compress once, delete forever) results in the inability to retrieve old information. To address this, we design a Three-Tier Rolling Window mechanism to maintain context dynamically.
+ The Context Buffer.
+ As shown in Figure 3 , at interaction turn $t$ , we partition the trajectory into three regions:
+ (3) | 
+ | 
+ $T=\{\underbrace{(a_{1},o_{1}),\dots,(a_{l},o_{l})}_{\text{Long-term}},\underbrace{\dots,(a_{t-k},o_{t-k})}_{\text{Short-term}},\underbrace{\dots,(a_{t},o_{t})}_{\text{Immediate}}\}$ | 
+ | 
+ (1) 
+ Immediate Memory (Raw): The most recent $k$ turns (e.g., Tail 2) are kept in their raw state without compression. This ensures the agent maintains coherent perception of the immediate interaction, preventing the loss of actionable details (e.g., filenames, line numbers).
+ (2) 
+ Short-term Memory (Rolling Buffer): The intermediate region covering turns $I_{long}+1$ through $t-k$ . This serves as a dynamic buffer. In every interaction turn, all content within this region is re-evaluated against the current $Q_{curr}$ , and attention scores are re-calculated to re-compress the content. This ensures the agent can extract the most relevant information from recent history based on its latest intent.
+ (3) 
+ Long-term Memory (Fixed Archive): The region from turn $1$ to $I_{long}$ . This serves as the archived history. To minimize computational overhead, this region remains static during standard interaction steps, which allows the LLM to leverage prefix caching ( Kwon et al., 2023 ) . Consequently, we avoid reconstructing this long-term memory at every step, significantly reducing the inference cost. This archive is only reconstructed when a “Global Refresh” is triggered.
+ Periodic Global Refresh.
+ To balance computational cost with recall capability, we introduce a sliding-window-based Global Refresh mechanism (Algorithm 1 ). This mechanism operates in two distinct modes:
+ Mode 1: Incremental Update (Standard). 
+This corresponds to the else block (Lines 19-25). In most interaction steps where the buffer is not full, the long-term boundary $I_{long}$ remains unchanged.
+We perform selection and re-compression only on the short-term region $T_{short}$ (Lines 19-22), generating $T^{\prime}_{short}$ . Crucially, as shown in Line 25, the final context is constructed by concatenating the pre-existing compressed archive $T^{\prime}_{long}$ with the newly updated short-term blocks. Since $T^{\prime}_{long}$ is textually invariant, this strategy maximizes the cache hit rate for the Agent LLM’s prefix cache.
+ Mode 2: Global Refresh (Triggered). 
+When the short-term buffer accumulates beyond threshold $M$ (condition at Line 9), a Global Refresh is triggered (Lines 10-17).
+To address the limitation of a frozen archive, we merge the existing long-term archive with the current short-term buffer ( $T_{long}+T_{short}$ in Line 11) and perform a global selection over this combined history. This allows the agent to “resurrect” previously discarded blocks from the deep history if they become relevant to the current task.
+Finally, we advance the archive pointer $I_{long}$ to the current raw boundary $I_{raw}$ (Line 16), effectively committing the current history to the long-term archive. While this step invalidates the prefix cache, it is performed infrequently to minimize overhead while ensuring semantic completeness.
+ This mechanism effectively combines high-frequency updates for the short term (adapting to rapid focus changes) with low-frequency refreshes for the long term (adapting to major shifts in debugging direction), solving the focus drift problem while maintaining efficiency.
+ Algorithm 1 Dynamic Context Maintenance with Rolling Window 
+ 1: 
+ Full Trajectory $T$ , Compressed Trajectory $T^{\prime}$ , Current Turn $t$ , Tail Size $k$ , Rolling Window Size $M$ 
+ 2: 
+ $I_{long}\leftarrow\text{Index of the last long memory turn}$ $\triangleright$ Initially 0
+ 3: 
+ $I_{raw}\leftarrow t-k$ 
+ 4: 
+ // Phase 3.1: Define Context Regions 
+ 5: 
+ $T_{long}\leftarrow T[0:I_{long}]$ 
+ 6: 
+ $T^{\prime}_{long}\leftarrow T^{\prime}[0:I_{long}]$ 
+ 7: 
+ $T_{short}\leftarrow T[I_{long}:I_{raw}]$ 
+ 8: 
+ $T_{raw}\leftarrow T[I_{raw}:t]$ $\triangleright$ Keep Raw
+ 9: 
+ // Phase 3.2: Check Trigger for Global Refresh 
+ 10: 
+ if Length( $T_{short}$ ) $\geq M$ then 
+ 11: 
+    // Global Refresh: Re-evaluate EVERYTHING before Raw 
+ 12: 
+    $Candidates\leftarrow\text{Segment}(T_{long}+T_{short})$ 
+ 13: 
+    $Scores\leftarrow\text{ProxyAttention}(T_{long},T_{short},T_{raw},Query=T[t].start\_token)$ 
+ 14: 
+    $Selected\leftarrow\text{SelectTop}(Candidates,Scores)$ 
+ 15: 
+    $T^{\prime}_{compressed}\leftarrow\text{Reconstruct}(Selected)$ 
+ 16: 
+    // Update Archive Pointer 
+ 17: 
+    $I_{long}\leftarrow I_{raw}$ 
+ 18: 
+    Output Context: $T^{\prime}_{compressed}+T_{raw}$ 
+ 19: 
+ else 
+ 20: 
+    // Local Rolling: Re-evaluate only Short-term 
+ 21: 
+    $Candidates\leftarrow\text{Segment}(T_{short})$ 
+ 22: 
+    $Scores\leftarrow\text{ProxyAttention}(T^{\prime}_{long},T_{short},T_{raw},Query=T[t].start\_token)$ 
+ 23: 
+    $Selected\leftarrow\text{SelectTop}(Candidates,Scores)$ 
+ 24: 
+    $T^{\prime}_{short}\leftarrow\text{Reconstruct}(Selected)$ 
+ 25: 
+    // Merge with existing Long-term 
+ 26: 
+    Output Context: $T^{\prime}_{long}+T^{\prime}_{short}+T_{raw}$ 
+ 27: 
+ end if 
+ 3.5. Implementation
+ AttnCompress is a generalized trajectory compression framework designed to be compatible with various ReAct-style LLM agents. To evaluate its effectiveness in a SOTA setting, we integrated AttnCompress into Trae-Agent ( Team et al., 2025 ) , a leading open-source agent that has demonstrated top-tier performance on benchmarks like SWE-Bench Verified ( Chowdhury et al., 2024 ; , 2026 ) .
+ For the proxy model ( $LLM_{proxy}$ ), we selected Qwen3-4B-Instruct ( Yang et al., 2025a ; Qwen Team, 2025 ) . We chose this model for two strategic reasons: first, despite its small size, it retains strong capabilities in code syntax understanding and context processing; second, its significantly lower parameter count incurs minimal computational overhead, satisfying the real-time requirements of the agent workflow. All experiments, including the inference of the proxy model and the execution of the agent loop, were conducted on a server equipped with 8 NVIDIA A100 GPUs.
+ AttnCompress involves several key hyperparameters. To determine the optimal configuration, we conducted a preliminary ablation study on a subset of the SWE-Bench-Verified dataset (randomly select 100 instances). Based on the trade-offs between token cost and pass rate, we established the following default settings for our main evaluation:
+ • 
+ Tail Size ( $k$ ): 2 (The 2 most recent turns are always kept raw).
+ • 
+ Compression Ratio ( $\rho$ ): 0.2 (Retaining top 20% of information by attention score).
+ • 
+ PPL Block Threshold: -2 (Used for adaptive boundary detection).
+ • 
+ Attention Layer: -1 (Using the attention map from the last layer of the proxy model).
+ • 
+ Rolling Window Size ( $M$ ): 10 (Triggers a Global Refresh when the short-term buffer accumulates 10 turns).
+ We omit the detailed analysis of how these parameters affect performance in this section. A comprehensive sensitivity analysis and the impact of different hyperparameter combinations are presented in Section 5.2 .
+ 4. Experimental Design
+ 4.1. Research Questions
+ To systematically assess the proposed framework, we structure our evaluation around three key research questions:
+ RQ1: Cost-Effectiveness Trade-off.
+ Does AttnCompress achieve a superior balance between problem-solving effectiveness and computational efficiency compared to state-of-the-art baselines? 
+We investigate whether AttnCompress can maintain or improve the pass rate on SWE-Bench-Verified while reducing token consumption, monetary cost, and end-to-end latency compared to existing methods.
+ RQ2: Component Contribution.
+ How do the internal architectural components and hyperparameters impact the performance of AttnCompress ? 
+We perform an ablation study to quantify the individual contributions of the ppl-based segmentation, proxy-attention scoring, and rolling window mechanism, while also analyzing the sensitivity of key hyperparameters (e.g., tail size $k$ and compression ratio $\rho$ ).
+ RQ3: Generalization Capabilities.
+ Does the framework generalize well across different proxy models and datasets? 
+We assess the robustness of AttnCompress by evaluating its performance with different proxy model (e.g., Qwen vs. Llama ) and testing its adaptability on the multilingual Multi-SWE-Bench dataset.
+ 4.2. Experimental Setup
+ 4.2.1. Datasets
+ We evaluate AttnCompress and the baselines on two complementary benchmarks to assess both effectiveness and generalization, consistent with the setup in ( Xiao et al., 2025 ) .
+ • 
+ SWE-Bench-Verified ( Chowdhury et al., 2024 ) : This is the primary dataset for our evaluation. It consists of 500 human-verified software engineering tasks derived from real-world GitHub issues. To maintain consistency and eliminate sampling bias, we do not sample a new subset; instead, we utilize the exact instance lists curated by AgentDiet ( Xiao et al., 2025 ) . Specifically, we use their defined validation set (100 instances) for the parameter tuning and ablation studies described in RQ2. The remaining test set (200 instances), as identified in their work, is strictly reserved for the main comparative evaluation in RQ1 and the proxy-model generalization study in RQ3.
+ • 
+ Multi-SWE-Bench-Flash ( Zan et al., 2025 ; ByteDance Seed Team, 2025 ) : To evaluate the generalization capabilities of our approach across different languages and environments (RQ3), we utilize Multi-SWE-Bench-Flash . This benchmark contains 300 instances covering seven programming languages (Rust, TypeScript, JavaScript, Java, Go, C, and C++). These tasks typically present higher complexity, often requiring the agent to troubleshoot environment build errors, providing a robust testbed for the agent’s adaptability.
+ 4.2.2. Baselines
+ We compare AttnCompress against seven baselines. All baselines are integrated into the same Trae-Agent ( Team et al., 2025 ) framework to ensure a fair comparison.
+ • 
+ Original : The unmodified Trae-Agent that retains the full interaction history. This serves as the upper bound for context completeness and the lower bound for efficiency.
+ • 
+ Random : A sanity check that randomly drops 75% of the tokens from previous turns.
+ • 
+ SlidingWindow : A strict token-budget sliding window baseline that retains only the most recent trajectory content under a fixed token budget. To keep its token cost comparable to the other compression methods, we set the window size to 8k tokens.
+ • 
+ ObsMask ( Lindenbauer et al., 2025 ) : A rule-based approach that masks the outputs of tools from older turns with placeholder, assuming that recent observations are more relevant.
+ • 
+ Lingua ( Pan et al., 2024 ) : A token compression method that uses a small BERT-based ( Devlin et al., 2019 ) model to classify and remove non-essential tokens.
+ • 
+ LLMSummary ( Kang et al., 2025 ) : A standard summarization approach where an additional LLM is prompted to summarize the history of multiple turns into a concise paragraph.
+ • 
+ AgentDiet ( Xiao et al., 2025 ) : A recent SOTA method that employs a reflection module (i.e., a summarize LLM) to rewrite and condense the trajectory after each step.
+ For all baseline methods, we generally adopt the default hyperparameter settings reported in their original works. However, to ensure a strictly fair comparison, we standardize the tail size parameter (the number of most recent turns retained in raw format) to $k=2$ across all applicable methods. This alignment follows the experimental protocol of AgentDiet ( Xiao et al., 2025 ) , ensuring that observed performance differences stem from the compression strategy rather than the amount of immediate raw history. Meanwhile, for the summarization-based methods ( LLMSummary and AgentDiet ), we utilize the identical LLM backbone as the agent LLM to perform the summarization and reflection tasks. This ensures that these baselines operate at their optimal capability and are not bottlenecked by a weaker summary model.
+ 4.2.3. Metrics
+ We utilize a comprehensive set of metrics to evaluate the trade-off between performance and cost.
+ • 
+ Pass% : The ratio of successfully resolved instances in the benchmark. This is the primary indicator of whether compression harmed the agent’s reasoning capabilities.
+ • 
+ Step : The average number of interaction turns required to solve a task. An increase in steps typically indicates that the agent lost critical information due to compression and had to perform redundant actions to recover it.
+ • 
+ PStep : The average number of interaction turns required for only successfully resolved instances. Unlike Step , this metric isolates the efficiency of successful trajectories, filtering out noise from failed attempts that simply exhaust the maximum step limit.
+ • 
+ Input (I) & Output (O) : The accumulated number of input and output tokens used by the backend LLM. We first sum input and output tokens over all interaction turns within each instance, and then report the average of these per-instance totals across instances.
+ • 
+ Agent Cost ( $C_{agent}$ ): The monetary cost incurred solely by the backend SE agent during interaction steps. This reflects the direct expenditure on reasoning and generation based on the (potentially compressed) context.
+ • 
+ Compression Cost ( $C_{comp}$ ): The cost incurred specifically by the compression mechanism itself (e.g., the summarizer cost in AgentDiet ). Note that while the proxy model in AttnCompress can be deployed locally to avoid API charges, we calculate $C_{comp}$ based on its official API pricing ( Qwen Team, 2025 ) to ensure a fair comparison.
+ • 
+ Total Cost ( $C_{total}$ ): The sum of the agent cost and compression cost ( $C_{total}=C_{agent}+C_{comp}$ ). Crucially, all cost calculations account for the input token discounts provided by prefix caching to reflect realistic API pricing.
+ 5. Results
+ In this section, we present the experimental results to answer the three research questions proposed in Section 4.1.
+ 5.1. RQ1: Cost-Effectiveness Trade-off
+ To demonstrate the superiority of AttnCompress , we evaluated its performance on SWE-bench Verified using three different backend agents: Qwen3-Coder-30B ( Team, 2025b ) , Qwen3-235B-Instruct ( Team, 2025a ) , and Gemini-3-Flash ( Google DeepMind, 2025 ) . Table 1 summarizes the comprehensive results.
+ Table 1 . Main Results on SWE-bench Verified. We report Pass Rate (Pass%), Input/Output token usage (k), Agent Cost ($), Compression Overhead ($), Total Cost ($), Average Steps, and Steps for Passed instances (PStep). All token, cost, and step values are per-instance averages. Bold indicates the best performance among compression methods; Underline indicates the second best. 
+ Method | 
+ Agent LLM | 
+ Pass (%) | 
+ Input (k) | 
+ Output (k) | 
+ $C_{agent}$ | 
+ $C_{comp}$ | 
+ $C_{total}$ | 
+ Step | 
+ PStep | 
+ Original | 
+ Gemini-3-Flash | 
+ 72.50 | 
+ 1150.97 | 
+ 6.13 | 
+ 0.2156 | 
+ / | 
+ 0.2156 | 
+ 50.93 | 
+ 47.31 | 
+ Qwen3-235B | 
+ 46.50 | 
+ 1278.10 | 
+ 6.31 | 
+ 0.0864 | 
+ / | 
+ 0.0864 | 
+ 45.62 | 
+ 35.84 | 
+ Qwen3-Coder-30B | 
+ 46.50 | 
+ 925.41 | 
+ 10.74 | 
+ 0.0546 | 
+ / | 
+ 0.0546 | 
+ 41.24 | 
+ 34.51 | 
+ Mean | 
+ 55.17 | 
+ 1118.16 | 
+ 7.73 | 
+ 0.1189 | 
+ / | 
+ 0.1189 | 
+ 45.93 | 
+ 39.22 | 
+ Random | 
+ Gemini-3-Flash | 
+ 67.00 | 
+ 1075.24 | 
+ 6.69 | 
+ 0.1896 | 
+ / | 
+ 0.1896 | 
+ 66.97 | 
+ 61.58 | 
+ Qwen3-235B | 
+ 39.00 | 
+ 875.20 | 
+ 7.62 | 
+ 0.0679 | 
+ / | 
+ 0.0679 | 
+ 60.81 | 
+ 43.55 | 
+ Qwen3-Coder-30B | 
+ 38.50 | 
+ 762.83 | 
+ 13.27 | 
+ 0.0616 | 
+ / | 
+ 0.0616 | 
+ 56.50 | 
+ 44.65 | 
+ Mean | 
+ 48.17 | 
+ 904.42 | 
+ 9.19 | 
+ 0.1064 | 
+ / | 
+ 0.1064 | 
+ 61.42 | 
+ 49.93 | 
+ Lingua | 
+ Gemini-3-Flash | 
+ 69.50 | 
+ 906.21 | 
+ 6.43 | 
+ 0.1469 | 
+ / | 
+ 0.1469 | 
+ 62.84 | 
+ 58.03 | 
+ Qwen3-235B | 
+ 36.50 | 
+ 799.10 | 
+ 7.10 | 
+ 0.0688 | 
+ / | 
+ 0.0688 | 
+ 55.57 | 
+ 39.07 | 
+ Qwen3-Coder-30B | 
+ 40.00 | 
+ 745.77 | 
+ 13.17 | 
+ 0.0578 | 
+ / | 
+ 0.0578 | 
+ 56.53 | 
+ 42.70 | 
+ Mean | 
+ 48.67 | 
+ 817.03 | 
+ 8.90 | 
+ 0.0912 | 
+ / | 
+ 0.0912 | 
+ 58.31 | 
+ 46.60 | 
+ LLMSummary | 
+ Gemini-3-Flash | 
+ 67.00 | 
+ 896.45 | 
+ 5.76 | 
+ 0.1731 | 
+ 0.0185 | 
+ 0.1916 | 
+ 61.75 | 
+ 53.86 | 
+ Qwen3-235B | 
+ 42.50 | 
+ 836.14 | 
+ 7.56 | 
+ 0.0801 | 
+ 0.0089 | 
+ 0.0890 | 
+ 51.63 | 
+ 34.29 | 
+ Qwen3-Coder-30B | 
+ 43.00 | 
+ 698.96 | 
+ 10.98 | 
+ 0.0509 | 
+ 0.0063 | 
+ 0.0572 | 
+ 44.24 | 
+ 35.23 | 
+ Mean | 
+ 50.83 | 
+ 810.52 | 
+ 8.10 | 
+ 0.1014 | 
+ 0.0112 | 
+ 0.1126 | 
+ 52.54 | 
+ 41.13 | 
+ ObsMask | 
+ Gemini-3-Flash | 
+ 67.50 | 
+ 775.20 | 
+ 6.29 | 
+ 0.0699 | 
+ / | 
+ 0.0699 | 
+ 71.39 | 
+ 66.27 | 
+ Qwen3-235B | 
+ 31.50 | 
+ 634.67 | 
+ 8.82 | 
+ 0.0350 | 
+ / | 
+ 0.0350 | 
+ 67.05 | 
+ 39.32 | 
+ Qwen3-Coder-30B | 
+ 42.50 | 
+ 476.91 | 
+ 10.38 | 
+ 0.0282 | 
+ / | 
+ 0.0282 | 
+ 51.99 | 
+ 43.24 | 
+ Mean | 
+ 47.17 | 
+ 628.93 | 
+ 8.49 | 
+ 0.0443 | 
+ / | 
+ 0.0443 | 
+ 63.47 | 
+ 49.61 | 
+ SlidingWindow | 
+ Gemini-3-Flash | 
+ 67.00 | 
+ 641.79 | 
+ 5.75 | 
+ 0.1572 | 
+ / | 
+ 0.1572 | 
+ 57.63 | 
+ 51.50 | 
+ Qwen3-235B | 
+ 42.00 | 
+ 602.30 | 
+ 6.53 | 
+ 0.0766 | 
+ / | 
+ 0.0766 | 
+ 52.12 | 
+ 36.20 | 
+ Qwen3-Coder-30B | 
+ 40.50 | 
+ 520.08 | 
+ 10.21 | 
+ 0.0567 | 
+ / | 
+ 0.0567 | 
+ 43.90 | 
+ 36.49 | 
+ Mean | 
+ 49.83 | 
+ 588.06 | 
+ 7.50 | 
+ 0.0968 | 
+ / | 
+ 0.0968 | 
+ 51.21 | 
+ 41.40 | 
+ AgentDiet | 
+ Gemini-3-Flash | 
+ 68.00 | 
+ 713.40 | 
+ 6.31 | 
+ 0.1400 | 
+ 0.0932 | 
+ 0.2332 | 
+ 51.93 | 
+ 47.15 | 
+ Qwen3-235B | 
+ 43.00 | 
+ 1143.56 | 
+ 6.26 | 
+ 0.0838 | 
+ 0.0423 | 
+ 0.1260 | 
+ 49.96 | 
+ 35.14 | 
+ Qwen3-Coder-30B | 
+ 42.50 | 
+ 610.37 | 
+ 9.88 | 
+ 0.0424 | 
+ 0.0269 | 
+ 0.0693 | 
+ 42.49 | 
+ 35.00 | 
+ Mean | 
+ 51.17 | 
+ 822.44 | 
+ 7.49 | 
+ 0.0887 | 
+ 0.0541 | 
+ 0.1429 | 
+ 48.12 | 
+ 39.10 | 
+ AttnCompress | 
+ Gemini-3-Flash | 
+ 71.50 | 
+ 780.17 | 
+ 5.45 | 
+ 0.1543 | 
+ 0.0027 | 
+ 0.1570 | 
+ 60.46 | 
+ 55.48 | 
+ Qwen3-235B | 
+ 43.50 | 
+ 619.19 | 
+ 6.21 | 
+ 0.0706 | 
+ 0.0020 | 
+ 0.0726 | 
+ 50.53 | 
+ 36.00 | 
+ Qwen3-Coder-30B | 
+ 44.50 | 
+ 534.62 | 
+ 10.20 | 
+ 0.0532 | 
+ 0.0019 | 
+ 0.0551 | 
+ 46.30 | 
+ 38.56 | 
+ Mean | 
+ 53.17 | 
+ 644.66 | 
+ 7.29 | 
+ 0.0927 | 
+ 0.0022 | 
+ 0.0949 | 
+ 52.43 | 
+ 43.35 | 
+ Pass Rate Analysis.
+ The primary challenge in context compression is balancing information retention with token reduction. As observed in Table 1 , applying any compression strategy naturally results in a slight performance dip compared to the Original full-context baseline (Mean Pass 55.17%). However, relying on full context is often impractical or impossible. Most current LLMs are constrained by context windows, which are easily exceeded by the massive observation logs generated during long-horizon SE tasks. Consequently, compression strategies are necessary not merely for cost savings, but to enable the agent to function within these hard limits.
+ Among all compression techniques, AttnCompress achieves the best balance between performance and overhead. It attains the highest mean Pass Rate of 53.17% , outperforming heuristic methods like ObsMask (47.17%) and SlidingWindow (49.83%), as well as selection-based methods like Lingua (48.67%). Moreover, AttnCompress consistently outperforms all baselines individually across all three agent LLMs (achieving 71.50%, 43.50%, and 44.50% on Gemini-3-Flash, Qwen3-235B, and Qwen3-Coder-30B, respectively).
+Compared to the previous SOTA summarization method AgentDiet (51.17%), AttnCompress achieves a 3.9% relative improvement in mean pass rate, demonstrating better information retention.
+ To further assess statistical robustness, we repeated the SWE-Bench-Verified (200 case subset) evaluation five times using Qwen3-Coder-30B as the backend agent. As shown in Table 2 , AttnCompress achieves a higher mean pass rate than both LLMSummary (43.70% vs. 42.70%) and AgentDiet (43.70% vs. 41.80%), suggesting that the improvement is not driven by a single lucky run.
+ Table 2 . Repeated-run robustness on SWE-Bench-Verified with Qwen3-Coder-30B . We report pass-rate and total-cost statistics over five runs. 
+ Method | 
+ Pass (%) | 
+ $C_{total}$ ($) | 
+ Mean | 
+ Std | 
+ Min | 
+ Max | 
+ Mean | 
+ Std | 
+ Min | 
+ Max | 
+ Original | 
+ 44.10 | 
+ 2.38 | 
+ 41.00 | 
+ 46.50 | 
+ 0.0563 | 
+ 0.0016 | 
+ 0.0546 | 
+ 0.0582 | 
+ LLMSummary | 
+ 42.70 | 
+ 2.22 | 
+ 40.00 | 
+ 46.00 | 
+ 0.0585 | 
+ 0.0012 | 
+ 0.0572 | 
+ 0.0599 | 
+ ObsMask | 
+ 40.80 | 
+ 2.08 | 
+ 38.00 | 
+ 43.00 | 
+ 0.0305 | 
+ 0.0013 | 
+ 0.0282 | 
+ 0.0313 | 
+ SlidingWindow | 
+ 39.20 | 
+ 2.41 | 
+ 36.00 | 
+ 42.00 | 
+ 0.0567 | 
+ 0.0012 | 
+ 0.0556 | 
+ 0.0584 | 
+ AgentDiet | 
+ 41.80 | 
+ 2.99 | 
+ 38.50 | 
+ 45.50 | 
+ 0.0718 | 
+ 0.0028 | 
+ 0.0688 | 
+ 0.0751 | 
+ AttnCompress | 
+ 43.70 | 
+ 2.17 | 
+ 40.50 | 
+ 46.50 | 
+ 0.0566 | 
+ 0.0013 | 
+ 0.0551 | 
+ 0.0584 | 
+ To understand the remaining gap from the full-context baseline, we manually inspected the failed cases. The main failure mode is that AttnCompress can still remove information that later becomes important, such as an earlier file path, helper function, or error message. When the agent’s subsequent reasoning depends on such omitted evidence, it may make an incorrect decision and fail to recover within the remaining steps.
+ Moreover, AttnCompress demonstrates superior cost efficiency compared to both the full-context and SOTA approaches. By avoiding the expensive process of using a large LLM to summarize every turn (as in AgentDiet ), AttnCompress lowers the total cost to 0.0949$ , representing a 33.6% reduction compared to AgentDiet (0.1429$) and a 20.2% reduction compared to the Original baseline (0.1189$). This cost efficiency is robust across all models; for example, on the expensive Qwen3-235B model, AttnCompress reduces total cost from 0.0864$ ( Original ) to 0.0726$. Furthermore, regarding token consumption, AttnCompress operates with a significantly leaner context (Mean Input: 644.66k). This corresponds to a 21.6% reduction against AgentDiet (822.44k) and a substantial 42.3% reduction against Original (1118.16k), validating that our attention-based selection mechanism efficiently filters noise in raw contexts.
+ Efficiency and Latency.
+ Beyond monetary cost, latency is a critical factor for real-time agents. We analyzed the time overhead using the breakdown illustrated in Figure 4 .
+ AttnCompress incurs a manageable computational overhead with an average total end-to-end time of 366.7s , where the compression (proxy model inference) accounts for only 66.6s . This is significantly faster than the SOTA method AgentDiet , which requires an average of 498.5s due to substantial summarization overhead (248.1s). While heuristic methods like ObsMask and SlidingWindow are indeed faster (total time 303.6s and 284.7s, respectively) due to zero processing cost, they suffer from a significantly lower pass rate (47.17% and 49.83%, respectively). AttnCompress thus strikes a critical balance, offering a reasonable trade-off between the speed of heuristic pruning and the effectiveness of heavy summarization.
+ Interestingly, our method also outperforms lighter baselines like Random and Lingua in terms of total efficiency, despite those methods having negligible compression overhead. As shown in the Step column of Table 1 , those two methods often disrupt semantic continuity, causing the agent to get confused. This forces the agent to perform redundant actions to recover missing information, driving up the average step count ( Random : 61.42 steps; Lingua : 58.31 steps). In contrast, AttnCompress preserves the semantic integrity of the trajectory, allowing the agent to solve problems in fewer steps (52.43 steps), thereby reducing the total cumulative inference time of the backend agent.
+ Figure 4 . End-to-end Latency Breakdown. 
+ 5.2. RQ2: Component Contribution
+ To quantify the contribution of individual architectural components to the overall performance, we conducted an ablation study on a subset of SWE-Bench-Verified as detailed in Section 4.2.1 with Qwen3-Coder-30B as agent LLM. We subsequently analyzed the sensitivity of the framework to key hyperparameters to determine the optimal configuration.
+ Analysis of PPL-based Segmentation.
+ We first evaluate the necessity of our structure-aware segmentation by replacing PPL-based blocking with standard token-level pruning (while maintaining the same compression ratio). As shown in Table 3 , removing the PPL module leads to a 3.0% decrease in Pass Rate (from 42.0% to 39.0%) and an increase in the average steps required.
+This degradation occurs because token-level pruning is agnostic to syntactic boundaries. In SE tasks, observations often consist of structured data such as JSON objects, stack traces, or code snippets. Randomly dropping tokens within these structures breaks the syntax, rendering the remaining context incomprehensible for the LLM. PPL-based segmentation ensures that we drop entire semantically coherent blocks (e.g., a redundant log line) rather than fragmenting critical code structures.
+ Table 3 . Ablation Study of Key Components. We compare the full AttnCompress framework against variants where specific mechanisms are removed or replaced. 
+ Method | 
+ Pass (%) | 
+ Input (k) | 
+ Output (k) | 
+ $C_{total}$ ($) | 
+ Step | 
+ PStep | 
+ AttnCompress (Full) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ w/o PPL (Token-level) | 
+ 39.0 | 
+ 622.37 | 
+ 10.88 | 
+ 0.0635 | 
+ 50.48 | 
+ 40.13 | 
+ w/o Attention (Random) | 
+ 35.0 | 
+ 566.81 | 
+ 10.06 | 
+ 0.0567 | 
+ 47.38 | 
+ 35.89 | 
+ w/o Rolling (Fixed) | 
+ 37.0 | 
+ 514.36 | 
+ 10.95 | 
+ 0.0619 | 
+ 48.44 | 
+ 39.51 | 
+ Analysis of Proxy Attention.
+ To assess the impact of our attention score module, we replaced the proxy model’s attention scoring with a random block selection strategy. This resulted in the most significant performance drop, with the pass rate plummeting to 35.0% (-7.0%).
+This result underscores the high noise ratio in SE trajectories. The majority of tool outputs are irrelevant to the specific bug at hand. The attention mechanism acts as a critical filter, aligning the historical context with the agent’s current reasoning. Without this guidance, the agent fails to locate the bug efficiently, forcing it to waste steps on unrelated files and often leading to task failure.
+ Analysis of Dynamic Rolling Window.
+ We investigated the importance of dynamic context maintenance by disabling the rolling window mechanism (using a fixed strategy where context is compressed once and never revisited). The pass rate dropped significantly to 37.0% (-5.0%).
+This validates the task focus drift hypothesis in debugging workflows. Information that appears irrelevant at step $t$ often becomes critical at step $t+20$ when the agent shifts its hypothesis. A static compression strategy permanently discards this information, preventing the agent from “looking back”. The rolling window mechanism is therefore essential for allowing the agent to recall previously suppressed blocks as its focus evolves.
+ Hyperparameter Sensitivity.
+ We further examined the impact of five key hyperparameters on the validation set. The results are detailed in Table 4 .
+ Table 4 . Hyperparameter Sensitivity Analysis on the Validation Set. Default settings are marked with *. 
+ Parameter | 
+ Value | 
+ Pass (%) | 
+ Input (k) | 
+ Output (k) | 
+ $C_{total}$ ($) | 
+ Step | 
+ PStep | 
+ Tail Size ( $k$ ) | 
+ 2 (*) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ 5 | 
+ 42.0 | 
+ 563.19 | 
+ 10.69 | 
+ 0.0657 | 
+ 44.47 | 
+ 40.31 | 
+ 10 | 
+ 44.0 | 
+ 603.26 | 
+ 10.74 | 
+ 0.0821 | 
+ 43.64 | 
+ 38.77 | 
+ Comp. Ratio ( $\rho$ ) | 
+ 0.1 | 
+ 40.0 | 
+ 465.49 | 
+ 10.17 | 
+ 0.0469 | 
+ 46.03 | 
+ 41.45 | 
+ 0.2 (*) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ 0.3 | 
+ 43.0 | 
+ 600.65 | 
+ 10.72 | 
+ 0.0613 | 
+ 45.39 | 
+ 41.35 | 
+ Block Threshold | 
+ -2 (*) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ 0 | 
+ 42.0 | 
+ 520.38 | 
+ 10.19 | 
+ 0.0519 | 
+ 45.23 | 
+ 35.69 | 
+ 2 | 
+ 39.0 | 
+ 516.52 | 
+ 10.41 | 
+ 0.0486 | 
+ 45.39 | 
+ 37.08 | 
+ Proxy Layer | 
+ Mean | 
+ 41.0 | 
+ 556.99 | 
+ 10.50 | 
+ 0.0541 | 
+ 46.58 | 
+ 40.90 | 
+ 0 (First) | 
+ 41.0 | 
+ 536.46 | 
+ 10.15 | 
+ 0.0532 | 
+ 46.00 | 
+ 35.88 | 
+ Middle | 
+ 43.0 | 
+ 548.67 | 
+ 10.32 | 
+ 0.0539 | 
+ 46.10 | 
+ 38.35 | 
+ -1 (Last) (*) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ Window Size | 
+ 2 | 
+ 35.0 | 
+ 541.79 | 
+ 10.79 | 
+ 0.0761 | 
+ 45.17 | 
+ 37.17 | 
+ 5 | 
+ 38.0 | 
+ 488.52 | 
+ 10.00 | 
+ 0.0529 | 
+ 43.11 | 
+ 35.32 | 
+ 10 (*) | 
+ 42.0 | 
+ 547.27 | 
+ 10.74 | 
+ 0.0557 | 
+ 45.89 | 
+ 38.17 | 
+ Tail Size ( $k$ ): There is a trade-off between performance and cost. Increasing the tail size from 2 to 10 improves the pass rate to 44.0%, as keeping more raw context helps the agent understand the immediate consequences of its actions. However, this comes at a significantly higher token cost (0.0821$ vs 0.0557$). To balance efficiency with effectiveness, and to maintain consistency with previous work like AgentDiet , we selected $k=2$ as the default.
+ Compression Ratio ( $\rho$ ): As expected, a higher retention budget leads to better performance. Increasing $\rho$ to 0.3 yields a slight gain (43.0%). However, reducing it to 0.1 causes a drop (40.0%), indicating that essential information is being discarded. We selected $\rho=0.2$ as it offers a favorable cost-performance ratio, capturing the majority of relevant signals without inflating the context.
+ Block Threshold: The results favor smaller thresholds, which correspond to finer-grained segmentation. A threshold of -2 (adaptive) or 0 allows the model to select precise lines of interest, whereas a coarser threshold of 2 (grouping larger chunks) degrades performance to 39.0%. Since the threshold has a negligible impact on computational overhead, we selected -2 to maximize segmentation flexibility.
+ Proxy Layer selection: The choice of proxy layer has only a marginal impact on the final performance, as the results across different layers (First, Middle, and Last) are largely comparable. This suggests that the relevance signal derived from proxy attention is robust. Given this insensitivity, we selected the Last layer (-1) as it is computationally free to extract and performs robustly.
+ Window Size: A larger rolling window is beneficial. Increasing the window size from 2 to 10 improves the pass rate from 35.0% to 42.0%. Meanwhile, increasing the Window Size has a minimal impact on token cost because the content within the window is already compressed. Therefore, we selected a larger window of $M=10$ to maximize the agent’s ability to recall historical context.
+ In summary, while AttnCompress introduces several hyperparameters, Table 4 demonstrates that they primarily govern cost-performance trade-offs rather than acting as fragile triggers. Key variables like compression ratio ( $\rho$ ) and tail size ( $k$ ) smoothly scale performance up or down, whereas architectural choices (threshold and proxy layer) show robust plateaus (e.g., both threshold -2 and 0 achieve 42%, and middle/last layers achieve 43% and 42%). This indicates that the framework is resilient to parameter shifts and does not require exhaustive, task-specific fine-tuning.
+ 5.3. RQ3: Generalization Capabilities
+ Finally, we assess the generalization capabilities of AttnCompress . We investigate whether the framework maintains its effectiveness when utilizing different proxy model architectures and when applied to diverse programming languages beyond Python.
+ Proxy Model Robustness.
+ Table 5 . Proxy–agent attention alignment ( Qwen3-Coder-30B as reference scorer). 
+ Proxy Model | 
+ Spearman $\rho$ | 
+ Top-10% Ovlp. | 
+ Top-20% Ovlp. | 
+ Qwen3-1.7B-Instruct | 
+ 0.64 | 
+ 0.63 | 
+ 0.66 | 
+ Qwen3-4B-Instruct | 
+ 0.63 | 
+ 0.60 | 
+ 0.65 | 
+ Qwen3-8B-Instruct | 
+ 0.61 | 
+ 0.55 | 
+ 0.62 | 
+ Gemma3-4B-Instruct | 
+ 0.60 | 
+ 0.64 | 
+ 0.62 | 
+ Llama3.2-3B-Instruct | 
+ 0.56 | 
+ 0.63 | 
+ 0.63 | 
+ To verify that our approach is not dependent on a specific model family, we evaluated AttnCompress using five distinct small language models (SLMs) as the proxy scorer on the 200-instance SWE-Bench-Verified test set. This includes three models from the Qwen3 ( Qwen Team, 2025 ) family to analyze scaling laws (1.7B, 4B, 8B), as well as Gemma3-4B-Instruct ( Google, 2024 ) and Llama3.2-3B-Instruct ( Meta AI, 2024 ) to test cross-architecture generalization.
+ We first verify whether proxy relevance scoring aligns with the backend agent’s needs. We use 200 uncompressed Original agent trajectories from the same 200-instance SWE-Bench-Verified subset evaluated below, and compare block-level attention rankings from each proxy model against Qwen3-Coder-30B on identical PPL-segmented blocks. Table 5 reports spearman rank correlation ( $\rho$ ), the fraction of shared blocks in the top 10% of each ranking, and the same for the top 20% (instance means). Our default Qwen3-4B-Instruct proxy achieves $\rho{=}0.63$ with 0.60 and 0.65 top-10%/20% overlap, indicating substantial agreement on the blocks most likely to be retained under our compression budget. Cross-family proxies remain in a similar range, suggesting that imperfect global rankings still preserve the salient context the agent attends to.
+ Table 6 . Performance and Efficiency with different Proxy Models. 
+ Agent LLM | 
+ Proxy Model | 
+ Pass (%) | 
+ Input (k) | 
+ $C_{total}$ ($) | 
+ Step | 
+ Ana Time (s) | 
+ Qwen3-Coder-30B | 
+ Qwen3-1.7B-Instruct | 
+ 43.50 | 
+ 551.63 | 
+ 0.0571 | 
+ 47.16 | 
+ 71.61 | 
+ Qwen3-4B-Instruct | 
+ 44.50 | 
+ 534.62 | 
+ 0.0551 | 
+ 46.30 | 
+ 530.87 | 
+ Qwen3-8B-Instruct | 
+ 46.50 | 
+ 558.34 | 
+ 0.0607 | 
+ 46.67 | 
+ 384.13 | 
+ Gemma3-4B-Instruct | 
+ 45.00 | 
+ 694.98 | 
+ 0.0588 | 
+ 55.02 | 
+ 515.63 | 
+ Llama3.2-3B-Instruct | 
+ 45.50 | 
+ 507.71 | 
+ 0.0548 | 
+ 44.98 | 
+ 100.37 | 
+ Gemini-3-Flash | 
+ Qwen3-1.7B-Instruct | 
+ 69.00 | 
+ 749.32 | 
+ 0.1940 | 
+ 64.90 | 
+ 131.49 | 
+ Qwen3-4B-Instruct | 
+ 71.50 | 
+ 780.17 | 
+ 0.1570 | 
+ 60.46 | 
+ 252.47 | 
+ Qwen3-8B-Instruct | 
+ 72.50 | 
+ 773.15 | 
+ 0.2077 | 
+ 65.78 | 
+ 682.06 | 
+ Gemma3-4B-Instruct | 
+ 68.50 | 
+ 781.90 | 
+ 0.1705 | 
+ 71.48 | 
+ 790.62 | 
+ Llama3.2-3B-Instruct | 
+ 71.50 | 
+ 781.39 | 
+ 0.2072 | 
+ 68.41 | 
+ 239.08 | 
+ The end-to-end results are presented in Table 6 , where we report both Qwen3-Coder-30B and Gemini-3-Flash as backend agents. Together with Table 5 , this shows that small–big LLM attention agreement is sufficient for stable agent behavior: pass rates vary by only a few points across proxies.
+ The data indicates a high degree of transferability across model families. On Qwen3-Coder-30B , both Gemma3-4B-Instruct (45.0%) and Llama3.2-3B-Instruct (45.5%) achieve competitive pass rates comparable to Qwen3-4B-Instruct (44.5%). The same trend holds on Gemini-3-Flash , where Gemma3-4B-Instruct and Llama3.2-3B-Instruct reach 68.5% and 71.5%, respectively, close to the default Qwen3-4B-Instruct (71.5%). This is consistent with their strong top-10%/20% overlap with the backend agent in Table 5 (e.g., 0.63, 0.64 for Llama3.2-3B-Instruct ), suggesting that the attention patterns used to distinguish signal from noise are universal features present in various LLM families, making AttnCompress model-agnostic.
+ We further analyze the impact of model size within the Qwen3 series using Qwen3-Coder-30B as the backend agent. There is a nuanced trade-off between proxy model size, selection quality, and compression latency ( Ana Time column). Specifically, Qwen3-1.7B-Instruct is the fastest (71.6s) but suffers from a slight performance drop (43.5%), suggesting that very small models may struggle to accurately identify subtle long-term dependencies beyond coarse attention agreement. Qwen3-8B-Instruct achieves the highest pass rate of 46.5%. However, this gain comes at a higher analysis time (384.1s). Therefore, Qwen3-4B-Instruct strikes the optimal balance. It improves pass rate over the 1.7B model (+1.0%) while incurring substantially lower analysis time than the 8B proxy.
+ We also observe that the ranking of proxy models based on end-to-end agent performance (Table 6 ) does not strictly align with their attention alignment scores (Table 5 ). For instance, Qwen3-1.7B-Instruct achieves the highest top-20% overlap (0.66) but records the lowest pass rate on Qwen3-Coder-30B . We attribute this discrepancy primarily to two factors: (i) the differences in alignment across proxies are marginal (all top-20% overlaps fall within $[0.62,0.66]$ ), meaning that minor variations in ranking do not necessarily translate to downstream success; and (ii) end-to-end evaluations inherently introduce variance due to agent stochasticity. While the exact mechanism by which attention alignment influences final agent outcomes warrants further investigation, our results yield two practical takeaways: proxy models from diverse families and scales share broadly similar attention distributions, and this shared structure enables effective compression with negligible variations in pass rates across proxies.
+ Multi-Language Generalization.
+ We extended our evaluation to Multi-SWE-Bench-Flash to test adaptability across seven programming languages: C, C++, Go, Java, JavaScript, Rust, and TypeScript. Table 7 summarizes the overall results, and Figure 5 illustrates the specific pass counts per language.
+ Method | 
+ Pass (%) | 
+ Input (k) | 
+ Output (k) | 
+ $C_{total}$ ($) | 
+ Step | 
+ PStep | 
+ Original | 
+ 20.33 | 
+ 1629.38 | 
+ 11.69 | 
+ 0.1057 | 
+ 52.83 | 
+ 42.66 | 
+ Random | 
+ 17.00 | 
+ 1420.96 | 
+ 14.54 | 
+ 0.1074 | 
+ 79.51 | 
+ 62.24 | 
+ Lingua | 
+ 16.00 | 
+ 1360.88 | 
+ 16.50 | 
+ 0.1046 | 
+ 78.24 | 
+ 58.69 | 
+ LLMSummary | 
+ 17.39 | 
+ 1107.88 | 
+ 11.54 | 
+ 0.0971 | 
+ 59.07 | 
+ 45.62 | 
+ ObsMask | 
+ 15.72 | 
+ 719.77 | 
+ 12.35 | 
+ 0.0376 | 
+ 72.05 | 
+ 55.85 | 
+ SlidingWindow | 
+ 17.67 | 
+ 790.56 | 
+ 12.02 | 
+ 0.0764 | 
+ 61.76 | 
+ 52.36 | 
+ AgentDiet | 
+ 18.33 | 
+ 1014.70 | 
+ 11.56 | 
+ 0.1132 | 
+ 58.45 | 
+ 45.04 | 
+ AttnCompress | 
+ 19.67 | 
+ 879.77 | 
+ 11.90 | 
+ 0.0826 | 
+ 62.38 | 
+ 49.32 | 
+ Table 7 . Main Results on Multi-SWE-Bench-Flash . Bold indicates the best performance among compression methods; Underline indicates the second best. 
+ Figure 5 . Number of passed instances per language on Multi-SWE-Bench-Flash . AttnCompress matches the Original baseline in Java, Rust, and C++, outperforming other compression methods. 
+ AttnCompress achieves the best performance among all compression methods, with a pass rate of 19.67%, which is close to the Original full-context baseline (20.33%). In contrast, other methods show significant degradation: ObsMask drops to 15.72%, SlidingWindow achieves 17.67%, and AgentDiet achieves 18.33% while incurring higher costs (0.1132$ vs 0.0826$).
+ Language-specific analysis (Figure 5 ) reveals that AttnCompress maintains parity with the Original baseline in strictly typed and verbose languages.
+ • 
+ C/C++ & Java: In Java, AttnCompress matches the Original baseline exactly (17 passed) and outperforms AgentDiet (13 passed). Similarly, in C, it successfully solves 5 instances compared to 4 for the Original baseline. This indicates that our method remains effective in verbose, statically-typed environments.
+ • 
+ Rust & Go: Performance is stable in modern systems languages. In Rust, AttnCompress matches the Original baseline (9 passed), and in Go, it shows a marginal difference (8 vs. 9).
+ • 
+ Web Languages (TS/JS): For TypeScript and JavaScript, AttnCompress (7 passed) performs slightly below the Original (8 passed) but remains competitive with AgentDiet .
+ 6. Threats to Validity
+ Threats to Internal Validity. 
+The primary internal threat is Data Leakage, as proprietary LLMs might have seen the SWE-Bench issues during training. We mitigated this by including the more recent Multi-SWE-Bench in our evaluation. Furthermore, since all baselines utilize the same backend models, any leakage affects them equally, preserving the validity of relative comparisons.
+A second threat is hyperparameter overfitting. To address this, we strictly isolated a 100-instance validation set for ablation studies and parameter tuning, ensuring the reported performance on the 200-instance test set reflects genuine generalization rather than overfitting.
+ Threats to External Validity. 
+The main external threat is generalization across agent frameworks. Due to computational costs, we evaluated AttnCompress primarily on Trae-Agent . However, as most SE agents follow similar ReAct patterns, our middleware approach is theoretically transferable.
+We also addressed model and language generalization by validating our framework across diverse proxy models ( Qwen , Llama , Gemma ) and seven programming languages. The consistent results suggest our findings are not limited to a specific model architecture or language ecosystem.
+ Threats to Construct Validity. 
+A threat to construct validity is the reliance on test-based evaluation. A patch passing available tests (plausible) may not be semantically equivalent to the developer’s fix (correct). While this is a known limitation of benchmarks like SWE-Bench , it serves as a standard proxy for task success. Crucially, this metric limits all comparison methods equally; therefore, the observed improvements in pass rate reliably indicate that AttnCompress retains more critical task information than other compression baselines.
+ 7. Conclusions
+ In this paper, we addressed the critical context scalability bottleneck in Autonomous Software Engineering (ASE) agents. We introduced AttnCompress , a dynamic compression framework that overcomes the limitations of static pruning and heuristic summarization through three key mechanisms: structure-aware segmentation via PPL spikes, proxy attention-guided relevance estimation, and a dynamic rolling window. This approach ensures the preservation of syntactic integrity and semantic dependencies essential for SE tasks. Extensive evaluation on SWE-Bench-Verified demonstrates that AttnCompress achieves a state-of-the-art pass rate of 53.17%, outperforming strong compression baselines while reducing token consumption by over 21.6% and total costs by 33.6%. Our results confirm that dynamic attention alignment offers a superior, model-agnostic solution for efficient, long-horizon software engineering tasks.
+ Data Availability
+ The replication package for our study, containing the necessary source code and scripts to reproduce our experiments, is available at the repository ( 2 ) .
+ References
+ Anthropic (2025) 
+ Anthropic 
+ Claude code .
+ Note: https://claude.com/product/claude-code Agentic AI coding tool for terminal and development workflows, accessed 2026-01-28 
+ Cited by: §2.3.3 .
+ [2] 
+ AttnCompress: Dynamic Attention-Guided Trajectory Compression for Software Engineering Agents .
+ Note: https://github.com/ZZR0/AttnCompress Accessed: 2026-07-16. 
+ Cited by: Data Availability .
+ Bouzenia and Pradel (2025) 
+ I. Bouzenia and M. Pradel 
+ Understanding software engineering agents: A study of thought-action-result trajectories .
+ CoRR abs/2506.18824 .
+ External Links: Link ,
+ Document ,
+ 2506.18824 
+ Cited by: §1 .
+ ByteDance Seed Team (2025) 
+ ByteDance Seed Team 
+ Multi-swe-bench-flash .
+ Note: https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench-flash Subset of Multi-SWE-bench for rapid evaluation; accessed 2026-01-20 
+ Cited by: 2nd item .
+ Chirkova et al. (2025) 
+ N. Chirkova, T. Formal, V. Nikoulina, and S. Clinchant 
+ Provence: efficient and robust context pruning for retrieval-augmented generation .
+ In The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025 ,
+ External Links: Link 
+ Cited by: §2.3.1 .
+ Chowdhury et al. (2024) 
+ N. Chowdhury, J. Aung, C. J. Shern, O. Jaffe, D. Sherburn, G. Starace, E. Mays, R. Dias, M. Aljubeh, M. Glaese, C. E. Jimenez, J. Yang, L. Ho, T. Patwardhan, K. Liu, and A. Madry 
+ Introducing SWE-bench verified .
+ External Links: Link 
+ Cited by: §3.5 ,
+ 1st item .
+ Devlin et al. (2019) 
+ J. Devlin, M. Chang, K. Lee, and K. Toutanova 
+ BERT: pre-training of deep bidirectional transformers for language understanding .
+ In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) , J. Burstein, C. Doran, and T. Solorio (Eds.) ,
+ Minneapolis, Minnesota , pp. 4171–4186 .
+ External Links: Link ,
+ Document 
+ Cited by: 5th item .
+ Google DeepMind (2025) 
+ Google DeepMind 
+ Gemini 3 flash .
+ Note: https://deepmind.google/models/gemini/flash/ Model card and official description, accessed 2026-01-28; proprietary large language model by Google DeepMind 
+ Cited by: §5.1 .
+ Google (2024) 
+ Google 
+ Gemma-3-4b-it .
+ Note: https://huggingface.co/google/gemma-3-4b-it Model card, accessed 2026-01-28 
+ Cited by: §5.3 .
+ Google (2025) 
+ Google 
+ Gemini cli .
+ Note: https://geminicli.com/ Open-source AI command-line interface for Gemini models, accessed 2026-01-28 
+ Cited by: §2.3.3 .
+ Hsieh et al. (2024) 
+ C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, and B. Ginsburg 
+ RULER: what’s the real context size of your long-context language models? .
+ In First Conference on Language Modeling ,
+ External Links: Link 
+ Cited by: §1 .
+ Jiang et al. (2023) 
+ H. Jiang, Q. Wu, C. Lin, Y. Yang, and L. Qiu 
+ LLMLingua: compressing prompts for accelerated inference of large language models .
+ In Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2023, Singapore, December 6-10, 2023 , H. Bouamor, J. Pino, and K. Bali (Eds.) ,
+ pp. 13358–13376 .
+ External Links: Link ,
+ Document 
+ Cited by: §1 .
+ Jimenez et al. (2024) 
+ C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. R. Narasimhan 
+ SWE-bench: can language models resolve real-world github issues? .
+ In The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024 ,
+ External Links: Link 
+ Cited by: 3rd item ,
+ §1 .
+ Jin et al. (2024) 
+ H. Jin, L. Huang, H. Cai, J. Yan, B. Li, and H. Chen 
+ From llms to llm-based agents for software engineering: A survey of current, challenges and future .
+ CoRR abs/2408.02479 .
+ External Links: Link ,
+ Document ,
+ 2408.02479 
+ Cited by: §1 .
+ Kang et al. (2025) 
+ M. Kang, W. Chen, D. Han, H. A. Inan, L. Wutschitz, Y. Chen, R. Sim, and S. Rajmohan 
+ Acon: optimizing context compression for long-horizon llm agents .
+ arXiv preprint arXiv:2510.00615 .
+ Cited by: 6th item .
+ Kwon et al. (2023) 
+ W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica 
+ Efficient memory management for large language model serving with pagedattention .
+ In Proceedings of the 29th Symposium on Operating Systems Principles,
+SOSP 2023, Koblenz, Germany, October 23-26, 2023 , J. Flinn, M. I. Seltzer, P. Druschel, A. Kaufmann, and J. Mace (Eds.) ,
+ pp. 611–626 .
+ External Links: Link ,
+ Document 
+ Cited by: item 3 .
+ Li et al. (2023) 
+ Y. Li, B. Dong, F. Guerin, and C. Lin 
+ Compressing context to enhance inference efficiency of large language models .
+ In Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2023, Singapore, December 6-10, 2023 , H. Bouamor, J. Pino, and K. Bali (Eds.) ,
+ pp. 6342–6353 .
+ External Links: Link ,
+ Document 
+ Cited by: §2.3.1 .
+ Lindenbauer et al. (2025) 
+ T. Lindenbauer, I. Slinko, L. Felder, E. Bogomolov, and Y. Zharov 
+ The complexity trap: simple observation masking is as efficient as LLM summarization for agent context management .
+ In NeurIPS 2025 Fourth Workshop on Deep Learning for Code ,
+ External Links: Link 
+ Cited by: §1 ,
+ §2.3.2 ,
+ 4th item .
+ Liskavets et al. (2025) 
+ B. Liskavets, M. Ushakov, S. Roy, M. Klibanov, A. Etemad, and S. K. Luke 
+ Prompt compression with context-aware sentence encoding for fast and improved LLM inference .
+ In AAAI-25, Sponsored by the Association for the Advancement of Artificial
+Intelligence, February 25 - March 4, 2025, Philadelphia, PA, USA , T. Walsh, J. Shah, and Z. Kolter (Eds.) ,
+ pp. 24595–24604 .
+ External Links: Link ,
+ Document 
+ Cited by: §2.3.1 .
+ Liu et al. (2024a) 
+ J. Liu, K. Wang, Y. Chen, X. Peng, Z. Chen, L. Zhang, and Y. Lou 
+ Large language model-based agents for software engineering: A survey .
+ CoRR abs/2409.02977 .
+ External Links: Link ,
+ Document ,
+ 2409.02977 
+ Cited by: §1 ,
+ §2.1 .
+ Liu et al. (2024b) 
+ N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang 
+ Lost in the middle: how language models use long contexts .
+ Trans. Assoc. Comput. Linguistics 12 , pp. 157–173 .
+ External Links: Link ,
+ Document 
+ Cited by: §1 .
+ Luo et al. (2025) 
+ L. Luo, Y. Cao, and P. Luo 
+ AttnComp: attention-guided adaptive context compression for retrieval-augmented generation .
+ In Findings of the Association for Computational Linguistics: EMNLP
+2025, Suzhou, China, November 4-9, 2025 , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+ pp. 8456–8472 .
+ External Links: Link 
+ Cited by: §3.3 .
+ Maharaj et al. (2025) 
+ K. Maharaj, V. Munigala, S. G. Tamilselvam, P. Kumar, S. Sen, P. Kodeswaran, A. Mishra, and P. Bhattacharyya 
+ ETF: an entity tracing framework for hallucination detection in code summaries .
+ In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.) ,
+ Vienna, Austria , pp. 30639–30652 .
+ External Links: Link ,
+ Document ,
+ ISBN 979-8-89176-251-0 
+ Cited by: §1 .
+ Meta AI (2024) 
+ Meta AI 
+ Llama-3.2-3b-instruct .
+ Note: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct Model card, accessed 2026-01-28 
+ Cited by: §5.3 .
+ Ou et al. (2025) 
+ T. Ou, W. Guo, A. Gandhi, G. Neubig, and X. Yue 
+ AgentDiagnose: an open toolkit for diagnosing LLM agent trajectories .
+ In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing: System Demonstrations , I. Habernal, P. Schulam, and J. Tiedemann (Eds.) ,
+ Suzhou, China , pp. 207–215 .
+ External Links: Link ,
+ Document ,
+ ISBN 979-8-89176-334-0 
+ Cited by: §1 .
+ Pan et al. (2025) 
+ D. Pan, Z. Sun, C. Zhang, D. Lo, and X. Du 
+ The hidden cost of readability: how code formatting silently consumes your LLM budget .
+ CoRR abs/2508.13666 .
+ External Links: Link ,
+ Document ,
+ 2508.13666 
+ Cited by: §2.3.2 .
+ Pan et al. (2024) 
+ Z. Pan, Q. Wu, H. Jiang, M. Xia, X. Luo, J. Zhang, Q. Lin, V. Rühle, Y. Yang, C. Lin, H. V. Zhao, L. Qiu, and D. Zhang 
+ LLMLingua-2: data distillation for efficient and faithful task-agnostic prompt compression .
+ In Findings of the Association for Computational Linguistics, ACL 2024,
+Bangkok, Thailand and virtual meeting, August 11-16, 2024 , L. Ku, A. Martins, and V. Srikumar (Eds.) ,
+ pp. 963–981 .
+ External Links: Link ,
+ Document 
+ Cited by: §1 ,
+ §2.3.1 ,
+ 5th item .
+ Qwen Team (2025) 
+ Qwen Team 
+ Qwen3-4b-instruct-2507 .
+ Note: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507 Model card, accessed 2026-01-20 
+ Cited by: item 2 ,
+ §3.5 ,
+ 6th item ,
+ §5.3 .
+ Shi et al. (2025) 
+ Y. Shi, Y. Qian, H. Zhang, B. Shen, and X. Gu 
+ LongCodeZip: compress long context for code language models .
+ CoRR abs/2510.00446 .
+ External Links: Link ,
+ Document ,
+ 2510.00446 
+ Cited by: item 1 ,
+ §3.2 .
+ [30] 
+ (2026) 
+ SWE-bench Leaderboards — swebench.com .
+ Note: https://www.swebench.com/index.html [Accessed 19-01-2026] 
+ Cited by: §3.5 .
+ [31] 
+ (2025) 
+ SWE-bench Multilingual · Kabir Khandpur — kabirk.com .
+ Note: https://kabirk.com/multilingual [Accessed 26-01-2026] 
+ Cited by: §1 .
+ Team (2025a) 
+ Q. Team 
+ Qwen3-235b-a22b-instruct-2507 .
+ Note: A 235B instruction-tuned causal Mixture-of-Experts model. Model card on Hugging Face. https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507 
+ Cited by: §5.1 .
+ Team (2025b) 
+ Q. Team 
+ Qwen3-coder-30b-a3b-instruct .
+ Note: A 30B instruction-tuned causal Mixture-of-Experts model. Model card on Hugging Face. https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct 
+ Cited by: §5.1 .
+ Team et al. (2025) 
+ T. R. Team, P. Gao, Z. Tian, X. Meng, X. Wang, R. Hu, Y. Xiao, Y. Liu, Z. Zhang, J. Chen, C. Gao, Y. Lin, Y. Xiong, C. Peng, and X. Liu 
+ Trae agent: an llm-based agent for software engineering with test-time scaling .
+ External Links: 2507.23370 ,
+ Link 
+ Cited by: §2.3.3 ,
+ §3.5 ,
+ §4.2.2 .
+ Wang et al. (2023) 
+ Z. Wang, J. Araki, Z. Jiang, Md. R. Parvez, and G. Neubig 
+ Learning to filter context for retrieval-augmented generation .
+ CoRR abs/2311.08377 .
+ External Links: Link ,
+ Document ,
+ 2311.08377 
+ Cited by: §2.3.1 .
+ Xiao et al. (2025) 
+ Y. Xiao, P. Gao, C. Peng, and Y. Xiong 
+ Improving the efficiency of LLM agent systems through trajectory reduction .
+ CoRR abs/2509.23586 .
+ External Links: Link ,
+ Document ,
+ 2509.23586 
+ Cited by: §1 ,
+ §2.3.3 ,
+ 1st item ,
+ 7th item ,
+ §4.2.1 ,
+ §4.2.2 .
+ Xu et al. (2024) 
+ F. Xu, W. Shi, and E. Choi 
+ RECOMP: improving retrieval-augmented lms with context compression and selective augmentation .
+ In The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024 ,
+ External Links: Link 
+ Cited by: §2.3.1 .
+ Xu et al. (2025) 
+ J. Xu, K. Deng, W. Li, S. Yu, H. Tang, H. Huang, Z. Lai, Z. Zhan, Y. Wu, C. Zhang, K. Lei, Y. Yao, X. Lei, W. Zhu, Z. Feng, H. Li, J. Xiong, D. Li, Z. Gao, K. Wu, W. Xiang, Z. Zhan, Y. Zhang, W. Gong, Z. Gao, G. Wang, Y. Xue, M. Li, M. Xie, X. Zhang, J. Wang, W. Zhuang, Z. Lin, H. Wang, Z. Zhang, Y. Zhang, H. Zhang, B. Chen, and J. Liu 
+ SWE-compass: towards unified evaluation of agentic coding abilities for large language models .
+ CoRR abs/2511.05459 .
+ External Links: Link ,
+ Document ,
+ 2511.05459 
+ Cited by: §1 ,
+ §2.1 .
+ Xuan et al. (2014) 
+ Q. Xuan, A. Okano, P. T. Devanbu, and V. Filkov 
+ Focus-shifting patterns of OSS developers and their congruence with call graphs .
+ In Proceedings of the 22nd ACM SIGSOFT International Symposium on
+Foundations of Software Engineering, (FSE-22), Hong Kong, China, November
+16 - 22, 2014 , S. Cheung, A. Orso, and M. D. Storey (Eds.) ,
+ pp. 401–412 .
+ External Links: Link ,
+ Document 
+ Cited by: §1 .
+ Yang et al. (2025a) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu 
+ Qwen3 technical report .
+ CoRR abs/2505.09388 .
+ External Links: Link ,
+ Document ,
+ 2505.09388 
+ Cited by: §3.5 .
+ Yang et al. (2025b) 
+ J. Yang, X. Liu, W. Lv, K. Deng, S. Guo, L. Jing, Y. Li, S. Liu, X. Luo, Y. Luo, C. Pan, E. Shi, Y. Tan, R. Tao, J. Wu, X. Wu, Z. Wu, D. Zan, C. Zhang, W. Zhang, H. Zhu, T. Y. Zhuo, K. Cao, X. Cheng, J. Dong, S. Fang, Z. Fei, X. Guan, Q. Guo, Z. Han, J. James, T. Luo, R. Li, Y. Li, Y. Liang, C. Liu, J. Liu, Q. Liu, R. Liu, T. Loakman, X. Meng, C. Peng, T. Peng, J. Shi, M. Tang, B. Wang, H. Wang, Y. Wang, F. Xu, Z. Xu, F. Yuan, G. Zhang, J. Zhang, X. Zhang, W. Zhou, H. Zhu, K. Zhu, B. Dai, A. Liu, Z. Li, C. Lin, T. Liu, C. Peng, K. Shen, L. Qin, S. Song, Z. Zhan, J. Zhang, J. Zhang, Z. Zhang, and B. Zheng 
+ From code foundation models to agents and applications: A comprehensive survey and practical guide to code intelligence .
+ CoRR abs/2511.18538 .
+ External Links: Link ,
+ Document ,
+ 2511.18538 
+ Cited by: §1 .
+ Yang et al. (2025c) 
+ J. Yang, C. E. Jimenez, A. L. Zhang, K. Lieret, J. Yang, X. Wu, O. Press, N. Muennighoff, G. Synnaeve, K. R. Narasimhan, D. Yang, S. Wang, and O. Press 
+ SWE-bench multimodal: do AI systems generalize to visual software domains? .
+ In The Thirteenth International Conference on Learning Representations ,
+ External Links: Link 
+ Cited by: §1 .
+ Yang et al. (2024) 
+ J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press 
+ SWE-agent: agent-computer interfaces enable automated software engineering .
+ In Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024 , A. Globersons, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. M. Tomczak, and C. Zhang (Eds.) ,
+ External Links: Link 
+ Cited by: §2.1 ,
+ §2.3.3 .
+ Yao et al. (2023) 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao 
+ ReAct: synergizing reasoning and acting in language models .
+ In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+ External Links: Link 
+ Cited by: §2.1 .
+ Zan et al. (2025) 
+ D. Zan, Z. Huang, W. Liu, H. Chen, L. Zhang, S. Xin, L. Chen, Q. Liu, X. Zhong, A. Li, S. Liu, Y. Xiao, L. Chen, Y. Zhang, J. Su, T. Liu, R. Long, K. Shen, and L. Xiang 
+ Multi-swe-bench: A multilingual benchmark for issue resolving .
+ CoRR abs/2504.02605 .
+ External Links: Link ,
+ Document ,
+ 2504.02605 
+ Cited by: 3rd item ,
+ §1 ,
+ 2nd item .
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

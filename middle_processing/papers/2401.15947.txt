@@ -1,0 +1,2718 @@
+SOURCE: html/2401.15947
+URL: https://arxiv.org/abs/2401.15947
+
+MoE-LLaVA: Mixture of Experts for Large Vision-Language Models 
+
+ Report GitHub Issue
+
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Related Work 
+
+ 2.1 Large Vision-Language Models 
+
+ 2.2 Mixture of Experts in Multi-modal Learning 
+
+ 3 Method 
+
+ 3.1 Overview 
+
+ 3.2 Architecture of MoE-LLaVA 
+
+ 3.3 MoE-Tuning 
+
+ 3.4 Training Objectives 
+
+ 4 Experiments 
+
+ 4.1 Experimental Setup 
+
+ 4.2 Image Understanding Evaluation 
+
+ 4.3 Object Hallucination Evaluation 
+
+ 4.4 Quantitative Analysis 
+
+ 4.5 Ablation Study 
+
+ 5 Conclusion and Future Directions 
+
+ References 
+
+ A Implementation Details 
+
+ A.1 More Model Architecture 
+
+ A.2 Training Details 
+
+ B Additional Results and Visualization 
+
+ B.1 Model Scaling 
+
+ B.2 Training Capacity 
+
+ B.3 Routing Distributions 
+
+ B.4 Token Pathways 
+
+ B.5 Exhibition Board 
+
+ License: CC BY 4.0
+
+arXiv:2401.15947v5 [cs.CV] 23 Dec 2024
+
+ MoE-LLaVA: Mixture of Experts for Large Vision-Language Models
+
+ Bin Lin
+
+ Affiliation: Peking University
+
+ Zhenyu Tang
+
+ Affiliation: Peking University
+
+ Yang Ye
+
+ Affiliation: Sun Yat-sen University
+
+ Jinfa Huang
+
+ Affiliation: University of Rochester
+
+ Junwu Zhang
+
+ Affiliation: Peking University
+
+ Yatian Pang
+
+ Affiliation: Peking University
+
+ Affiliation: National University of Singapore
+
+ Peng Jin
+
+ Affiliation: Peking University
+
+ Munan Ning
+
+ Affiliation: Peking University
+
+ Affiliation: Peng Cheng Laboratory
+
+ Jiebo Luo
+
+ Affiliation: University of Rochester
+
+ Li Yuan
+
+ Affiliation: Peking University
+
+ Affiliation: Peng Cheng Laboratory
+
+ Correspondence to: yuanli-ece@pku.edu.cn 
+
+ Abstract
+
+ Recent advances demonstrate that scaling Large Vision-Language Models (LVLMs) effectively improves downstream task performances. However, existing scaling methods enable all model parameters to be active for each token in the calculation, which brings massive training and inferring costs.
+In this work, we propose a simple yet effective training strategy MoE-Tuning for LVLMs. This strategy innovatively addresses the common issue of performance degradation in multi-modal sparsity learning, consequently constructing a sparse model with an outrageous number of parameters but a constant computational cost.
+Furthermore, we present the MoE-LLaVA , a MoE-based sparse LVLM architecture, which uniquely activates only the top- k experts through routers during deployment, keeping the remaining experts inactive.
+Extensive experiments show the significant performance of MoE-LLaVA in a variety of visual understanding and object hallucination benchmarks.
+Remarkably, with only approximately 3B sparsely activated parameters, MoE-LLaVA demonstrates performance comparable to the LLaVA-1.5-7B on various visual understanding datasets and even surpasses the LLaVA-1.5-13B in object hallucination benchmark.
+Through MoE-LLaVA, we aim to establish a baseline for sparse LVLMs and provide valuable insights for future research in developing more efficient and effective multi-modal learning systems.
+Code is released at https://github.com/PKU-YuanGroup/MoE-LLaVA .
+
+ Keywords: 
+Machine Learning, ICML
+
+ 1 Introduction
+
+ Figure 1: Comparison between MoE-LLaVA-1.8B×4 and open-source LVLMs on object hallucination benchmark. We report the average performance on the POPE ( Li et al., 2023d ) benchmark, which includes three subsets of Adversarial, Random, and Popular. The red dashed line represents the linear fit to the data points of all models except MoE-LLaVA. 
+
+ Figure 2: Illustration of MoE-Tuning. The MoE-Tuning consists of three stages. In stage I, only the MLP is trained. In stage II, all parameters are trained except for the Vision Encoder (VE). In stage III, FFNs are used to initialize the experts in MoE, and only the MoE layers are trained. For each MoE layer, only two experts are activated for each token, while the other experts remain silent. 
+
+ Large Vision-Language Models (LVLMs), such as LLaVA ( Liu et al., 2023c ) and MiniGPT-4 ( Zhu et al., 2023 ) , have shown promising results by leveraging an image encoder and several visual projection layers to enhance the visual perception capabilities of the Large Language Models (LLMs). Typically, increasing the model size ( Zhang et al., 2023a ; Bai et al., 2023b ) and dataset scale ( Zhang et al., 2023c ; Zhao et al., 2023a ; Chen et al., 2023d ) can improve model performance. For instance, InternVL ( Chen et al., 2023e ) has extended the image encoder to 6B parameters.
+A series of works ( Li et al., 2022 ; Dai et al., 2023 ; Liu et al., 2023b ) have expanded the backend of LVLM to 13B parameters and achieved state-of-the-art performance on downstream tasks. IDEFICS ( Laurençon et al., 2023 ) even trained an LVLM with 80B parameters. These methods have demonstrated superior performance even in LLMs, which are typically pretrained on 34B parameters ( SUSTech-IDEA, 2023 ; 01-ai, 2023 ; FlagAI-Open, 2023 ) or 70B parameters ( Touvron et al., 2023a ; Touvron et al., 2023b ; Bai et al., 2023a ; DeepSeek-AI, 2024 ; Zhang & Yang, 2023 ) , and models surpassing 100B parameters are common ( Brown et al., 2020 ; Zeng et al., 2022 ; Zhang et al., 2022 ; Scao et al., 2022 ; Li et al., 2023c ; falconry, 2023 ) .
+
+ In practical applications, scaling model with high-quality training data is crucial for improving model performance ( Lepikhin et al., 2020 ) . However, training and deploying such large models demand significant computational costs and efficient implementation on parallel devices, which can be extremely expensive. This is because each token requires computations with all model parameters, called the dense model. In contrast, sparse Mixtures of Experts (MoE) ( Jacobs et al., 1991 ; Eigen et al., 2013 ) effectively scale model capacity by using fixed activated parameters to process data, which has thrived in the field of NLP ( Fedus et al., 2022 ; Zoph et al., 2022 ; Komatsuzaki et al., 2022 ) . Recently, Mistral LLM ( Jiang et al., 2023 ) equipped with the MoE layers has gained popularity in LLMs. Mixtral-MoE-8×7B ( Jiang et al., 2024 ) achieves performance comparable to LLaMA 2-70B with fewer computational resources.
+
+ However, directly applying MoE to train sparse LVLMs is challenging. We observe that simultaneously converting LLM to LVLM and sparsifying the model leads to significant performance degradation. After multiple attempts, we find that proper initialization is crucial for sparsifying the LVLM, Therefore, we introduce a simple yet effective three-stage training strategy MoE-Tuning . Specifically, as shown in Figure 2 , we first train an MLP that adapts visual tokens to the LLM in stage I. Then, we pre-empower the LVLM with a general multi-modal understanding capability by training the whole LLM’s parameters in stage II. Furthermore, in stage III we replicate the FFN as the initialization weights for the experts and only train the MoE layers. Finally, the sparse model gradually transitions from a general LVLM initialization to sparse mixture of experts.
+
+ In this work, we explore a baseline for the LVLM with mixture of experts called MoE-LLaVA , which incorporates mixture of experts and learnable routers. MoE-LLaVA consists of multiple sparse paths where each token is dispatched to different experts through the router. The activated experts collectively process the tokens, while the inactive paths remain silent. By iteratively stacking MoE encoder layers, MoE-LLaVA provides a sparse path toward a larger and more powerful LVLM.
+
+ As a result, in Figure 1 , our MoE-LLaVA with only 2.2B sparse activated parameters outperforms models with similar activated parameters and LLaVA-1.5-13B, surpassing it by a large margin on the POPE object hallucination benchmark. Additionally, MoE-LLaVA achieves comparable performance to InternVL-Chat-19B, which has approximately 8 times the activated parameters. We further scale MoE-LLaVA to 3.6B sparse activated parameters, which outperform LLaVA-1.5-7B by 1.9%, 0.4%, 0.9%, 30.7%, and 3.8% in ScienceQA, POPE, MMBench, LLaVA {}^{\text{W}} , and MM-Vet, respectively. Extensive experiments validate the rationality of our MoE-LLaVA architecture and MoE-Tuning strategy.
+
+ We summarize our primary contributions as follows:
+
+ • 
+
+ We explore the MoE-Tuning , a novel three-stage training strategy for adapting MoE to LVLMs and preventing the model degradation caused by sparsity.
+
+ • 
+
+ We propose MoE-LLaVA , a MoE-based sparse LVLM framework, which significantly expands the number of parameters while maintaining computational costs.
+
+ • 
+
+ Extensive experiments demonstrate that our MoE-LLaVA has excellent multi-modal understanding and hallucination mitigation abilities.
+With only approximately 3B sparse activated parameters, our method achieves comparable performance with SOTA 7B models on the visual understanding benchmarks. It is worth noting that MoE-LLaVA outperforms LLaVA-1.5-13B by 1.1% on the POPE hallucination benchmark with 2.2B activated parameters.
+
+ 2 Related Work
+
+ 2.1 Large Vision-Language Models
+
+ Powerful LLMs ( OpenAI, 2023 ; Touvron et al., 2023a ; Wei et al., 2022 ; Touvron et al., 2023b ; Zheng et al., 2023 ; Team, 2023 ; Sun et al., 2023 ; Du et al., 2021 ; Bai et al., 2023a ; Yang et al., 2023 ; Penedo et al., 2023 ; Taori et al., 2023 ) with strong instruction-following and generalization capabilities have been applied to LVLMs. Early works such as BLIP-2 ( Li et al., 2023b ) and FROMAGe ( Koh et al., 2023 ) encoded visual signals into a sequence of visual tokens, successfully adapting vision to LLMs through several projection layers. Subsequently, recent works have focused on improving performance through methods such as expanding the instruction-tuning dataset ( Liu et al., 2023a ; Liu et al., 2023c ; Zhang et al., 2023c ; Zhao et al., 2023a ; Chen et al., 2023d ) , optimizing training strategies ( Bai et al., 2023b ; Chen et al., 2023b ) , increasing resolution of image ( Liu et al., 2023b ; Bai et al., 2023b ; Wang et al., 2023d ) enhancing image encoders ( Chen et al., 2023e ; Zhang et al., 2023a ; Bai et al., 2023b ) , aligning the input ( Lin et al., 2023 ) and projection layers ( Cha et al., 2023 ; Alayrac et al., 2022 ; Bai et al., 2023b ; Dai et al., 2023 ; Ye et al., 2023 ; Zhao et al., 2023a ) . These works empowered LVLMs with powerful visual understanding capabilities by expanding the visual instruction fine-tuning datasets and model scales.
+
+ Currently, some works have endowed LVLMs with fine-grained image understanding capabilities, such as region understanding ( Chen et al., 2023c ; Zhao et al., 2023b ; Liu et al., 2023e ) , multi-region understanding ( Wang et al., 2023c ; Pi et al., 2023 ; Peng et al., 2023 ) , and pixel-wise grounding ( Rasheed et al., 2023 ; Lai et al., 2023 ) . However, the cost of scaling up dense visual data and models is challenging to bear ( Liu et al., 2022 ; Yin et al., 2023 ) . In this work, we aim to make state-of-the-art LVLMs research more accessible by leveraging mixture of experts.
+
+ 2.2 Mixture of Experts in Multi-modal Learning
+
+ Mixture of Experts (MoE) ( Jacobs et al., 1991 ; Eigen et al., 2013 ) is a hybrid model consisting of multiple sub-models, known as experts, which are integrated together. The key concept of MoE is the use of a router to determine the token set that each expert handles, thereby reducing interference between different types of samples.
+
+ Figure 3: Training framework and strategy. MoE-LLaVA adopts a three-stage training strategy. (a) We solely train the MLP to adapt the LLM to visual inputs. (b) Training the LLM backend empowers multi-modal understanding capability and MoE layers are not involved. (c) In this stage, we replicate the weights of the FFN to initialize each expert. 
+
+ Hard Routers. In the hard router mode, each expert is typically pre-defined as a specific pattern. This is because multi-modal data naturally exhibit gaps ( Liang et al., 2022 ) , making it difficult for soft routers to learn the optimal patterns for assigning tokens to different experts. A series of works ( Bao et al., 2022 ; Long et al., 2023 ; Satar et al., 2022 ; Wang et al., 2022 ; Shen et al., 2023 ) naturally decouple experts based on modal categories and pre-define each expert to handle a specific modality. An important feature of these hard-based routers is that they do not require learning the router. This mode is also widely applied in the task-specific MoE ( Li et al., 2023e ; Zhu et al., 2022 ; Ma et al., 2023 ; Kudugunta et al., 2021 ) .
+
+ Soft Routers. Some works ( Shazeer et al., 2017 ; Lepikhin et al., 2020 ; Fedus et al., 2022 ; Zoph et al., 2022 ; Komatsuzaki et al., 2022 ) in natural language process have explored the MoE based on soft routers. Soft routers enable dynamic allocation of data among different experts, allowing each expert to focus on its expertise and achieve model sparsity. Therefore, our main focus is on leveraging soft routers in the MoE. Small-scale (million-level) models based on soft routers have also been explored in the context of multi-modal learning, such as EVE ( Chen et al., 2023a ) and LIMoE ( Mustafa et al., 2022 ) , which attempt a fusion of data by using soft routers. The work most relevant to ours is MoCLE ( Gou et al., 2023 ) . However, MoCLE clusters different instruction sets and distributes them to different experts, which compromises the flexibility and autonomy of the experts. Differently, MoE-LLaVA relies on knowledge-rich routers to distribute tokens to different paths.
+
+ 3 Method
+
+ 3.1 Overview
+
+ As shown in Figure 3 , MoE-LLaVA consists of a vision encoder, a visual projection layer (MLP), a word embedding layer, multiple stacked LLM blocks, and MoE blocks. We first introduce the model architecture of MoE-LLaVA in three stages in Section 3.2 . Furthermore, in Section 3.3 , we explain how to train MoE-LLaVA. Finally, in Section 3.4 , we elaborate on the training objectives of MoE-LLaVA.
+
+ Table 1: Architecture details of the MoE-LLaVA model. “FFN Factor” represents the number of linear layers in the FFN. “1.6B×4-Top2” represents a dense foundation model with 1.6B parameters, which is equipped with a total of four experts, two of them being activated. 
+
+ Name | 
+ Experts | 
+ Top-k | 
+ MoE | 
+ Embedding | 
+ Width | 
+ Layers | 
+ FFN | 
+ FFN | 
+ Heads | 
+ Activated | 
+ Total | 
+
+ Layers | 
+ Factor | 
+ Param | 
+ Param | 
+
+ StableLM-1.6B ( Team, ) | 
+ - | 
+ - | 
+ - | 
+ 100352 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 1.6B | 
+ 1.6B | 
+
+ MoE-LLaVA-1.6B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 16 | 
+ 100352 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 2.0B | 
+ 2.9B | 
+
+ Qwen-1.8B ( Bai et al., 2023a ) | 
+ - | 
+ - | 
+ - | 
+ 151936 | 
+ 2048 | 
+ 24 | 
+ 5504 | 
+ 3 | 
+ 16 | 
+ 1.8B | 
+ 1.8B | 
+
+ MoE-LLaVA-1.8B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 12 | 
+ 151936 | 
+ 2048 | 
+ 24 | 
+ 5504 | 
+ 3 | 
+ 16 | 
+ 2.2B | 
+ 3.1B | 
+
+ Phi2-2.7B ( Microsoft, 2023 ) | 
+ - | 
+ - | 
+ - | 
+ 51200 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 2.7B | 
+ 2.7B | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 16 | 
+ 51200 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 3.6B | 
+ 5.3B | 
+
+ 3.2 Architecture of MoE-LLaVA
+
+ As shown in Table 1 , we present the detailed configuration of MoE-LLaVA and more details can be found in Section A.1 . Given a RGB image \mathbf{v}\in\mathbb{R}^{H\times W\times 3} , where H and W are the origin resolution. The vision encoder processes input images to obtain a visual token sequence \mathcal{Z}=[z_{1},z_{2},\cdots,z_{P}]\in\mathbb{R}^{P\times C} , where P=\frac{H\times W}{14^{2}} represents the sequence length of visual tokens. A visual projection layer f is used to map \mathcal{Z}\in\mathbb{R}^{P\times C} to \mathcal{V}\in\mathbb{R}^{P\times D} , where D represents the hidden size of LLM. Similarly, the text undergoes a word embedding layer g and is projected to obtain the sequence tokens \mathcal{T}=[t_{1},t_{2},\cdots,t_{N}]\in\mathbb{R}^{N\times D} , where N represents the sequence length of text tokens.
+
+ Subsequently, we concatenate the visual tokens and text tokens together and feed them into a large language model. Instead, we solely train the visual projection layer. The large language model consists of stacked multi-head self-attention (MSA) and feed-forward neural networks (FFN). Layer normalization (LN) and residual connections are applied within each block ( Wang et al., 2019 ; Baevski & Auli, 2018 ) . Therefore, we formulate as:
+
+ | 
+ \mathbf{x}_{0}=[v_{1},v_{2},\cdots,v_{P},\cdots,t_{1},t_{2},\cdots,t_{N}], | 
+ | 
+ (1) | 
+
+ | 
+ \mathbf{x}_{\ell}^{\prime}=\mathrm{MSA}(\mathrm{LN}(\mathbf{x}_{\ell-1}))+\mathbf{x}_{\ell-1},\ell=1\ldots L, | 
+ | 
+ (2) | 
+
+ | 
+ \mathbf{x}_{\ell}=\mathrm{MoE}(\mathrm{LN}(\mathbf{x^{\prime}}_{\ell}))+\mathbf{x^{\prime}}_{\ell},\ell=1\ldots L, | 
+ | 
+ (3) | 
+
+ | 
+ \mathcal{Y}=\mathrm{LN}(\mathbf{x}_{L}). | 
+ | 
+ (4) | 
+
+ MoE Forward. Typically, a MoE layer consists of multiple FFNs. As an initialization step, we replicate the FFNs from stage II to form an ensemble of experts \mathcal{E}=[e_{1},e_{2},\cdots,e_{E}] . The router is a linear layer that predicts the probability of each token being assigned to each expert. We formulate as:
+
+ | 
+ \mathcal{P}(\mathbf{x})_{i}=\frac{e^{f(\mathbf{x})_{i}}}{\sum_{j}^{E}e^{f(\mathbf{x})_{j}}}, | 
+ | 
+ (5) | 
+
+ where the router produces weight logits f(\mathbf{x})=\mathbf{W}\cdot\mathbf{x} , which are normalized by the softmax function. The \mathbf{W}\in\mathbb{R}^{D\times E} represents the lightweight training parameters and E represents the number of experts. Therefore, each token is processed by the top- k experts with the highest probabilities, and the weighted sum is calculated based on
+the softmax results of the probabilities:
+
+ | 
+ \mathrm{MoE}(\mathbf{x})=\sum_{i=1}^{k}\mathcal{P}(\mathbf{x})_{i}\cdot\mathcal{E}(\mathbf{x})_{i}. | 
+ | 
+ (6) | 
+
+ 3.3 MoE-Tuning
+
+ Stage I: In this stage, our objective is to adapt the image tokens to LLM, allowing the LLM to comprehend the instances in the images. To achieve this, we employ an MLP to project the image tokens into the input domain of the LLM, treating the image patches as pseudo-text tokens. During this stage, the LLM is trained to describe the images. MoE layers are not applied to the LLM during this stage.
+
+ Stage II: Tuning with multi-modal instruction data is a key technique to enhance the capabilities and controllability of large models ( Zhang et al., 2023b ) . In this stage, LLM is adjusted to become an LVLM with multi-modal understanding. We use more complex instructions, including tasks such as image logical reasoning and text recognition, which require the model to have a stronger multi-modal understanding. Typically, for dense models, the LVLM training is considered complete at this stage. However, we encounter challenges in simultaneously transforming the LLM into an LVLM and sparsifying the LVLM. Therefore, MoE-LLaVA utilizes the weights from the second stage as initialization for the third stage to alleviate the learning difficulty of the sparse model.
+
+ Stage III: As an initialization, we replicate the FFN multiple times to initialize the experts. When image tokens and text tokens are fed into the MoE layers, the router calculates the matching weights between each token and the experts. Each token is then processed by the top- k experts, and the outputs are aggregated by weighted summation based on the router’s weights. When the top- k experts are activated, the remaining experts remain silent. This modeling approach forms the MoE-LLaVA with infinitely possible sparse pathways, offering a wide range of capabilities.
+
+ 3.4 Training Objectives
+
+ The \mathcal{L}_{\text{total}} consists of auto-regressive loss \mathcal{L}_{\text{regressive}} and auxiliary loss \mathcal{L}_{\text{aux}} , and auxiliary loss are scaled by the balancing coefficient \alpha :
+
+ | 
+ \mathcal{L}_{\text{total}}=\mathcal{L}_{\text{regressive}}+\alpha\cdot\mathcal{L}_{\text{aux}}. | 
+ | 
+ (7) | 
+
+ Auto-Regressive Loss. We optimize the output of LLM through a generative loss in an auto-regressive manner. Given an image and text, MoE-LLaVA generates the output sequence \mathcal{Y}=[y_{1},y_{2},\cdots,y_{K}]\in\mathbb{R}^{K\times D} by progressively generating each element, where K=P+N represents the length of the output sequence. The formula is:
+
+ | 
+ \mathcal{L}_{\text{regressive}}=-\sum_{i=1}^{N}\text{log}\ p_{\theta}\left(\mathcal{Y}^{[P+i]}\mid\mathcal{V},\mathcal{T}^{[:i-1]}\right), | 
+ | 
+ (8) | 
+
+ where \theta is a trainable parameter and we only calculate the loss for the generated text.
+
+ Auxiliary Loss. Due to the presence of multiple experts, it is necessary to impose load balancing constraints on the MoE layer. We incorporate differentiable load balancing loss ( Fedus et al., 2022 ) into each MoE layer to encourage experts to handle tokens in a balanced manner as follows:
+
+ | 
+ \mathcal{L}_{\text{aux}}=E\cdot\sum_{i=1}^{E}\mathcal{F}_{i}\cdot\mathcal{G}_{i}, | 
+ | 
+ (9) | 
+
+ where \mathcal{F} represents the fraction of tokens processed by each expert \mathcal{E}_{i} , and \mathcal{G} represents the average routing probability of \mathcal{E}_{i} , which can be expressed by the following formulas:
+
+ | 
+ \mathcal{F}=\frac{1}{K}\sum_{i=1}^{E}\mathrm{1}\{\operatorname{argmax}\mathcal{P}(\mathbf{x})=i\}, | 
+ | 
+ (10) | 
+
+ | 
+ \mathcal{G}=\frac{1}{K}\sum_{i=1}^{K}\mathcal{P}(\mathbf{x})_{i}. | 
+ | 
+ (11) | 
+
+ 4 Experiments
+
+ 4.1 Experimental Setup
+
+ Model Settings. Following LLaVA 1.5 ( Liu et al., 2023b ) , we utilize CLIP-Large ( Radford et al., 2021 ) as the vision encoder, and the MLP consists of two linear layers with GELU activation function ( Hendrycks & Gimpel, 2016 ) between them. Unless otherwise specified, MoE-LLaVA employs an alternating replacement of FFN with MoE layers, meaning that the number of MoE layers is half of the total number of layers. The value of balancing coefficient \alpha is 0.01. We provide additional training details in Section A.2 .
+
+ Data Details. As shown in Table 2 , we reorganize the currently available data for the three-stage training. For the first stage of pretraining, we use the pretrained data of LLaVA 1.5-558k ( Liu et al., 2023b ) . For the second stage, we collect datasets from MIMIC-IT ( Li et al., 2023a ) , LRV ( Liu et al., 2023a ) , SViT ( Zhao et al., 2023a ) and LVIS ( Wang et al., 2023b ) to provide a robust initialization for MoE-LLaVA. For the third stage, we utilize the same data pipeline as LLaVA-mix-665k ( Liu et al., 2023b ) .
+
+ Table 2: Composition of the data groups. For MIMIC-IT, and SViT datasets, we only use the LA split, and core split, respectively. 
+
+ Data group | 
+ Usage | 
+ Source | 
+ #Sample | 
+
+ LLaVA-PT | 
+ Stage I | 
+ LLaVA 1.5-558k | 
+ 558k | 
+
+ Hybird-FT | 
+ Stage II | 
+ SViT-157k, LVIS-220k | 
+ 964k | 
+
+ LRV-331k, MIMIC-IT-256k | 
+
+ LLaVA-FT | 
+ Stage III | 
+ LLaVA 1.5-mix-665k | 
+ 665k | 
+
+ Table 3: Comparison among different LVLMs on image understanding benchmarks. “Res.”, “Act.”, “L”, “V”, “S”, “Q”, “P”, “M” and “I” respectively represent the input image resolution, activated parameters, LLaMA ( Touvron et al., 2023a ) , Vicuna ( Chiang et al., 2023 ) , StableLM ( Team, ) , Qwen ( Bai et al., 2023a ) , Phi-2 ( Microsoft, 2023 ) MobileLLaMA ( Chu et al., 2023 ) and IDEFICS ( Laurençon et al., 2023 ) .
+Evaluation Benchmarks include
+VQA-v2 ( Goyal et al., 2017 ) ; GQA ( Hudson & Manning, 2019 ) ; VisWiz ( Gurari et al., 2018 ) ; SQA {}^{\text{I}} : ScienceQA-IMG ( Lu et al., 2022 ) ; VQA {}^{\text{T}} : TextVQA ( Singh et al., 2019 ) ; POPE ( Li et al., 2023d ) ; MME ( Fu et al., 2023 ) ; MMB: MMBench ( Liu et al., 2023d ) ; LLaVA {}^{\text{W}} : LLaVA-Bench (in-the-Wild) ( Liu et al., 2023c ) ; MM-Vet ( Yu et al., 2023 ) . ∗ donates that there is some overlap in the training data. † donates that the model is trained with an image resolution of 384. The best results and second best results are indicated by boldface and underline , respectively. 
+
+ Methods | 
+ LLM | 
+ Act. | 
+ Res. | 
+ Image Question Answering | 
+ Benchmark Toolkit | 
+ | 
+
+ VQA {}^{\text{v2}} | 
+ GQA | 
+ VisWiz | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ MME | 
+ MMB | 
+ LLaVA {}^{\text{W}} | 
+ MM-Vet | 
+
+ Dense Model | 
+ | 
+
+ I-80B ( Laurençon et al., 2023 ) | 
+ L-65B | 
+ 65B | 
+ 224 | 
+ 60.0 | 
+ 45.2 | 
+ 36.0 | 
+ - | 
+ 30.9 | 
+ - | 
+ - | 
+ 54.5 | 
+ - | 
+ - | 
+
+ LLaVA-1.5 ( Liu et al., 2023b ) | 
+ V-13B | 
+ 13B | 
+ 336 | 
+ 80.0 ∗ | 
+ 63.3 ∗ | 
+ 53.6 | 
+ 71.6 | 
+ 61.3 | 
+ 85.9 | 
+ 1531.3 | 
+ 67.7 | 
+ 70.7 | 
+ 35.4 | 
+
+ Qwen-VL ( Bai et al., 2023b ) | 
+ Q-7B | 
+ 6.7B | 
+ 448 | 
+ 78.8 ∗ | 
+ 59.3 ∗ | 
+ 35.2 | 
+ 67.1 | 
+ 63.8 | 
+ - | 
+ - | 
+ 38.2 | 
+ - | 
+ - | 
+
+ LLaVA-1.5 ( Liu et al., 2023b ) | 
+ V-7B | 
+ 6.7B | 
+ 336 | 
+ 78.5 ∗ | 
+ 62.0 ∗ | 
+ 50.0 | 
+ 66.8 | 
+ 58.2 | 
+ 85.9 | 
+ 1510.7 | 
+ 64.3 | 
+ 63.4 | 
+ 30.5 | 
+
+ TinyGPT-V ( Yuan et al., 2023 ) | 
+ P-2.7B | 
+ 2.7B | 
+ 448 | 
+ - | 
+ 33.6 ∗ | 
+ 33.4 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+
+ MobileVLM ( Chu et al., 2023 ) | 
+ M-2.7B | 
+ 2.7B | 
+ 336 | 
+ - | 
+ 59.0 ∗ | 
+ - | 
+ 61.0 | 
+ 47.5 | 
+ 84.9 | 
+ 1288.9 | 
+ 59.6 | 
+ - | 
+ - | 
+
+ LLaVA-Phi ( Zhu et al., 2024 ) | 
+ P-2.7B | 
+ 2.7B | 
+ 336 | 
+ 71.4 ∗ | 
+ - | 
+ 35.9 | 
+ 68.4 | 
+ 48.6 | 
+ 85.0 | 
+ 1335.1 | 
+ 59.8 | 
+ - | 
+ 28.9 | 
+
+ Sparse Model | 
+ | 
+
+ MoE-LLaVA-1.6B×4-Top2 | 
+ S-1.6B | 
+ 2.0B | 
+ 336 | 
+ 76.7 ∗ | 
+ 60.3 ∗ | 
+ 36.2 | 
+ 62.6 | 
+ 50.1 | 
+ 85.7 | 
+ 1318.2 | 
+ 60.2 | 
+ 86.8 | 
+ 26.9 | 
+
+ MoE-LLaVA-1.8B×4-Top2 | 
+ Q-1.8B | 
+ 2.2B | 
+ 336 | 
+ 76.2 ∗ | 
+ 61.5 ∗ | 
+ 32.6 | 
+ 63.1 | 
+ 48.0 | 
+ 87.0 | 
+ 1291.6 | 
+ 59.7 | 
+ 88.7 | 
+ 25.3 | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ P-2.7B | 
+ 3.6B | 
+ 336 | 
+ 77.6 ∗ | 
+ 61.4 ∗ | 
+ 43.9 | 
+ 68.5 | 
+ 51.4 | 
+ 86.3 | 
+ 1423.0 | 
+ 65.2 | 
+ 94.1 | 
+ 34.3 | 
+
+ MoE-LLaVA-1.6B×4-Top2 † | 
+ S-1.6B | 
+ 2.0B | 
+ 384 | 
+ 78.6 ∗ | 
+ 61.5 ∗ | 
+ 40.5 | 
+ 63.9 | 
+ 54.3 | 
+ 85.9 | 
+ 1335.7 | 
+ 63.3 | 
+ 90.3 | 
+ 32.3 | 
+
+ MoE-LLaVA-2.7B×4-Top2 † | 
+ P-2.7B | 
+ 3.6B | 
+ 384 | 
+ 79.9 ∗ | 
+ 62.6 ∗ | 
+ 43.7 | 
+ 70.3 | 
+ 57.0 | 
+ 85.7 | 
+ 1431.3 | 
+ 68.0 | 
+ 97.3 | 
+ 35.9 | 
+
+ Table 4: Zero-shot object hallucination evaluation results. “Yes” indicates the proportion of positive responses to the given question. 
+
+ Methods | 
+ LLM | 
+ Activated | 
+ Adersarial | 
+ Popular | 
+ Random | 
+
+ Acc | 
+ F1-Score | 
+ Yes | 
+ Acc | 
+ F1-Score | 
+ Yes | 
+ Acc | 
+ F1-Score | 
+ Yes | 
+
+ Dense Model | 
+
+ mPLUG-Owl ( Ye et al., 2023 ) | 
+ L-7B | 
+ 6.7B | 
+ 82.4 | 
+ 81.6 | 
+ 45.2 | 
+ 85.5 | 
+ 84.3 | 
+ 42.1 | 
+ 86.3 | 
+ 85.3 | 
+ 42.3 | 
+
+ MM-GPT ( Gong et al., 2023 ) | 
+ L-7B | 
+ 6.7B | 
+ 50.0 | 
+ 66.7 | 
+ 100.0 | 
+ 50.0 | 
+ 66.7 | 
+ 100.0 | 
+ 50.0 | 
+ 66.7 | 
+ 100.0 | 
+
+ LLaVA-1.5 ( Liu et al., 2023b ) | 
+ V-13B | 
+ 13B | 
+ 85.5 | 
+ 84.4 | 
+ 43.3 | 
+ 87.4 | 
+ 86.2 | 
+ 41.3 | 
+ 88.0 | 
+ 87.1 | 
+ 41.7 | 
+
+ Sparse Model | 
+
+ MoE-LLaVA-1.6B×4-Top2 | 
+ S-1.6B | 
+ 2.0B | 
+ 86.9 | 
+ 85.7 | 
+ 41.7 | 
+ 85.3 | 
+ 84.2 | 
+ 43.5 | 
+ 88.0 | 
+ 87.1 | 
+ 41.6 | 
+
+ MoE-LLaVA-1.8B×4-Top2 | 
+ Q-1.8B | 
+ 2.2B | 
+ 86.1 | 
+ 85.4 | 
+ 44.9 | 
+ 88.6 | 
+ 87.7 | 
+ 42.5 | 
+ 88.7 | 
+ 88.0 | 
+ 43.0 | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ P-2.7B | 
+ 3.6B | 
+ 85.9 | 
+ 84.9 | 
+ 43.2 | 
+ 87.5 | 
+ 86.4 | 
+ 41.8 | 
+ 88.5 | 
+ 87.7 | 
+ 41.8 | 
+
+ MoE-LLaVA-1.6B×4-Top2 † | 
+ S-1.6B | 
+ 2.0B | 
+ 86.9 | 
+ 85.6 | 
+ 41.5 | 
+ 85.7 | 
+ 84.6 | 
+ 43.0 | 
+ 88.4 | 
+ 87.5 | 
+ 41.5 | 
+
+ MoE-LLaVA-2.7B×4-Top2 † | 
+ P-2.7B | 
+ 3.6B | 
+ 85.5 | 
+ 84.2 | 
+ 41.9 | 
+ 86.7 | 
+ 84.4 | 
+ 41.7 | 
+ 87.9 | 
+ 86.9 | 
+ 40.6 | 
+
+ Figure 4: Distribution of expert loadings. The discontinuous lines represent a perfectly balanced distribution of tokens among different experts or modalities. The first figure on the left illustrates the workload among experts, while the remaining four figures depict the preferences of experts towards different modalities. 
+
+ 4.2 Image Understanding Evaluation
+
+ Zero-shot Image Question Answering. As shown in Table 3 , since MoE-LLaVA is a sparse model equipped with a soft router based on LVLM, we categorize the previous models as dense models. We evaluate the performance of MoE-LLaVA on five image question-answering benchmarks and report the number of activated parameters. Compared to the state-of-the-art method LLaVA 1.5, MoE-LLaVA demonstrates powerful image understanding capabilities and performs very close to LLaVA-1.5 on five benchmarks. Specifically, MoE-LLaVA-Phi-2.7B×4 surpasses LLaVA-1.5-7B by 2.7% on SQA {}^{\text{I}} using 3.6B sparse activated parameters. Notably, MoE-LLaVA-StableLM-1.6B×4 achieves comprehensive superiority over IDEFICS-80B with only 2.0B activated parameters. Furthermore, we observe the recent small-scale vision-language model, LLaVA-Phi. MoE-LLaVA-Phi-2.7B×4 outperforms LLaVA-Phi by more than 6.2% on VQA {}^{\text{v2}} , highlighting the strong comprehension abilities of MoE-LLaVA in natural vision.
+
+ Evaluation under Benchmark Toolkits. To comprehensively evaluate the multi-modal understanding capabilities of MoE-LLaVA, we evaluate its performance on four benchmark toolkits. These benchmark toolkits typically involve open-ended answers, serving as tools to verify a model’s ability to engage in natural language questioning. In Table 3 , MoE-LLaVA-Qwen-1.8B×4 surpasses Qwen-VL-7B by 21.5%, on MMBench, despite the latter utilizing higher image resolutions. These results collectively demonstrate that the sparse model MoE-LLaVA achieves comparable or even superior performance to dense models with fewer activated parameters.
+
+ 4.3 Object Hallucination Evaluation
+
+ We adopt the evaluation pipeline of POPE ( Li et al., 2023d ) , a polling-based query method, to evaluate object hallucination in MoE-LLaVA. The results are presented in Table 4 , where MoE-LLaVA exhibits the best performance, indicating that MoE-LLaVA tends to generate objects consistent with the given image. Specifically, MoE-LLaVA-1.8B×4 surpasses LLaVA-1.5-13B by 1.0%, 1.5%, and 0.8% in adversarial sampling, popular sampling, and random sampling, respectively, with 2.2B activated parameters. Additionally, we observe that the yes ratio of MoE-LLaVA remains relatively balanced, indicating that our sparse model is capable of providing accurate feedback based on the given questions.
+
+ 4.4 Quantitative Analysis
+
+ Routing Distributions. In Figure 4 , we present the expert loads (leftmost plot) and the modalities preferences of different experts (four subplots on the right) through MoE-LLaVA-2.7B×4-Top2 on ScienceQA. More visualization can be found in Section B.3 . To begin with, the expert loads in all MoE layers are totally balanced. However, as the model gradually becomes sparser, the expert 3 loads for layers 17 to 27 suddenly increase, and they even dominate the workload of almost all tokens. For the shallow layers (5-11), experts 2, 3, and 4 mainly collaborate. It is worth noting that expert 1 only works predominantly in the first few layers, and as the model becomes deeper, expert 1 gradually withdraws from the workload. Therefore, the experts in MoE-LLaVA have learned a certain pattern that allows them to divide their tasks in a specific manner.
+
+ Furthermore, we show the distribution of modalities across different experts in Figure 5 . Similarly, experts develop their own preferences. Additionally, we find that the routing distributions for text and image are highly similar. For example, when expert 3 is actively working in layers 17-27, the proportions of text and image that MoE-LLaVA processes are similar. Each expert in MoE-LLaVA is capable of handling both text tokens and image tokens simultaneously, which demonstrates that MoE-LLaVA does not exhibit a clear preference for any modality. This serves as evidence of its strong interaction in multimodal learning.
+
+ Figure 5: Distribution of modalities across different experts. Interrupted lines mean a perfectly balanced distribution of tokens. 
+
+ Token Pathways. Furthermore, we examine the behavior of experts at the token level. More visualization can be found in Section B.4 and Section B.5 . We track the trajectories of all tokens on downstream tasks. For all activated pathways, we employ PCA ( Pearson, 1901 ) to obtain the top-10 pathways, as shown in Figure 6 . We found that for a given unseen text token or image tokens, MoE-LLaVA consistently tends to assign experts 2 and 3 to handle them in the deeper layers of the model. Regarding experts 1 and 4, they tend to handle the tokens during the initialization phase. These findings contribute to a better understanding of the behavior of sparse models in multi-modal learning.
+
+ Figure 6: Visualization of activated pathways. We highlight the top-10 activated pathways on the text and image. Among them, the colorful paths represent the top-2 paths for text and image, respectively, while the gray paths represent the remaining 8 paths. 
+
+ 4.5 Ablation Study
+
+ In this section, we first validate the necessity of the three-stage training strategy. We then explore the impact of different base models and conduct ablation studies on the number of experts and active experts, and the MoE structure. We provide additional results in Section B.2 .
+
+ Table 5: Ablation study about training setting and architecture design decisions. Settings for results in Table 3 and Table 4 are highlighted in blue . We report the training time on 8 V100-32G. 
+
+ Subset | 
+ GQA | 
+ VisWiz | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ LLaVA {}^{\text{W}} | 
+ Time | 
+
+ FFN | 
+ 61.5 | 
+ 32.6 | 
+ 48.0 | 
+ 87.0 | 
+ 88.7 | 
+ 20h | 
+
+ All | 
+ 61.3 | 
+ 31.9 | 
+ 47.6 | 
+ 87.0 | 
+ 88.1 | 
+ 27h | 
+
+ (a) 
+
+ Tuning the parameters of different subsets. 
+
+ Experts | 
+ GQA | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ LLaVA {}^{\text{W}} | 
+ Time | 
+
+ 1 | 
+ 60.9 | 
+ 60.2 | 
+ 48.3 | 
+ 86.4 | 
+ 86.3 | 
+ 13h | 
+
+ 2 | 
+ 61.2 | 
+ 60.8 | 
+ 47.0 | 
+ 87.5 | 
+ 86.5 | 
+ 14h | 
+
+ (b) 
+ The number of experts. 
+
+ Top-k | 
+ VQA {}^{\text{v2}} | 
+ GQA | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ Time | 
+
+ 1 | 
+ 74.5 | 
+ 58.4 | 
+ 58.0 | 
+ 44.0 | 
+ 85.7 | 
+ 19h | 
+
+ 2 | 
+ 76.2 | 
+ 61.5 | 
+ 63.1 | 
+ 48.0 | 
+ 88.7 | 
+ 20h | 
+
+ (c) 
+ The value of top-k. 
+
+ Architecture | 
+ VQA {}^{\text{v2}} | 
+ GQA | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ Time | 
+
+ First-Half | 
+ 75.9 | 
+ 61.3 | 
+ 62.4 | 
+ 47.0 | 
+ 86.9 | 
+ 20h | 
+
+ Second-Half | 
+ 76.3 | 
+ 61.2 | 
+ 62.6 | 
+ 47.2 | 
+ 86.9 | 
+ 20h | 
+
+ Interval | 
+ 76.2 | 
+ 61.5 | 
+ 63.1 | 
+ 48.0 | 
+ 88.7 | 
+ 20h | 
+
+ All | 
+ 74.5 | 
+ 61.5 | 
+ 62.1 | 
+ 47.1 | 
+ 87.0 | 
+ 32h | 
+
+ (d) 
+ The architectures of MoE-LLaVA. 
+
+ Table 6: Ablation study about different training strategies. “LA” and “Hb” represent LLaVA-FT and Hybrid-FT in Table 2 . 
+
+ | 
+ MoE | 
+ Stage II | 
+ Stage III | 
+ GQA | 
+ SQA {}^{\text{I}} | 
+ POPE | 
+ LLaVA {}^{\text{W}} | 
+
+ (a) | 
+ ✔ | 
+ - | 
+ LV+Hb | 
+ 58.4 | 
+ 58.1 | 
+ 81.9 | 
+ 88.0 | 
+
+ (b) | 
+ ✔ | 
+ Hb | 
+ LV | 
+ 61.5 | 
+ 63.1 | 
+ 87.0 | 
+ 88.7 | 
+
+ (c) | 
+ ✗ | 
+ LV+Hb | 
+ - | 
+ 60.9 | 
+ 60.2 | 
+ 86.4 | 
+ 86.3 | 
+
+ (d) | 
+ ✗ | 
+ Hb | 
+ LV | 
+ 60.9 | 
+ 62.5 | 
+ 86.9 | 
+ 90.1 | 
+
+ Table 7: Ablation study about the model size of MoE-LLaVA. 
+
+ Model | 
+ MoE | 
+ VQA {}^{\text{v2}} | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ MMB | 
+ LLaVA {}^{\text{W}} | 
+
+ StableLM | 
+ ✗ | 
+ 74.5 | 
+ 62.0 | 
+ 48.8 | 
+ 58.2 | 
+ 83.2 | 
+
+ ✔ | 
+ 76.7 | 
+ 62.6 | 
+ 50.1 | 
+ 60.2 | 
+ 86.8 | 
+
+ Qwen | 
+ ✗ | 
+ 74.9 | 
+ 60.2 | 
+ 48.3 | 
+ 60.6 | 
+ 86.3 | 
+
+ ✔ | 
+ 76.2 | 
+ 63.1 | 
+ 48.0 | 
+ 59.7 | 
+ 88.7 | 
+
+ Phi-2 | 
+ ✗ | 
+ 75.6 | 
+ 67.8 | 
+ 50.0 | 
+ 65.0 | 
+ 91.3 | 
+
+ ✔ | 
+ 77.6 | 
+ 68.5 | 
+ 51.4 | 
+ 65.2 | 
+ 94.1 | 
+
+ Effect of Training Strategy. In Table 6 , we conduct three variant experiments to demonstrate the rationale behind using the second-stage instruction tuning as the initialization for the third-stage MoE tuning. When adapting MoE to LVLMs, a straightforward approach is to replace the classic LLaVA’s FFN with a MoE layer and train it according to the original second-stage script, denoted as variant (a). However, variant (a) performs the worst, suggesting that the current multi-modal instruction dataset is insufficient to support both the conversion from LLM to LVLM and the conversion from LVLM to a sparse model simultaneously. Therefore, we collect more data, referred to as Hybrid-FT, and initially convert LLM to LVLM in the second stage. Subsequently, in the third stage, LVLM is sparsified by using the LLaVA-FT dataset, resulting in variant (b). Additionally, we expand the data of the original LLaVA’s second stage for fair comparison, denoted as variant (c). The results indicate that variants (b) outperformed variants (a) and (c). These findings demonstrate that providing a reasonable LVLM initialization allows the model to transition rapidly from a dense model to a sparse model, validating the principle behind our three-stage training strategy.
+
+ Effect of Tuning the Parameters of Different Subsets. In Table 5a , we examine the performance of fine-tuning different parts of the parameters. “FFN” represents fine-tuning all FFN layers and MoE layers in the model. “All” indicates fine-tuning all parameters. The results indicate tuning the FFN is sufficient to achieve results comparable to full-parameter tuning, but it requires only approximately 75% of the time. Therefore, to enhance generalization and reduce training costs, we only fine-tune FFN layers.
+
+ Effect of the Number of Experts. Typically, increasing the number of experts directly leads to higher performance ( Lepikhin et al., 2020 ; Fedus et al., 2022 ) . In Table 5b , we change the number of experts while keeping the number of activated experts the same, so the number of activated parameters for both models remains the same. More sparse experts outperform the single expert dense model by 1.1% on POPE and 0.6% on SQA {}^{\text{I}} , respectively. The results demonstrate that sparse experts can deliver superior performance.
+
+ Effect of the Number of Activated Experts. To evaluate the effect of the number of activated experts, we compare the performance of using different top- k strategies. With the number of activated experts changing from 1 to 2, it brings a significant improvement with only 1h training time increasing.
+These results show that activating more experts can improve the MOE-LLaVA ability.
+To leverage the advantages of the MoE scheme, we set the number of activated experts to 2.
+
+ Effect of the Architectures. In Table 5d , we explore four variations of MoE architecture. Specifically, “First-Half” indicates that MoE layers are applied only to the first half of the model while the second half retains the original dense architecture. “Second-Half” means that MoE layers are placed in the second half of the model while the first half remains dense. “Interval” represents alternating occurrences of MoE layers and dense layers. “All” indicates that all layers are sparse MoE layers. Intuitively, it is expected that incorporating all MoE will enhance performance. However, using “All” does not yield better results and results in longer training times compared to other architectures. Therefore, MoE-LLaVA alternates the insertion of MoE layers.
+
+ Effect of the Model Size. As shown in Table 7 , we compare the performance of models with different parameter sizes as the foundation models for MoE-LLaVA. For smaller models such as Phi2-MoE and Qwen-MoE, the performance with MoE surpasses that of dense models. We provide additional results in Section B.1 .
+
+ 5 Conclusion and Future Directions
+
+ In this work, we propose the MoE-Tuning to adapting the MoE architecture to LVLMs, and construct the MoE-based spare model MoE-LLaVA, which can find a sparse pathway by simultaneously handling image and text features. Our framework demonstrates strong ability of multi-modal understanding and rich potential for hallucination inhibition, achieving comparable performance of LLaVA-1.5-7B with only 3B activated parameters.
+
+ While MoE-LLaVA demonstrates competitive capabilities, we observe some difficulties in training stability, particularly with 16-bit float precision. Furthermore, due to the presence of multiple experts specializing in different abilities, MoE-LLaVA can easily be expanded to handle additional tasks such as detection, segmentation, generation, or handling more modalities such as video, depth, and thermal.
+
+ Impact Statements
+
+ Broader Impacts
+
+ While MoE-LLaVA holds great potential and application value in multi-modal understanding, it may also have some negative social impacts:
+
+ • 
+
+ Information credibility: MoE-LLaVA can generate realistic texts, including false information and misleading content.
+
+ • 
+
+ Bias and discrimination: The training data for MoE-LLaVA often comes from the internet, where various biases and discriminatory content may exist. If these unequal patterns are learned and amplified by the model, they may be reflected in the generated responses.
+
+ • 
+
+ Social influence: People may become overly reliant on MoE-LLaVA for information and problem-solving, instead of actively thinking and seeking multiple sources of information. This can lead to increased dependency, reduced autonomy in thinking, and judgment skills.
+
+ Reproducibility
+
+ In Section A.2 , we have provided a detailed list of all the training hyperparameters. We have open-sourced all models and codes. Reproducibility can be achieved by using the code provided in the materials.
+
+ Compute
+
+ For the main results, we conducte experiments on 8 A800-80G. For the ablation study, we measure the time on 8 V100-32G.
+
+ Licenses
+
+ The majority of this project is released under the Apache 2.0 license.
+
+ • 
+
+ The service is a research preview intended for non-commercial use only, subject to the model License of LLaMA ( https://github.com/facebookresearch/llama/blob/main/MODEL_CARD.md ).
+
+ • 
+
+ Terms of Use of the data generated by OpenAI ( https://openai.com/policies/terms-of-use ).
+
+ • 
+
+ Privacy Practices of ShareGPT ( https://chrome.google.com/webstore/detail/sharegpt-share-your-chatg/daiacboceoaocpibfodeljbdfacokfjb ).
+
+ References
+
+ 01-ai (2023) 
+
+01-ai.
+
+ Building the next generation of open-source and bilingual llms.
+
+ https://github.com/01-ai/Yi , 2023.
+
+ Alayrac et al. (2022) 
+
+Alayrac, J.-B., Donahue, J., Luc, P., Miech, A., Barr, I., Hasson, Y., Lenc, K., Mensch, A., Millican, K., Reynolds, M., et al.
+
+ Flamingo: a visual language model for few-shot learning.
+
+ Advances in Neural Information Processing Systems , 35:23716–23736, 2022.
+
+ Baevski & Auli (2018) 
+
+Baevski, A. and Auli, M.
+
+ Adaptive input representations for neural language modeling.
+
+ arXiv preprint arXiv:1809.10853 , 2018.
+
+ Bai et al. (2023a) 
+
+Bai, J., Bai, S., Chu, Y., Cui, Z., Dang, K., Deng, X., Fan, Y., Ge, W., Han, Y., Huang, F., et al.
+
+ Qwen technical report.
+
+ arXiv preprint arXiv:2309.16609 , 2023a.
+
+ Bai et al. (2023b) 
+
+Bai, J., Bai, S., Yang, S., Wang, S., Tan, S., Wang, P., Lin, J., Zhou, C., and Zhou, J.
+
+ Qwen-vl: A frontier large vision-language model with versatile abilities.
+
+ arXiv preprint arXiv:2308.12966 , 2023b.
+
+ Bao et al. (2022) 
+
+Bao, H., Wang, W., Dong, L., Liu, Q., Mohammed, O. K., Aggarwal, K., Som, S., Piao, S., and Wei, F.
+
+ Vlmo: Unified vision-language pre-training with mixture-of-modality-experts.
+
+ Advances in Neural Information Processing Systems , 35:32897–32912, 2022.
+
+ Brown et al. (2020) 
+
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al.
+
+ Language models are few-shot learners.
+
+ Advances in neural information processing systems , 33:1877–1901, 2020.
+
+ Cha et al. (2023) 
+
+Cha, J., Kang, W., Mun, J., and Roh, B.
+
+ Honeybee: Locality-enhanced projector for multimodal llm.
+
+ arXiv preprint arXiv:2312.06742 , 2023.
+
+ Chen et al. (2023a) 
+
+Chen, J., Guo, L., Sun, J., Shao, S., Yuan, Z., Lin, L., and Zhang, D.
+
+ Eve: Efficient vision-language pre-training with masked prediction and modality-aware moe.
+
+ arXiv preprint arXiv:2308.11971 , 2023a.
+
+ Chen et al. (2023b) 
+
+Chen, J., Zhu, D., Shen, X., Li, X., Liu, Z., Zhang, P., Krishnamoorthi, R., Chandra, V., Xiong, Y., and Elhoseiny, M.
+
+ Minigpt-v2: large language model as a unified interface for vision-language multi-task learning.
+
+ arXiv preprint arXiv:2310.09478 , 2023b.
+
+ Chen et al. (2023c) 
+
+Chen, K., Zhang, Z., Zeng, W., Zhang, R., Zhu, F., and Zhao, R.
+
+ Shikra: Unleashing multimodal llm’s referential dialogue magic.
+
+ arXiv preprint arXiv:2306.15195 , 2023c.
+
+ Chen et al. (2023d) 
+
+Chen, L., Li, J., Dong, X., Zhang, P., He, C., Wang, J., Zhao, F., and Lin, D.
+
+ Sharegpt4v: Improving large multi-modal models with better captions.
+
+ arXiv preprint arXiv:2311.12793 , 2023d.
+
+ Chen et al. (2023e) 
+
+Chen, Z., Wu, J., Wang, W., Su, W., Chen, G., Xing, S., Muyan, Z., Zhang, Q., Zhu, X., Lu, L., et al.
+
+ Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks.
+
+ arXiv preprint arXiv:2312.14238 , 2023e.
+
+ Chiang et al. (2023) 
+
+Chiang, W.-L., Li, Z., Lin, Z., Sheng, Y., Wu, Z., Zhang, H., Zheng, L., Zhuang, S., Zhuang, Y., Gonzalez, J. E., et al.
+
+ Vicuna: An open-source chatbot impressing gpt-4 with 90%* chatgpt quality.
+
+ See https://vicuna. lmsys. org (accessed 14 April 2023) , 2023.
+
+ Chu et al. (2023) 
+
+Chu, X., Qiao, L., Lin, X., Xu, S., Yang, Y., Hu, Y., Wei, F., Zhang, X., Zhang, B., Wei, X., et al.
+
+ Mobilevlm: A fast, reproducible and strong vision language assistant for mobile devices.
+
+ arXiv preprint arXiv:2312.16886 , 2023.
+
+ Dai et al. (2023) 
+
+Dai, W., Li, J., Li, D., Tiong, A. M. H., Zhao, J., Wang, W., Li, B., Fung, P., and Hoi, S.
+
+ Instructblip: Towards general-purpose vision-language models with instruction tuning, 2023.
+
+ DeepSeek-AI (2024) 
+
+DeepSeek-AI.
+
+ Deepseek llm: Scaling open-source language models with longtermism.
+
+ arXiv preprint arXiv:2401.02954 , 2024.
+
+ Du et al. (2021) 
+
+Du, Z., Qian, Y., Liu, X., Ding, M., Qiu, J., Yang, Z., and Tang, J.
+
+ Glm: General language model pretraining with autoregressive blank infilling.
+
+ arXiv preprint arXiv:2103.10360 , 2021.
+
+ Eigen et al. (2013) 
+
+Eigen, D., Ranzato, M., and Sutskever, I.
+
+ Learning factored representations in a deep mixture of experts.
+
+ arXiv preprint arXiv:1312.4314 , 2013.
+
+ falconry (2023) 
+
+falconry.
+
+ Falcon-180b.
+
+ https://falconllm.tii.ae/ , 2023.
+
+ Fedus et al. (2022) 
+
+Fedus, W., Zoph, B., and Shazeer, N.
+
+ Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity.
+
+ The Journal of Machine Learning Research , 23(1):5232–5270, 2022.
+
+ FlagAI-Open (2023) 
+
+FlagAI-Open.
+
+ Aquila2-34b.
+
+ https://github.com/FlagAI-Open/Aquila2 , 2023.
+
+ Fu et al. (2023) 
+
+Fu, C., Chen, P., Shen, Y., Qin, Y., Zhang, M., Lin, X., Yang, J., Zheng, X., Li, K., Sun, X., Wu, Y., and Ji, R.
+
+ Mme: A comprehensive evaluation benchmark for multimodal large language models.
+
+ arXiv preprint arXiv:2306.13394 , 2023.
+
+ Gong et al. (2023) 
+
+Gong, T., Lyu, C., Zhang, S., Wang, Y., Zheng, M., Zhao, Q., Liu, K., Zhang, W., Luo, P., and Chen, K.
+
+ Multimodal-gpt: A vision and language model for dialogue with humans.
+
+ arXiv preprint arXiv:2305.04790 , 2023.
+
+ Gou et al. (2023) 
+
+Gou, Y., Liu, Z., Chen, K., Hong, L., Xu, H., Li, A., Yeung, D.-Y., Kwok, J. T., and Zhang, Y.
+
+ Mixture of cluster-conditional lora experts for vision-language instruction tuning.
+
+ arXiv preprint arXiv:2312.12379 , 2023.
+
+ Goyal et al. (2017) 
+
+Goyal, Y., Khot, T., Summers-Stay, D., Batra, D., and Parikh, D.
+
+ Making the v in vqa matter: Elevating the role of image understanding in visual question answering.
+
+ In Proceedings of the IEEE conference on computer vision and pattern recognition , pp. 6904–6913, 2017.
+
+ Gurari et al. (2018) 
+
+Gurari, D., Li, Q., Stangl, A. J., Guo, A., Lin, C., Grauman, K., Luo, J., and Bigham, J. P.
+
+ Vizwiz grand challenge: Answering visual questions from blind people.
+
+ In Proceedings of the IEEE conference on computer vision and pattern recognition , pp. 3608–3617, 2018.
+
+ Hendrycks & Gimpel (2016) 
+
+Hendrycks, D. and Gimpel, K.
+
+ Gaussian error linear units (gelus).
+
+ arXiv preprint arXiv:1606.08415 , 2016.
+
+ Hudson & Manning (2019) 
+
+Hudson, D. A. and Manning, C. D.
+
+ Gqa: A new dataset for real-world visual reasoning and compositional question answering.
+
+ In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 6700–6709, 2019.
+
+ Jacobs et al. (1991) 
+
+Jacobs, R. A., Jordan, M. I., Nowlan, S. J., and Hinton, G. E.
+
+ Adaptive mixtures of local experts.
+
+ Neural computation , 3(1):79–87, 1991.
+
+ Jiang et al. (2023) 
+
+Jiang, A. Q., Sablayrolles, A., Mensch, A., Bamford, C., Chaplot, D. S., de las Casas, D., Bressand, F., Lengyel, G., Lample, G., Saulnier, L., Lavaud, L. R., Lachaux, M.-A., Stock, P., Scao, T. L., Lavril, T., Wang, T., Lacroix, T., and Sayed, W. E.
+
+ Mistral 7b, 2023.
+
+ Jiang et al. (2024) 
+
+Jiang, A. Q., Sablayrolles, A., Roux, A., Mensch, A., Savary, B., Bamford, C., Chaplot, D. S., de las Casas, D., Hanna, E. B., Bressand, F., Lengyel, G., Bour, G., Lample, G., Lavaud, L. R., Saulnier, L., Lachaux, M.-A., Stock, P., Subramanian, S., Yang, S., Antoniak, S., Scao, T. L., Gervet, T., Lavril, T., Wang, T., Lacroix, T., and Sayed, W. E.
+
+ Mixtral of experts, 2024.
+
+ Koh et al. (2023) 
+
+Koh, J. Y., Salakhutdinov, R., and Fried, D.
+
+ Grounding language models to images for multimodal generation.
+
+ arXiv preprint arXiv:2301.13823 , 2023.
+
+ Komatsuzaki et al. (2022) 
+
+Komatsuzaki, A., Puigcerver, J., Lee-Thorp, J., Ruiz, C. R., Mustafa, B., Ainslie, J., Tay, Y., Dehghani, M., and Houlsby, N.
+
+ Sparse upcycling: Training mixture-of-experts from dense checkpoints.
+
+ arXiv preprint arXiv:2212.05055 , 2022.
+
+ Kudugunta et al. (2021) 
+
+Kudugunta, S., Huang, Y., Bapna, A., Krikun, M., Lepikhin, D., Luong, M.-T., and Firat, O.
+
+ Beyond distillation: Task-level mixture-of-experts for efficient inference.
+
+ arXiv preprint arXiv:2110.03742 , 2021.
+
+ Lai et al. (2023) 
+
+Lai, X., Tian, Z., Chen, Y., Li, Y., Yuan, Y., Liu, S., and Jia, J.
+
+ Lisa: Reasoning segmentation via large language model.
+
+ arXiv preprint arXiv:2308.00692 , 2023.
+
+ Laurençon et al. (2023) 
+
+Laurençon, H., Saulnier, L., Tronchon, L., Bekman, S., Singh, A., Lozhkov, A., Wang, T., Karamcheti, S., Rush, A. M., Kiela, D., Cord, M., and Sanh, V.
+
+ Obelics: An open web-scale filtered dataset of interleaved image-text documents, 2023.
+
+ Lepikhin et al. (2020) 
+
+Lepikhin, D., Lee, H., Xu, Y., Chen, D., Firat, O., Huang, Y., Krikun, M., Shazeer, N., and Chen, Z.
+
+ Gshard: Scaling giant models with conditional computation and automatic sharding.
+
+ arXiv preprint arXiv:2006.16668 , 2020.
+
+ Li et al. (2023a) 
+
+Li, B., Zhang, Y., Chen, L., Wang, J., Pu, F., Yang, J., Li, C., and Liu, Z.
+
+ Mimic-it: Multi-modal in-context instruction tuning.
+
+ arXiv preprint arXiv:2306.05425 , 2023a.
+
+ Li et al. (2022) 
+
+Li, J., Li, D., Xiong, C., and Hoi, S.
+
+ Blip: Bootstrapping language-image pre-training for unified vision-language understanding and generation.
+
+ In International Conference on Machine Learning , pp. 12888–12900. PMLR, 2022.
+
+ Li et al. (2023b) 
+
+Li, J., Li, D., Savarese, S., and Hoi, S.
+
+ Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models.
+
+ arXiv preprint arXiv:2301.12597 , 2023b.
+
+ Li et al. (2023c) 
+
+Li, X., Yao, Y., Jiang, X., Fang, X., Meng, X., Fan, S., Han, P., Li, J., Du, L., Qin, B., et al.
+
+ Flm-101b: An open llm and how to train it with 100 k budget.
+
+ arXiv preprint arXiv:2309.03852 , 2023c.
+
+ Li et al. (2023d) 
+
+Li, Y., Du, Y., Zhou, K., Wang, J., Zhao, W. X., and Wen, J.-R.
+
+ Evaluating object hallucination in large vision-language models.
+
+ arXiv preprint arXiv:2305.10355 , 2023d.
+
+ Li et al. (2023e) 
+
+Li, Y., Hui, B., Yin, Z., Yang, M., Huang, F., and Li, Y.
+
+ Pace: Unified multi-modal dialogue pre-training with progressive and compositional experts.
+
+ arXiv preprint arXiv:2305.14839 , 2023e.
+
+ Liang et al. (2022) 
+
+Liang, V. W., Zhang, Y., Kwon, Y., Yeung, S., and Zou, J. Y.
+
+ Mind the gap: Understanding the modality gap in multi-modal contrastive representation learning.
+
+ Advances in Neural Information Processing Systems , 35:17612–17625, 2022.
+
+ Lin et al. (2023) 
+
+Lin, B., Zhu, B., Ye, Y., Ning, M., Jin, P., and Yuan, L.
+
+ Video-llava: Learning united visual representation by alignment before projection.
+
+ arXiv preprint arXiv:2311.10122 , 2023.
+
+ Liu et al. (2023a) 
+
+Liu, F., Lin, K., Li, L., Wang, J., Yacoob, Y., and Wang, L.
+
+ Aligning large multi-modal model with robust instruction tuning.
+
+ arXiv preprint arXiv:2306.14565 , 2023a.
+
+ Liu et al. (2023b) 
+
+Liu, H., Li, C., Li, Y., and Lee, Y. J.
+
+ Improved baselines with visual instruction tuning.
+
+ arXiv preprint arXiv:2310.03744 , 2023b.
+
+ Liu et al. (2023c) 
+
+Liu, H., Li, C., Wu, Q., and Lee, Y. J.
+
+ Visual instruction tuning.
+
+ arXiv preprint arXiv:2304.08485 , 2023c.
+
+ Liu et al. (2023d) 
+
+Liu, Y., Duan, H., Zhang, Y., Li, B., Zhang, S., Zhao, W., Yuan, Y., Wang, J., He, C., Liu, Z., et al.
+
+ Mmbench: Is your multi-modal model an all-around player?
+
+ arXiv preprint arXiv:2307.06281 , 2023d.
+
+ Liu et al. (2022) 
+
+Liu, Z., Hu, H., Lin, Y., Yao, Z., Xie, Z., Wei, Y., Ning, J., Cao, Y., Zhang, Z., Dong, L., et al.
+
+ Swin transformer v2: Scaling up capacity and resolution.
+
+ In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 12009–12019, 2022.
+
+ Liu et al. (2023e) 
+
+Liu, Z., He, Y., Wang, W., Wang, W., Wang, Y., Chen, S., Zhang, Q., Lai, Z., Yang, Y., Li, Q., et al.
+
+ Interngpt: Solving vision-centric tasks by interacting with chatgpt beyond language.
+
+ arXiv preprint arXiv:2305.05662 , 3, 2023e.
+
+ Long et al. (2023) 
+
+Long, Z., Killick, G., McCreadie, R., and Camarasa, G. A.
+
+ Multiway-adapater: Adapting large-scale multi-modal models for scalable image-text retrieval.
+
+ arXiv preprint arXiv:2309.01516 , 2023.
+
+ Lu et al. (2022) 
+
+Lu, P., Mishra, S., Xia, T., Qiu, L., Chang, K.-W., Zhu, S.-C., Tafjord, O., Clark, P., and Kalyan, A.
+
+ Learn to explain: Multimodal reasoning via thought chains for science question answering.
+
+ Advances in Neural Information Processing Systems , 35:2507–2521, 2022.
+
+ Ma et al. (2023) 
+
+Ma, G., Wu, X., Wang, P., and Hu, S.
+
+ Cot-mote: Exploring contextual masked auto-encoder pre-training with mixture-of-textual-experts for passage retrieval.
+
+ arXiv preprint arXiv:2304.10195 , 2023.
+
+ Microsoft (2023) 
+
+Microsoft.
+
+ Phi-2: The surprising power of small language models.
+
+ https://www.microsoft.com/en-us/research/blog/phi-2-the-surprising-power-of-small-language-models , 2023.
+
+ Mustafa et al. (2022) 
+
+Mustafa, B., Riquelme, C., Puigcerver, J., Jenatton, R., and Houlsby, N.
+
+ Multimodal contrastive learning with limoe: the language-image mixture of experts.
+
+ Advances in Neural Information Processing Systems , 35:9564–9576, 2022.
+
+ OpenAI (2023) 
+
+OpenAI.
+
+ Gpt-4 technical report, 2023.
+
+ Pearson (1901) 
+
+Pearson, K.
+
+ Liii. on lines and planes of closest fit to systems of points in space.
+
+ The London, Edinburgh, and Dublin philosophical magazine and journal of science , 2(11):559–572, 1901.
+
+ Penedo et al. (2023) 
+
+Penedo, G., Malartic, Q., Hesslow, D., Cojocaru, R., Cappelli, A., Alobeidli, H., Pannier, B., Almazrouei, E., and Launay, J.
+
+ The refinedweb dataset for falcon llm: outperforming curated corpora with web data, and web data only.
+
+ arXiv preprint arXiv:2306.01116 , 2023.
+
+ Peng et al. (2023) 
+
+Peng, Z., Wang, W., Dong, L., Hao, Y., Huang, S., Ma, S., and Wei, F.
+
+ Kosmos-2: Grounding multimodal large language models to the world.
+
+ arXiv preprint arXiv:2306.14824 , 2023.
+
+ Pi et al. (2023) 
+
+Pi, R., Gao, J., Diao, S., Pan, R., Dong, H., Zhang, J., Yao, L., Han, J., Xu, H., and Zhang, L. K. T.
+
+ Detgpt: Detect what you need via reasoning.
+
+ arXiv preprint arXiv:2305.14167 , 2023.
+
+ Radford et al. (2021) 
+
+Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al.
+
+ Learning transferable visual models from natural language supervision.
+
+ In International conference on machine learning , pp. 8748–8763. PMLR, 2021.
+
+ Rasheed et al. (2023) 
+
+Rasheed, H., Maaz, M., Shaji, S., Shaker, A., Khan, S., Cholakkal, H., Anwer, R. M., Xing, E., Yang, M.-H., and Khan, F. S.
+
+ Glamm: Pixel grounding large multimodal model.
+
+ arXiv preprint arXiv:2311.03356 , 2023.
+
+ Riquelme et al. (2021) 
+
+Riquelme, C., Puigcerver, J., Mustafa, B., Neumann, M., Jenatton, R., Susano Pinto, A., Keysers, D., and Houlsby, N.
+
+ Scaling vision with sparse mixture of experts.
+
+ Advances in Neural Information Processing Systems , 34:8583–8595, 2021.
+
+ Satar et al. (2022) 
+
+Satar, B., Zhu, H., Zhang, H., and Lim, J. H.
+
+ Rome: Role-aware mixture-of-expert transformer for text-to-video retrieval.
+
+ arXiv preprint arXiv:2206.12845 , 2022.
+
+ Scao et al. (2022) 
+
+Scao, T. L., Fan, A., Akiki, C., Pavlick, E., Ilić, S., Hesslow, D., Castagné, R., Luccioni, A. S., Yvon, F., Gallé, M., et al.
+
+ Bloom: A 176b-parameter open-access multilingual language model.
+
+ arXiv preprint arXiv:2211.05100 , 2022.
+
+ Shazeer et al. (2017) 
+
+Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J.
+
+ Outrageously large neural networks: The sparsely-gated mixture-of-experts layer.
+
+ arXiv preprint arXiv:1701.06538 , 2017.
+
+ Shen et al. (2023) 
+
+Shen, S., Yao, Z., Li, C., Darrell, T., Keutzer, K., and He, Y.
+
+ Scaling vision-language models with sparse mixture of experts.
+
+ arXiv preprint arXiv:2303.07226 , 2023.
+
+ Singh et al. (2019) 
+
+Singh, A., Natarajan, V., Shah, M., Jiang, Y., Chen, X., Batra, D., Parikh, D., and Rohrbach, M.
+
+ Towards vqa models that can read.
+
+ In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 8317–8326, 2019.
+
+ Sun et al. (2023) 
+
+Sun, T., Zhang, X., He, Z., Li, P., Cheng, Q., Yan, H., Liu, X., Shao, Y., Tang, Q., Zhao, X., et al.
+
+ Moss: Training conversational language models from synthetic data.
+
+ arXiv preprint arXiv:2307.15020 , 7, 2023.
+
+ SUSTech-IDEA (2023) 
+
+SUSTech-IDEA.
+
+ Sus-chat: Instruction tuning done right.
+
+ https://github.com/SUSTech-IDEA/SUS-Chat , 2023.
+
+ Taori et al. (2023) 
+
+Taori, R., Gulrajani, I., Zhang, T., Dubois, Y., Li, X., Guestrin, C., Liang, P., and Hashimoto, T. B.
+
+ Alpaca: A strong, replicable instruction-following model.
+
+ Stanford Center for Research on Foundation Models. https://crfm. stanford. edu/2023/03/13/alpaca. html , 3(6):7, 2023.
+
+ Team (2023) 
+
+Team, I.
+
+ Internlm: A multilingual language model with progressively enhanced capabilities, 2023.
+
+ (75) 
+
+Team, S. A. L.
+
+ Stable lm 2 1.6b.
+
+ URL [https://huggingface.co/stabilityai/stablelm-2-1.6b](https://huggingface.co/stabilityai/stablelm-2-1.6b) .
+
+ Touvron et al. (2023a) 
+
+Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozière, B., Goyal, N., Hambro, E., Azhar, F., et al.
+
+ Llama: Open and efficient foundation language models.
+
+ arXiv preprint arXiv:2302.13971 , 2023a.
+
+ Touvron et al. (2023b) 
+
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al.
+
+ Llama 2: Open foundation and fine-tuned chat models.
+
+ arXiv preprint arXiv:2307.09288 , 2023b.
+
+ Wang et al. (2023a) 
+
+Wang, G., Cheng, S., Zhan, X., Li, X., Song, S., and Liu, Y.
+
+ Openchat: Advancing open-source language models with mixed-quality data.
+
+ arXiv preprint arXiv:2309.11235 , 2023a.
+
+ Wang et al. (2023b) 
+
+Wang, J., Meng, L., Weng, Z., He, B., Wu, Z., and Jiang, Y.-G.
+
+ To see is to believe: Prompting gpt-4v for better visual instruction tuning.
+
+ arXiv preprint arXiv:2311.07574 , 2023b.
+
+ Wang et al. (2019) 
+
+Wang, Q., Li, B., Xiao, T., Zhu, J., Li, C., Wong, D. F., and Chao, L. S.
+
+ Learning deep transformer models for machine translation.
+
+ arXiv preprint arXiv:1906.01787 , 2019.
+
+ Wang et al. (2022) 
+
+Wang, W., Bao, H., Dong, L., Bjorck, J., Peng, Z., Liu, Q., Aggarwal, K., Mohammed, O. K., Singhal, S., Som, S., et al.
+
+ Image as a foreign language: Beit pretraining for all vision and vision-language tasks.
+
+ arXiv preprint arXiv:2208.10442 , 2022.
+
+ Wang et al. (2023c) 
+
+Wang, W., Chen, Z., Chen, X., Wu, J., Zhu, X., Zeng, G., Luo, P., Lu, T., Zhou, J., Qiao, Y., et al.
+
+ Visionllm: Large language model is also an open-ended decoder for vision-centric tasks.
+
+ arXiv preprint arXiv:2305.11175 , 2023c.
+
+ Wang et al. (2023d) 
+
+Wang, W., Lv, Q., Yu, W., Hong, W., Qi, J., Wang, Y., Ji, J., Yang, Z., Zhao, L., Song, X., et al.
+
+ Cogvlm: Visual expert for pretrained language models.
+
+ arXiv preprint arXiv:2311.03079 , 2023d.
+
+ Wei et al. (2022) 
+
+Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al.
+
+ Chain-of-thought prompting elicits reasoning in large language models.
+
+ Advances in Neural Information Processing Systems , 35:24824–24837, 2022.
+
+ Yang et al. (2023) 
+
+Yang, A., Xiao, B., Wang, B., Zhang, B., Bian, C., Yin, C., Lv, C., Pan, D., Wang, D., Yan, D., et al.
+
+ Baichuan 2: Open large-scale language models.
+
+ arXiv preprint arXiv:2309.10305 , 2023.
+
+ Ye et al. (2023) 
+
+Ye, Q., Xu, H., Xu, G., Ye, J., Yan, M., Zhou, Y., Wang, J., Hu, A., Shi, P., Shi, Y., et al.
+
+ mplug-owl: Modularization empowers large language models with multimodality.
+
+ arXiv preprint arXiv:2304.14178 , 2023.
+
+ Yin et al. (2023) 
+
+Yin, S., Fu, C., Zhao, S., Li, K., Sun, X., Xu, T., and Chen, E.
+
+ A survey on multimodal large language models.
+
+ arXiv preprint arXiv:2306.13549 , 2023.
+
+ Yu et al. (2023) 
+
+Yu, W., Yang, Z., Li, L., Wang, J., Lin, K., Liu, Z., Wang, X., and Wang, L.
+
+ Mm-vet: Evaluating large multimodal models for integrated capabilities.
+
+ arXiv preprint arXiv:2308.02490 , 2023.
+
+ Yuan et al. (2023) 
+
+Yuan, Z., Li, Z., and Sun, L.
+
+ Tinygpt-v: Efficient multimodal large language model via small backbones.
+
+ arXiv preprint arXiv:2312.16862 , 2023.
+
+ Zeng et al. (2022) 
+
+Zeng, A., Liu, X., Du, Z., Wang, Z., Lai, H., Ding, M., Yang, Z., Xu, Y., Zheng, W., Xia, X., et al.
+
+ Glm-130b: An open bilingual pre-trained model.
+
+ arXiv preprint arXiv:2210.02414 , 2022.
+
+ Zhang et al. (2023a) 
+
+Zhang, P., Wang, X. D. B., Cao, Y., Xu, C., Ouyang, L., Zhao, Z., Ding, S., Zhang, S., Duan, H., Yan, H., et al.
+
+ Internlm-xcomposer: A vision-language large model for advanced text-image comprehension and composition.
+
+ arXiv preprint arXiv:2309.15112 , 2023a.
+
+ Zhang et al. (2022) 
+
+Zhang, S., Roller, S., Goyal, N., Artetxe, M., Chen, M., Chen, S., Dewan, C., Diab, M., Li, X., Lin, X. V., et al.
+
+ Opt: Open pre-trained transformer language models.
+
+ arXiv preprint arXiv:2205.01068 , 2022.
+
+ Zhang et al. (2023b) 
+
+Zhang, S., Dong, L., Li, X., Zhang, S., Sun, X., Wang, S., Li, J., Hu, R., Zhang, T., Wu, F., et al.
+
+ Instruction tuning for large language models: A survey.
+
+ arXiv preprint arXiv:2308.10792 , 2023b.
+
+ Zhang & Yang (2023) 
+
+Zhang, X. and Yang, Q.
+
+ Xuanyuan 2.0: A large chinese financial chat model with hundreds of billions parameters.
+
+ In Proceedings of the 32nd ACM International Conference on Information and Knowledge Management , pp. 4435–4439, 2023.
+
+ Zhang et al. (2023c) 
+
+Zhang, Y., Zhang, R., Gu, J., Zhou, Y., Lipka, N., Yang, D., and Sun, T.
+
+ Llavar: Enhanced visual instruction tuning for text-rich image understanding.
+
+ arXiv preprint arXiv:2306.17107 , 2023c.
+
+ Zhao et al. (2023a) 
+
+Zhao, B., Wu, B., and Huang, T.
+
+ Svit: Scaling up visual instruction tuning.
+
+ arXiv preprint arXiv:2307.04087 , 2023a.
+
+ Zhao et al. (2023b) 
+
+Zhao, Y., Lin, Z., Zhou, D., Huang, Z., Feng, J., and Kang, B.
+
+ Bubogpt: Enabling visual grounding in multi-modal llms.
+
+ arXiv preprint arXiv:2307.08581 , 2023b.
+
+ Zheng et al. (2023) 
+
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., et al.
+
+ Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+ arXiv preprint arXiv:2306.05685 , 2023.
+
+ Zhu et al. (2023) 
+
+Zhu, D., Chen, J., Shen, X., Li, X., and Elhoseiny, M.
+
+ Minigpt-4: Enhancing vision-language understanding with advanced large language models.
+
+ arXiv preprint arXiv:2304.10592 , 2023.
+
+ Zhu et al. (2022) 
+
+Zhu, J., Zhu, X., Wang, W., Wang, X., Li, H., Wang, X., and Dai, J.
+
+ Uni-perceiver-moe: Learning sparse generalist models with conditional moes.
+
+ Advances in Neural Information Processing Systems , 35:2664–2678, 2022.
+
+ Zhu et al. (2024) 
+
+Zhu, Y., Zhu, M., Liu, N., Ou, Z., Mou, X., and Tang, J.
+
+ Llava-phi: Efficient multi-modal assistant with small language model, 2024.
+
+ Zoph et al. (2022) 
+
+Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., and Fedus, W.
+
+ St-moe: Designing stable and transferable sparse expert models.
+
+ arXiv preprint arXiv:2202.08906 , 2022.
+
+ Appendix for MoE-LLaVA 
+
+ Appendix A Implementation Details
+
+ A.1 More Model Architecture
+
+ In Table 8 , we present additional variants of the MoE-LLaVA. We introduce how the total parameters is calculated. When the number of activated experts is 2, setting Experts=2 yields the number of activated parameters.
+
+ | 
+ \displaystyle Total\text{\_}Parameters= | 
+ \displaystyle Embedding\cdot Width | 
+ | 
+ (12) | 
+
+ | 
+ | 
+ \displaystyle+Layers\cdot(4\cdot Width\cdot Width+Width\cdot FFN\cdot FFN\text{\_}Factor+2\cdot Width) | 
+ | 
+
+ | 
+ | 
+ \displaystyle+Width+Width\cdot Embedding | 
+ | 
+
+ | 
+ | 
+ \displaystyle+MoE\text{\_}Layers\cdot(Experts-1)\cdot(Width\cdot FFN\cdot FFN\text{\_}Factor+2\cdot Width) | 
+ | 
+
+ | 
+ | 
+ \displaystyle+MoE\text{\_}Layers\cdot(Width\cdot Experts) | 
+ | 
+
+ Table 8: More architecture details of the MoE-LLaVA model. “FFN Factor“ represents the number of linear layers in the FFN. “*” donates the dimension of the hidden states for the keys (k) and values (v) is 1024. “1.6B×4-Top2” represents a dense foundation model with 1.6B parameters, which will be equipped with a total of four experts, with two of them being activated. “ {\dagger} ” donates all layers will equipped with MoE layer. 
+
+ Name | 
+ Experts | 
+ Top-k | 
+ MoE | 
+ Embedding | 
+ Width | 
+ Layers | 
+ FFN | 
+ FFN | 
+ Heads | 
+ Activated | 
+ Total | 
+
+ Layers | 
+ Factor | 
+ Param | 
+ Param | 
+
+ StableLM-1.6B ( Team, ) | 
+ - | 
+ - | 
+ - | 
+ 100352 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 1.6B | 
+ 1.6B | 
+
+ MoE-LLaVA-1.6B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 16 | 
+ 100352 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 2.0B | 
+ 2.9B | 
+
+ MoE-LLaVA-1.6B×4-Top2 † | 
+ 4 | 
+ 2 | 
+ 32 | 
+ 100352 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 2.5B | 
+ 4.1B | 
+
+ Qwen-1.8B ( Bai et al., 2023a ) | 
+ - | 
+ - | 
+ - | 
+ 151936 | 
+ 2048 | 
+ 24 | 
+ 5504 | 
+ 3 | 
+ 16 | 
+ 1.8B | 
+ 1.8B | 
+
+ MoE-LLaVA-1.8B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 12 | 
+ 151936 | 
+ 2048 | 
+ 24 | 
+ 5504 | 
+ 3 | 
+ 16 | 
+ 2.2B | 
+ 3.1B | 
+
+ MoE-LLaVA-1.8B×4-Top2 † | 
+ 4 | 
+ 2 | 
+ 24 | 
+ 151936 | 
+ 2048 | 
+ 24 | 
+ 5504 | 
+ 3 | 
+ 16 | 
+ 2.6B | 
+ 4.3B | 
+
+ Phi2-2.7B ( Microsoft, 2023 ) | 
+ - | 
+ - | 
+ - | 
+ 51200 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 2.7B | 
+ 2.7B | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 16 | 
+ 51200 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 3.6B | 
+ 5.3B | 
+
+ MoE-LLaVA-2.7B×4-Top2 † | 
+ 4 | 
+ 2 | 
+ 32 | 
+ 51200 | 
+ 2560 | 
+ 32 | 
+ 10240 | 
+ 2 | 
+ 32 | 
+ 4.5B | 
+ 7.8B | 
+
+ OpenChat-7B ( Wang et al., 2023a ) | 
+ - | 
+ - | 
+ - | 
+ 32000 | 
+ 4096 ∗ | 
+ 32 | 
+ 14336 | 
+ 3 | 
+ 32 | 
+ 6.7B | 
+ 6.7B | 
+
+ MoE-LLaVA-7B×4-Top2 | 
+ 4 | 
+ 2 | 
+ 16 | 
+ 32000 | 
+ 4096 ∗ | 
+ 32 | 
+ 14336 | 
+ 3 | 
+ 32 | 
+ 9.6B | 
+ 15.2B | 
+
+ MoE-LLaVA-7B×4-Top2 † | 
+ 4 | 
+ 2 | 
+ 32 | 
+ 32000 | 
+ 4096 ∗ | 
+ 32 | 
+ 14336 | 
+ 3 | 
+ 32 | 
+ 12.4B | 
+ 23.7B | 
+
+ Table 9: Training hyperparameters. 
+
+ Config | 
+ Stage I | 
+ Stage II | 
+ Stage III | 
+
+ Experts | 
+ - | 
+ - | 
+ 4 | 
+
+ Top-k | 
+ - | 
+ - | 
+ 2 | 
+
+ Deepspeed | 
+ Zero2 | 
+ Zero2 | 
+ Zero2_offload | 
+
+ Data | 
+ LLaVA-PT | 
+ Hybird-PT | 
+ LLaVA-FT | 
+
+ Image resolution | 
+ 336×336 | 
+
+ Image encoder | 
+ CLIP-Large/336 | 
+
+ Feature select layer | 
+ -2 | 
+
+ Image projector | 
+ 2 Linear layers with GeLU | 
+
+ Epoch | 
+ 1 | 
+
+ Learning rate | 
+ 1e-3 | 
+ 2e-5 | 
+ 2e-5 | 
+
+ Learning rate schdule | 
+ Cosine | 
+
+ Weight decay | 
+ 0.0 | 
+
+ Text max length | 
+ 2048 | 
+
+ Batch size per GPU | 
+ 32 | 
+ 16 | 
+ 16 | 
+
+ GPU | 
+ 8 × A800-80G | 
+
+ Precision | 
+ Bf16 | 
+
+ A.2 Training Details
+
+ As shown in Table 9 , we present the training hyperparameters for all models, which are applicable to Qwen, StableLM, Phi and OpenChat. For the training process in all stages, we consistently train for 1 epoch, as we find that the models overfit when training for 2 epochs. The batch size for the first stage is 256 and 128 for the second and third stages. We use an image resolution of 336x336 for all three stages. Additionally, for smaller models like Qwen-1.8B, it is feasible to train them on 8 V100-32G GPUs. However, during the training process, using fp16 may sometimes lead to loss becoming NaN. Since our models are smaller than 7B, we can train them in zero2 mode. However, for stage 3, deepspeed temporarily does not support training MoE architecture in zero3 mode. Therefore, we choose zero2_offload to further reduce the memory requirements and enable running on 8 A800-80G GPUs. We enable the gradient checkpoint mode for all training stage.
+
+ Appendix B Additional Results and Visualization
+
+ B.1 Model Scaling
+
+ Table 10: Ablation study about the model size of MoE-LLaVA. 
+
+ Model | 
+ MoE | 
+ VQA {}^{\text{v2}} | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ MMB | 
+ LLaVA {}^{\text{W}} | 
+
+ StableLM | 
+ ✗ | 
+ 74.5 | 
+ 62.0 | 
+ 48.8 | 
+ 58.2 | 
+ 83.2 | 
+
+ ✔ | 
+ 76.0 | 
+ 62.6 | 
+ 47.8 | 
+ 59.4 | 
+ 85.9 | 
+
+ Qwen | 
+ ✗ | 
+ 74.9 | 
+ 60.2 | 
+ 48.3 | 
+ 60.6 | 
+ 86.3 | 
+
+ ✔ | 
+ 76.2 | 
+ 63.1 | 
+ 48.0 | 
+ 59.7 | 
+ 88.7 | 
+
+ Phi-2 | 
+ ✗ | 
+ 75.6 | 
+ 67.8 | 
+ 50.0 | 
+ 65.0 | 
+ 91.3 | 
+
+ ✔ | 
+ 77.6 | 
+ 68.5 | 
+ 51.4 | 
+ 65.2 | 
+ 94.1 | 
+
+ OpenChat | 
+ ✗ | 
+ 77.9 | 
+ 69.0 | 
+ 54.7 | 
+ 66.9 | 
+ 89.7 | 
+
+ ✔ | 
+ 78.9 | 
+ 62.8 | 
+ 52.5 | 
+ 65.9 | 
+ 86.3 | 
+
+ As shown in Table 10 , for models smaller than 7B, we demonstrate a strong scale of law. MoE-LLaVA exhibits improved performance as the model size increases, as exemplified by StableLM-1.6B, Qwen-1.8B, and Phi-2.7B. But surprisingly, the overall performance of OpenChat-MoE is significantly inferior to dense models. We speculate that this may be due to the insufficient data for current multi-modal instruction tuning to support sparse pattern learning in 10B-level models, which should be addressed in future work when scaling up to larger MoE-LLaVA models.
+
+ B.2 Training Capacity
+
+ For MoE layers, we employ the Batch Priority Routing (BPR) strategy ( Riquelme et al., 2021 ) . This strategy utilizes the routing results to determine which tokens should be dropped, ensuring a more balanced workload among the experts. During the training process, the BPR strategy dynamically adjusts the routing results for each expert based on their capacity. When the tokens assigned to an expert exceed its predefined capacity, the excess tokens are dropped. We conduct a ablation study on the hyperparameter capacity, as shown in Table 11 . Increasing the capacity consistently improves performance for different sizes of MoE-LLaVA.
+
+ Table 11: Ablation study about the capacity of MoE-LLaVA. “Res.” represent the input image resolution. ∗ donates that there is some overlap in the training data. 
+
+ Methods | 
+ Res. | 
+ Capacity | 
+ Image Question Answering | 
+ Benchmark Toolkit | 
+ | 
+
+ VQA {}^{\text{v2}} | 
+ GQA | 
+ VisWiz | 
+ SQA {}^{\text{I}} | 
+ VQA {}^{\text{T}} | 
+ POPE | 
+ MMB | 
+ LLaVA {}^{\text{W}} | 
+ MM-Vet | 
+ Avg | 
+
+ MoE-LLaVA-1.6B×4-Top2 | 
+ 336 | 
+ 1.5 | 
+ 76.7 ∗ | 
+ 60.3 ∗ | 
+ 36.2 | 
+ 62.6 | 
+ 50.1 | 
+ 85.7 | 
+ 60.2 | 
+ 86.8 | 
+ 26.9 | 
+ 60.6 | 
+
+ 1.0 | 
+ 76.0 ∗ | 
+ 60.4 ∗ | 
+ 37.2 | 
+ 62.6 | 
+ 47.8 | 
+ 84.3 | 
+ 59.4 | 
+ 85.9 | 
+ 26.1 | 
+ 59.9 | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ 336 | 
+ 1.5 | 
+ 77.6 ∗ | 
+ 61.4 ∗ | 
+ 43.9 | 
+ 68.5 | 
+ 51.4 | 
+ 86.3 | 
+ 65.2 | 
+ 94.1 | 
+ 34.3 | 
+ 64.7 | 
+
+ 1.0 | 
+ 77.1 ∗ | 
+ 61.1 ∗ | 
+ 43.4 | 
+ 68.7 | 
+ 50.2 | 
+ 85.0 | 
+ 65.5 | 
+ 93.2 | 
+ 31.1 | 
+ 63.9 | 
+
+ MoE-LLaVA-2.7B×4-Top2 | 
+ 384 | 
+ 1.5 | 
+ 79.9 ∗ | 
+ 62.6 ∗ | 
+ 43.7 | 
+ 70.3 | 
+ 57.0 | 
+ 85.7 | 
+ 68.0 | 
+ 97.3 | 
+ 35.9 | 
+ 66.7 | 
+
+ 1.0 | 
+ 79.4 ∗ | 
+ 62.7 ∗ | 
+ 42.1 | 
+ 70.3 | 
+ 55.7 | 
+ 85.5 | 
+ 67.9 | 
+ 95.1 | 
+ 33.6 | 
+ 65.8 | 
+
+ B.3 Routing Distributions
+
+ In this section, we present the routing distributions of MoE-LLaVA-OpenChat-7B×4-Top2, MoE-LLaVA-Phi-2.7B×4-Top2, MoE-LLaVA-Qwen-1.8B×4-Top2, and MoE-LLaVA-StableLM-1.6B×4-Top2 on six benchmarks (ScienceQA-IMG ( Lu et al., 2022 ) , TextVQA ( Singh et al., 2019 ) , POPE ( Li et al., 2023d ) , MMBench ( Liu et al., 2023d ) , VisWiz ( Gurari et al., 2018 ) , MM-Vet ( Yu et al., 2023 ) ). These routing distributions are based on the training up to the final checkpoint.
+
+ For MoE-LLaVA-OpenChat-7B×4-Top2, it is a truly large model compared to our setting. However, as shown in Section B.1 , its performance is not as good as expected. We provide the routing distribution of MoE-LLaVA-OpenChat after sparsification in Figure 7 . We can observe that even after three stages of training, the routing distributions of MoE-LLaVA-OpenChat and MoE-LLaVA-Phi ( Figure 8 ) differ significantly. MoE-LLaVA-OpenChat exhibits a relatively balanced distribution overall, in terms of both expert loads and expert preferences for different modalities. On the other hand, MoE-LLaVA-Phi, along with other smaller models such as MoE-LLaVA-Qwen and MoE-LLaVA-StableLM, show some specific patterns or, in other words, their distributions are more disordered . For example, (1) in Figure 8 , MoE-LLaVA-Phi exhibits a prominent expert 3 in layers 17-23, which dominates the majority of the workload. (2) In Figure 9 , MoE-LLaVA-Qwen shows a strong preference for the image modality in expert 1. (3) In Figure Figure 10 , experts 2 and 3 of MoE-LLaVA-StableLM are actively engaged in the middle layers of the model. We believe this is highly likely due to the insufficient amount of current multimodal fine-tuning data (655k in our setting) to enable sparsification for 10B-level models, even starting from a well-initialized LVLM.
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 7: Distribution of expert loadings and expert preferences on MoE-LLaVA-OpenChat-7B×4-Top2 . 
+
+ In fact, we should reflect on what behavior is expected for a sparse MoE model. Should it exhibit specific patterns for each expert, like MoE-LLaVA-Phi, or should it have similar behavior among the experts, like MoE-LLaVA-OpenChat? If we consider that in a sparse model, the behavior of each expert should be similar at initialization, as they are initialized from a shared FFN and the router has not yet learned any inductive biases, then if the routing distribution continues to remain balanced as the network learns, it would be similar to the initialization and may lead to confusion in the model. Therefore, we speculate that the lack of sufficient data may be a reason for the poor performance of MoE-LLaVA-OpenChat. However, due to the current limitations in data and computational resources, we are unable to further explore this, and we hope that future work can make progress in this direction.
+
+ Additionally, we provide more details in Figure 11 , Figure 12 , Figure 13 , and Figure 14 .
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 8: Distribution of expert loadings and expert preferences on MoE-LLaVA-Phi-2.7B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 9: Distribution of expert loadings and expert preferences on MoE-LLaVA-Qwen-1.8B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 10: Distribution of expert loadings and expert preferences on MoE-LLaVA-StableLM-1.6B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 11: Distribution of modalities across different experts on MoE-LLaVA-OpenChat-7B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 12: Distribution of modalities across different experts on MoE-LLaVA-Phi-2.7B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 13: Distribution of modalities across different experts on MoE-LLaVA-Qwen-1.8B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 14: Distribution of modalities across different experts on MoE-LLaVA-StableLM-1.6B×4-Top2 . 
+
+ B.4 Token Pathways
+
+ In Figure 11 , Figure 12 , Figure 13 , and Figure 14 , we track the paths of each token for MoE-LLaVA-OpenChat-7B×4-Top2, MoE-LLaVA-Phi-2.7B×4-Top2, MoE-LLaVA-Qwen-1.8B×4-Top2, and MoE-LLaVA-StableLM-1.6B×4-Top2, respectively. In general, the overall trends of the token paths align with the analysis in Section B.3 . The paths of MoE-LLaVA-OpenChat-7B×4-Top2 appear more disorderly and diverse, which is attributed to a more balanced expert assignment. On the other hand, MoE-LLaVA-Phi-2.7B×4-Top2, MoE-LLaVA-Qwen-1.8B×4-Top2, and MoE-LLaVA-StableLM-1.6B×4-Top2 each exhibit their specific patterns.
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 15: Visualization of activated pathways on MoE-LLaVA-OpenChat-7B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 16: Visualization of activated pathways on MoE-LLaVA-Phi-2.7B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 17: Visualization of activated pathways on MoE-LLaVA-Qwen-1.8B×4-Top2 . 
+
+ (a) ScienceQA-IMG 
+
+ (b) TextQA 
+
+ (c) POPE 
+
+ (d) MMBench 
+
+ (e) Viswiz 
+
+ (f) MM-Vet 
+
+ Figure 18: Visualization of activated pathways on MoE-LLaVA-StableLM-1.6B×4-Top2 . 
+
+ B.5 Exhibition Board
+
+ In Table 12 , we present some classic examples using images from LLaVA ( Liu et al., 2023c ) and LLaVA-1.5 ( Liu et al., 2023b ) . We observe that MoE-LLaVA performs comparably to them on these classic images, despite using fewer parameters.
+
+ Table 12: Exhibition Board of MoE-LLaVA. MoE-LLaVA demonstrates the ability to detect and answer challenging questions when prompted to verify them. 
+
+ Visual input example, Tricky Question and Image: | 
+
+ | 
+
+ | 
+
+ User | 
+
+ If there are factual errors in the questions, point it out; if not, proceed answering the question. 
+ | 
+
+ | 
+
+ What’s happening in the desert? 
+ | 
+
+ LLaVA-1.5 | 
+
+ There are no deserts in the image. The image features a beach with palm trees, a city skyline, and a large body of water. 
+ | 
+
+ MoE-LLaVA | 
+
+ There are no deserts in the image. The scene features a city with a beach and a large body of water, which is more likely to be a coastal city. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ Do you know who drew this painting? 
+ | 
+
+ MoE-LLaVA | 
+
+ The painting is a portrait of the famous artist, Leonardo da Vinci. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ Do you know who drew this painting? 
+ | 
+
+ MoE-LLaVA | 
+
+ The painting is a drawing of a dog, and it is not possible to definitively determine the artist who created it based on the image alone. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ What is the name of the man in the photo? 
+ | 
+
+ MoE-LLaVA | 
+
+ The man in the photo is named Elon Musk. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ What is the name of the man in the photo? 
+ | 
+
+ MoE-LLaVA | 
+
+ The man in the photo is named Elon Musk. 
+ | 
+
+ Visual input example, Common Question: | 
+
+ | 
+
+ | 
+
+ User | 
+
+ Can you explain this meme? 
+ | 
+
+ GPT-4 ( OpenAI, 2023 ) | 
+
+ This meme is a joke that combines two unrelated things: pictures of the earth from space and chicken nuggets. The text of the meme suggests that the image below is a beautiful picture of the earth from space. However, the image is actually of chicken nuggets arranged to vaguely resemble a map of the world. The humor in this meme comes from the unexpected juxtaposition of the text and the image. The text sets up an expectation of a majestic image of the earth, but the image is actually something mundane and silly. 
+ | 
+
+ MoE-LLaVA | 
+
+ The image features a pan filled with golden-brown fried chicken pieces arranged in the shape of a world map. There are numerous chicken pieces spread across the pan, with some pieces located near the center, while others are positioned towards the edges. The chicken pieces are placed in a way that resembles the continents and countries, creating a visually appealing and creative presentation. The pan itself is placed on a table, ready to be served and enjoyed. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ What is unusual about this image? 
+ | 
+
+ MoE-LLaVA | 
+
+ The unusual aspect of this image is that a man is standing on a clothesline that is attached to the back of a moving taxi cab. This is not a typical scene, as clotheslines are usually found in residential areas, patios, or laundry rooms, and not on the back of a vehicle. The man is holding a shirt while standing on the clothesline, which adds to the unusualness of the situation. It is likely that the man is performing some task or trying to dry the shirt in an unconventional manner. 
+ | 
+
+ | 
+
+ | 
+
+ User | 
+
+ Describe the image and where’s the red arrow? 
+ | 
+
+ MoE-LLaVA | 
+
+ The image is a graph or chart with a red arrow pointing to the bottom. The graph is color-coded, with pink and green lines, and it appears to be a line graph. The red arrow is located at the bottom of the graph, indicating a specific point or value. 
+ | 
+
+ langley00 
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

@@ -1,0 +1,1237 @@
+Diagnosing and Mitigating Context Rot in Long-horizon Search 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+ Context Rot 
+ Context Management 
+ 3 Diagnosing Context Rot 
+ 3.1 Preliminaries 
+ 3.2 Terminal States Taxonomy 
+ 3.3 Experimental Setup and Results 
+ Setup 
+ Main Results 
+ 4 Mitigating Context Rot 
+ 4.1 Context Management 
+ Setup 
+ Main Results 
+ 4.2 Parallel Sampling 
+ Setup 
+ Main Results 
+ Integration and Comparison with Context Management 
+ 5 Conclusion 
+ References 
+ A The Scaffold Implementation 
+ B LLM-as-a-Judge Evaluation 
+ B.1 Terminal States Taxonomy 
+ B.2 Struggle Score 
+ C Case Studies 
+ D Effect of the Threshold on Other Context Management Methods 
+ E Computational Resources 
+ F Classification Performance 
+ License: CC BY 4.0
+arXiv:2606.29718v2 [cs.IR] 04 Aug 2026
+ \uselogo 
+ Diagnosing and Mitigating Context Rot in Long-horizon Search
+ Shijie Xia
+ Affiliation: Shanghai Jiao Tong University
+ Affiliation: SII
+ Affiliation: GAIR
+ Yikun Wang
+ Affiliation: Fudan University
+ Affiliation: SII
+ Affiliation: GAIR
+ Zhen Huang
+ Affiliation: Fudan University
+ Affiliation: SII
+ Affiliation: GAIR
+ Pengfei Liu
+ Affiliation: Shanghai Jiao Tong University
+ Affiliation: SII
+ Affiliation: Corresponding author
+ Abstract
+ Code: https://github.com/GAIR-NLP/ContextRot 
+ Extensive context has become the norm as Large Language Models (LLMs) are increasingly deployed in long-horizon search tasks. The concern that increasing context length degrades model capabilities, known as context rot, has become a widely recognized issue for these applications. However, in deep search scenarios, it remains unclear how models actually fail under extensive context, and to what extent existing methods can mitigate such failures. Through a systematic study of four flagship models across three benchmarks, we identify a previously overlooked phenomenon, which we term premature termination : under extensive context, models give up or provide uncertain incorrect answers long before exhausting the context window. By controlling for query difficulty, we show that the premature termination rate is positively correlated with context length. Based on the findings, we revisit methods to mitigate context rot, including context management and parallel sampling. For context management, we analyze seven methods across three categories and show that they are inherently test-time scaling strategies that reduce the premature termination rate to enable more exploration, and we further provide model-dependent principles for method selection. For parallel sampling, we develop a behavior-aware filtering strategy and observe a performance gain of 2.6% to 4.9% across three aggregation methods.
+ 1 Introduction
+ Deep search has become one of the main applications of Large Language Model (LLM) agents, where agents continuously search and view multiple web pages over a long horizon to answer user queries ( Chen et al., 2025b ; OpenAI, 2025 ; Google, 2025 ) . One core feature of this scenario is extensive context. For example, to answer a complex query, agents are required to execute tens or even hundreds of search tool calls ( Wu et al., 2026 ; Gao et al., 2025 ) interleaved with internal thinking, accumulating a massive amount of context comprising both environment feedback and internal reasoning ( Yao et al., 2023 ) . The concern that increasing context length degrades model capabilities, known as context rot, has become a central issue for these applications ( Liu et al., 2023 ; Anthropic, 2025 ; Hong et al., 2025 ) . However, it remains unclear how models actually fail under extensive context in such scenarios and to what extent existing methods can mitigate such failures. In this paper, we aim to investigate the rot phenomenon and its mitigation strategies in deep search scenarios.
+ Figure 1: Overview of the premature termination phenomenon. The context window is 256K. 
+ Current research on context rot mostly focuses on single-turn long-input setups ( Liu et al., 2023 ; Modarressi et al., 2025 ; Hsieh et al., 2024 ; Shi et al., 2023 ) (e.g., the needle-in-a-haystack test), which differ significantly from agentic tasks, where the context is usually multi-turn, multi-source, and progressively accumulated. Recent work has begun to study model behaviors in multi-turn scenarios, but mainly in conversations with human users ( Laban et al., 2025 ; Sirdeshmukh et al., 2025 ; Dongre et al., 2025 ) or in synthetic scenarios ( Wang et al., 2026 ; Chung et al., 2025 ; Sinha et al., 2026 ) . There is still no systematic study of model behaviors under extensive context in real-world deep search scenarios. Moreover, from the perspective of mitigating context rot, although various context management methods have been proposed ( Sun et al., 2025 ; Wu et al., 2026 ; DeepSeek-AI et al., 2025 ; Anthropic, 2025 ) , they are largely heuristic, and it remains unclear how they reshape model behavior behind the observed performance.
+ To diagnose context rot in long-horizon search scenarios, we develop a detailed taxonomy of terminal states based on the characteristics of the answer and the reasoning processes that contribute to it (see Table 1 ). Through a systematic study of four flagship models across three benchmarks, we identify a previously overlooked phenomenon: under extensive context, models give up or provide uncertain incorrect answers long before exhausting the context window (see Figure 1 ). We term this the premature termination phenomenon and we define the premature termination rate as the proportion of give-up and uncertain incorrect outcomes. By controlling for query difficulty, we show that the premature termination rate is positively correlated with context length, indicating that it is not caused by query difficulty alone.
+ Building on the above findings, we revisit current context management methods, comprising seven different techniques across three categories: context compaction, context trimming, and context isolation. We find that, while they can reduce the premature termination rate and improve performance, they also lead to additional cost with more unfinished trajectories. This indicates that context management can be viewed as a test-time scaling method that uses additional inference cost to improve performance by decreasing the premature termination rate to enable more exploration. Furthermore, we demonstrate that the best method is model-dependent: for backbone models with strong agentic ability, context isolation using sub-agent calls can outperform other methods; whereas for models with weaker agentic ability, combining context compaction and context trimming achieves the best balance between performance and cost.
+ Considering that context management can be viewed as a test-time scaling method that modifies the original ReAct ( Yao et al., 2023 ) framework, we explore whether the same effect can be achieved through parallel sampling 1 1 
+ 1 
+ Parallel sampling is a test-time scaling method that uses additional compute to sample multiple trajectories and aggregate them into a final answer. without altering the original ReAct framework. By analyzing the relationship between terminal states and answer correctness, we find that give-up and uncertain-answer terminations are highly correlated with incorrect answers. We thus filter out trajectories that reach these termination states before aggregation and observe a performance gain of 2.6% to 4.9% across three aggregation methods. We compare the optimized parallel sampling with the ReAct agent against that with context management. We show that, for datasets with less severe premature termination, parallel sampling with the ReAct agent can match or even outperform context management under the same number of tool calls.
+ Overall, our contributions are as follows:
+ • 
+ Through a systematic study of four flagship models across three benchmarks, we identify the premature termination phenomenon in long-horizon agentic search (§ 3 ).
+ • 
+ We revisit seven context management methods across three categories and reveal them as test-time scaling strategies that decrease the premature termination rate to enable more exploration, and provide model-dependent principles for method selection (§ 4.1 ).
+ • 
+ We develop an optimized parallel sampling strategy and demonstrate its effectiveness across three aggregation methods (§ 4.2 ).
+ 2 Related Work
+ Context Rot
+ Current research on context rot can be categorized into single-turn and multi-turn settings. In the single-turn setting, previous work shows that models overlook information placed in the middle of long input contexts ( Liu et al., 2023 ) , collapse on benchmarks that require non-lexical retrieval or aggregate reasoning ( Modarressi et al., 2025 ; Hsieh et al., 2024 ) , and lose accuracy in the presence of irrelevant, distracting, or semantically empty content ( Shi et al., 2023 ; Yang et al., 2025b ; Du et al., 2025 ) . In the multi-turn setting, current work mainly highlights the shortcomings of LLMs in conversations with human users ( Laban et al., 2025 ; Sirdeshmukh et al., 2025 ; Dongre et al., 2025 ) or in synthetic scenarios ( Wang et al., 2026 ; Chung et al., 2025 ; Sinha et al., 2026 ) . Our work attempts to investigate context rot within real-world, long-horizon agentic search tasks.
+ Context Management
+ Common methods for context management can be categorized as follows: 1) Context compaction periodically rewrites the accumulated history into a compact summary, either through the policy ( Martin, 2025 ) or an auxiliary model ( Wu et al., 2026 ; Kang et al., 2025 ) . A line of work also explores integrating operations on previous context into the policy action space through post-training ( Ye et al., 2025 ; Zhang et al., 2026 ) . 2) Context trimming drops rather than rewrites tokens. Techniques include directly discarding old tool responses ( DeepSeek-AI et al., 2025 ) and applying a lightweight model to remove useless and redundant tokens ( Kerboua et al., 2025 ; Xiao et al., 2026 ; Yuksel, 2025 ) . 3) Context isolation relocates information outside the active window, leaving only pointers or outcomes inline. Techniques include assigning tasks to sub-agents that return only summarized outcomes ( Anthropic, 2025 ; Sun et al., 2025 ) , and offloading bulky observations to the file system ( Anthropic, 2025 ) . Although various context management methods have been proposed, it remains unclear how they reshape model behavior behind the observed performance.
+ 3 Diagnosing Context Rot
+ Taxonomy 
+ | 
+ Definition 
+ | 
+ Example 
+ | 
+ Give up 
+ | 
+ The agent states it cannot solve the problem and does not give a clear answer. 
+ | 
+ Reasoning: … Based on my searches, I cannot find a definitive match for all the clues… 
+ Answer: Unable to determine … ✗ 
+ | 
+ Uncertain Answer 
+ | 
+ The agent gives a clear answer, but the reasoning content explicitly indicates unresolved uncertainty. 
+ | 
+ Reasoning: …While I couldn’t fully verify the "four factory modifications" details… 
+ Answer: 61-2073 ✗ 
+ | 
+ Confident Answer 
+ | 
+ The agent gives a clear answer, and the reasoning content shows the agent believes it satisfies all user criteria. 
+ | 
+ Reasoning: Perfect! I have verified all the pieces of the puzzle:… 
+ Answer: 61-2059 ✗ 
+ | 
+ No Answer 
+ | 
+ The agent does not give an answer due to reaching the context limit or turn budget. 
+ | 
+ Reasoning : None 
+ Answer: None ✗ 
+ (Maximum interaction turn limit reached. ) 
+ | 
+ Table 1: Taxonomy of terminal states in long-horizon agentic search. “Reasoning” refers to the last reasoning content before the predicted answer. 
+ 3.1 Preliminaries
+ Given a user query $q$ , an LLM agent completes the task by interleaving internal reasoning with external observations. Formally, the agent’s trajectory is structured as follows, typically within a ReAct ( Yao et al., 2023 ) framework:
+ | 
+ $(r_{1},\mathcal{T}_{1},o_{1}),(r_{2},\mathcal{T}_{2},o_{2}),\dots,(r_{k},\mathcal{T}_{k},o_{k})$ | 
+ | 
+ where $r_{i}$ denotes the model’s natural language reasoning at step $i$ , $\mathcal{T}_{i}\subseteq\mathcal{T}$ is the set of tools invoked at step $i$ , and $o_{i}$ is the observation received after executing the tools in $\mathcal{T}_{i}$ .
+ In web search scenarios, we include two main tools: search and visit . The search tool accepts multiple queries simultaneously and returns the top-10 results per query from the search engine; each result contains the title, URL, and a brief description. The visit tool browses specific web pages by their URLs and extracts goal-specific evidence. In local corpus scenarios, we employ a similar toolset, where the search engine is replaced by a retrieval system operating over the local corpus. For both scenarios, we include a finish tool, which the agent uses to output the final answer in a standardized tool-call format.
+ 3.2 Terminal States Taxonomy
+ We provide a fine-grained taxonomy of the agent’s termination states that considers both the final result and the reasoning content, extending beyond simple correctness. It comprises four categories: give up , uncertain answer , confident answer , and no answer . Table 1 provides the taxonomy with corresponding definitions and examples. Please refer to Appendix C for complete examples. In practical evaluations, we employ GPT-OSS-120B ( OpenAI et al., 2025 ) as the judge. For trajectories that reach a final answer, the judge is provided with the problem, the gold answer, the predicted answer, and the last reasoning content before the predicted answer; it is then tasked with classifying the outcome into one of the aforementioned classes. For each classification, we repeat the process five times and take a majority vote for reliability. To validate the consistency with human judgment, we obtain 300 trajectories from four models for human expert annotations. The results indicate that our model-based evaluation method is highly accurate, achieving 98.7% agreement with human annotations. Please refer to Appendix B.1 for details.
+ Figure 2: Distributions of terminal states as a function of trajectory length across models and benchmarks. 
+ Model | 
+ BrowseComp | 
+ BrowseComp-Plus | 
+ xbench-DeepSearch | 
+ CC | 
+ UC | 
+ CI | 
+ UI | 
+ GU | 
+ NA | 
+ CC | 
+ UC | 
+ CI | 
+ UI | 
+ GU | 
+ NA | 
+ CC | 
+ UC | 
+ CI | 
+ UI | 
+ GU | 
+ NA | 
+ Qwen3.5-397B-A17B | 
+ 32.8 | 
+ 2.2 | 
+ 11.6 | 
+ 33.6 | 
+ 19.8 | 
+ 0.0 | 
+ 58.0 | 
+ 12.7 | 
+ 2.0 | 
+ 6.4 | 
+ 17.6 | 
+ 3.3 | 
+ 55.2 | 
+ 1.0 | 
+ 23.4 | 
+ 14.0 | 
+ 6.4 | 
+ 0.0 | 
+ GLM-4.7 | 
+ 29.8 | 
+ 4.0 | 
+ 8.0 | 
+ 19.6 | 
+ 38.6 | 
+ 0.0 | 
+ 52.9 | 
+ 13.0 | 
+ 1.7 | 
+ 1.8 | 
+ 24.4 | 
+ 6.2 | 
+ 54.6 | 
+ 1.4 | 
+ 27.0 | 
+ 5.4 | 
+ 11.6 | 
+ 0.0 | 
+ GLM-5.0 | 
+ 41.8 | 
+ 2.8 | 
+ 10.6 | 
+ 26.2 | 
+ 18.6 | 
+ 0.0 | 
+ 64.7 | 
+ 9.9 | 
+ 2.2 | 
+ 3.9 | 
+ 11.4 | 
+ 8.0 | 
+ 56.2 | 
+ 2.8 | 
+ 26.6 | 
+ 10.0 | 
+ 4.4 | 
+ 0.0 | 
+ MiniMax-M2.5 | 
+ 34.2 | 
+ 1.8 | 
+ 10.6 | 
+ 48.2 | 
+ 5.2 | 
+ 0.0 | 
+ 55.1 | 
+ 14.1 | 
+ 2.9 | 
+ 13.7 | 
+ 12.6 | 
+ 1.6 | 
+ 49.4 | 
+ 2.0 | 
+ 26.4 | 
+ 22.2 | 
+ 0.0 | 
+ 0.0 | 
+ Table 2: Terminal state distributions (%) across different models and datasets. States are categorized into correct predictions: CC (Confident Correct), UC (Uncertain Correct); and error types: CI (Confident Incorrect), UI (Uncertain Incorrect), GU (Give Up), and NA (No Answer). 
+ 3.3 Experimental Setup and Results
+ Setup
+ We include four open-source 2 2 
+ 2 
+ We exclude closed-source models like GPT-5.4 or Claude Opus 4.7 as they usually encrypt the reasoning content within the trajectory, making the analysis infeasible. flagship models with strong agentic capabilities: GLM-4.7 ( Zhipu, 2025 ) , GLM-5.0 ( GLM-5-Team et al., 2026 ) , Qwen3.5-397B-A17B ( Qwen Team, 2026 ) , and MiniMax-M2.5 ( MiniMax, 2026 ) . The context window sizes of GLM-4.7, GLM-5.0, and MiniMax-M2.5 are approximately 200K, and the context window of Qwen3.5-397B-A17B is 256K. All models are evaluated using their full context. For datasets, we include BrowseComp ( Wei et al., 2025 ) , BrowseComp-Plus ( Chen et al., 2025b ) , and xbench-DeepSearch ( Chen et al., 2025a ) . BrowseComp and xbench-DeepSearch are two datasets designed to evaluate web search capability, while BrowseComp-Plus is a dataset that relies on a local corpus for searching. For BrowseComp, following Zeng et al. (2025) , we take a 100-sample split from the whole set to remain representative while reducing the cost. All experiments are repeated five times to reduce noise. We set the maximum interaction turns to 100. Please refer to Appendix A for the scaffold implementation details.
+ Main Results
+ Table 2 presents the ratios of different terminal states. Figure 2 further illustrates the distribution of terminal states across different trajectory lengths. 3 3 
+ 3 
+ Trajectory length is defined as the total token count within the context window, encompassing both system and user prompts. Key findings are summarized as follows:
+ Figure 3: Distributions of terminal states as a function of trajectory struggle score on BrowseComp. 
+ Figure 4: Premature termination rate as a function of trajectory length under controlled query difficulty. 
+ 1) Under extensive context, models give up or provide uncertain incorrect answers long before exhausting the context window. As shown in Figure 2 , as the trajectory length increases, model accuracy drops sharply. Confident incorrect answers are more frequent early on, whereas uncertain incorrect answers or give-up outcomes increase rapidly as the trajectory length grows, becoming the dominant outcomes in later stages. We term this the premature termination phenomenon, as the model gives up or submits an uncertain incorrect answer while a large portion of the context window remains available to reach a confident, evidence-grounded answer. We define the premature termination rate as the proportion of give-up and uncertain incorrect outcomes.
+ 2) Trajectories exhibiting the premature termination phenomenon show more struggle patterns. We conduct a process-level evaluation of the agent’s trajectory to investigate the relationship between trajectory semantics and the phenomenon. Specifically, we classify each step in the trajectory as struggle or not struggle using an LLM-as-a-judge based on the reasoning content of the step, where struggle means repeated failed attempts or no progress. We then define the struggle score as the percentage of struggle labels across all steps. Details of the evaluation can be found in Appendix B.2 . As shown in Figure 3 , trajectories leading to give-up or uncertain incorrect answers usually have higher struggle scores than those associated with other labels, and the proportion of these two types grows as the struggle score increases. This indicates that, from a semantic perspective, trajectories terminating in these two states are more prone to becoming trapped in failed attempts and making no progress.
+ 3) Controlling for query difficulty, the premature termination rate is positively correlated with context length. To demonstrate that the rise of the two labels is not merely caused by query difficulty, we conduct an experiment that controls for task difficulty. Specifically, for each query we sample five trajectories and rank them by length. We then form five groups by rank: the $i$ -th group collects the $i$ -th longest trajectory of each query. By construction, every group contains the same set of queries, so the task difficulty is held fixed across groups while the average trajectory length increases with the rank. We then compute the rate of the two labels within each group. As shown in Figure 4 , the rate generally increases from the shortest to the longest group across different datasets and models, demonstrating that the premature termination rate is positively correlated with context length when query difficulty is held fixed.
+ 4 Mitigating Context Rot
+ 4.1 Context Management
+ In this section, we revisit the context management methods to show how they reshape model behavior behind the observed performance and provide practical guidance for method selection.
+ Setup
+ We include three categories comprising seven different context management variants. We report the total number of tool calls used for each method to estimate the cost. Additionally, we set a maximum limit of 100 interaction turns per method and repeat each experiment five times to reduce noise. The implemented strategies are as follows:
+ 1) Context compaction summarizes the trajectory content into a compact form once a trigger condition is met ( Wu et al., 2026 ; Yen et al., 2025 ) . We evaluate three types of trigger conditions: trajectory length, interaction turns, and semantics. For trajectory length, we set the threshold to 96K for BrowseComp-Plus and 32K for BrowseComp and xbench-DeepSearch. For the number of interaction turns, we set the threshold to 10 for all datasets. For the semantic variant, we calculate a struggle score over a sliding window of 10 interaction turns; once this score reaches 0.5, we apply the summarization strategy. For all methods, summarization operations are performed by the main agent and included in the tool call metrics.
+ 2) Context trimming directly discards previous content from the accumulated context ( DeepSeek-AI et al., 2025 ) . We consider three variants: the discard-all strategy, which discards all tool responses except the last one upon reaching a predefined context length; the keep-latest strategy, which fully retains the most recent interaction turns while discarding older tool responses; and the keep-latest (w/ sum.) strategy, which builds upon the keep-latest strategy by applying the summarization strategy once a predefined context length is reached. Specifically, for the discard-all and keep-latest (w/ sum.) strategies, we set the length thresholds identical to those used in context compaction. For both the keep-latest and keep-latest (w/ sum.) strategies, we retain the latest 3 interaction turns.
+ 3) Context isolation partitions the context to help an agent perform a task ( Martin, 2025 ; Team et al., 2026 ; Sun et al., 2025 ) . We adopt the FoldAgent ( Sun et al., 2025 ) implementation schema, in which sub-agents execute tasks assigned by the main agent and return only summarized outcomes. Unlike standard multi-agent implementations, the main agent invokes the sub-agent via a tool call and decides when to invoke it, distinguishing this approach from the passive context management methods described above.
+ Method | 
+ BrowseComp | 
+ BrowseComp-Plus | 
+ xbench-DeepSearch | 
+ Overall $\uparrow$ | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Qwen3.5-397B-A17B | 
+ ReAct | 
+ $35.0$ | 
+ $\mathbf{21.7}$ | 
+ $53.4$ | 
+ $\mathbf{0.0}$ | 
+ $72.0$ | 
+ $\mathbf{14.8}$ | 
+ $23.6$ | 
+ $3.0$ | 
+ $56.2$ | 
+ $\mathbf{12.5}$ | 
+ $20.4$ | 
+ $\mathbf{0.0}$ | 
+ $54.4$ | 
+ Summary (Length) | 
+ $46.6$ | 
+ $57.7$ | 
+ $\underline{2.4}$ | 
+ $38.0$ | 
+ $74.5$ | 
+ $68.8$ | 
+ $\mathbf{0.9}$ | 
+ $24.0$ | 
+ $56.8$ | 
+ $28.2$ | 
+ $\mathbf{3.0}$ | 
+ $14.8$ | 
+ $59.3$ | 
+ Summary (Turn) | 
+ $46.6$ | 
+ $53.7$ | 
+ $\mathbf{1.8}$ | 
+ $38.4$ | 
+ $76.2$ | 
+ $26.2$ | 
+ $20.9$ | 
+ $1.2$ | 
+ $59.4$ | 
+ $26.3$ | 
+ $5.0$ | 
+ $13.8$ | 
+ $60.7$ | 
+ Summary (Semantic) | 
+ $45.8$ | 
+ $53.4$ | 
+ $4.6$ | 
+ $37.0$ | 
+ $75.5$ | 
+ $26.1$ | 
+ $22.0$ | 
+ $1.1$ | 
+ $56.6$ | 
+ $24.4$ | 
+ $\underline{4.6}$ | 
+ $12.6$ | 
+ $59.3$ | 
+ Discard | 
+ $44.6$ | 
+ $40.8$ | 
+ $19.4$ | 
+ $17.0$ | 
+ $76.3$ | 
+ $\underline{21.0}$ | 
+ $22.2$ | 
+ $\mathbf{0.0}$ | 
+ $60.0$ | 
+ $\underline{19.8}$ | 
+ $9.2$ | 
+ $5.0$ | 
+ $60.3$ | 
+ Keep Latest | 
+ $43.8$ | 
+ $\underline{40.5}$ | 
+ $33.8$ | 
+ $\underline{4.2}$ | 
+ $78.3$ | 
+ $30.2$ | 
+ $19.5$ | 
+ $1.0$ | 
+ $58.2$ | 
+ $22.8$ | 
+ $9.2$ | 
+ $5.2$ | 
+ $60.1$ | 
+ Keep Latest (w/ sum.) | 
+ $\underline{48.2}$ | 
+ $46.8$ | 
+ $16.2$ | 
+ $17.6$ | 
+ $\mathbf{79.3}$ | 
+ $30.0$ | 
+ $\underline{17.9}$ | 
+ $1.2$ | 
+ $\underline{61.2}$ | 
+ $23.6$ | 
+ $5.6$ | 
+ $7.6$ | 
+ $\underline{62.9}$ | 
+ FoldAgent | 
+ $\mathbf{54.0}$ | 
+ $57.4$ | 
+ $6.4$ | 
+ $30.4$ | 
+ $\underline{78.7}$ | 
+ $44.4$ | 
+ $19.9$ | 
+ $\underline{0.3}$ | 
+ $\mathbf{62.0}$ | 
+ $29.3$ | 
+ $6.8$ | 
+ $\underline{4.8}$ | 
+ $\mathbf{64.9}$ | 
+ GLM-4.7 | 
+ ReAct | 
+ $33.8$ | 
+ $\mathbf{27.7}$ | 
+ $58.2$ | 
+ $\mathbf{0.0}$ | 
+ $65.6$ | 
+ $\mathbf{15.5}$ | 
+ $26.0$ | 
+ $7.6$ | 
+ $56.0$ | 
+ $\mathbf{17.8}$ | 
+ $17.0$ | 
+ $\mathbf{0.0}$ | 
+ $51.8$ | 
+ Summary (Length) | 
+ $\mathbf{49.0}$ | 
+ $62.8$ | 
+ $\underline{1.4}$ | 
+ $41.6$ | 
+ $74.4$ | 
+ $38.8$ | 
+ $\mathbf{4.4}$ | 
+ $20.0$ | 
+ $\underline{57.8}$ | 
+ $39.7$ | 
+ $\mathbf{1.6}$ | 
+ $18.2$ | 
+ $\mathbf{60.4}$ | 
+ Summary (Turn) | 
+ $44.0$ | 
+ $65.3$ | 
+ $\mathbf{0.2}$ | 
+ $48.8$ | 
+ $73.2$ | 
+ $42.2$ | 
+ $\underline{4.7}$ | 
+ $21.4$ | 
+ $57.4$ | 
+ $42.8$ | 
+ $2.6$ | 
+ $21.6$ | 
+ $58.2$ | 
+ Summary (Semantic) | 
+ $\underline{46.8}$ | 
+ $58.6$ | 
+ $1.6$ | 
+ $43.4$ | 
+ $73.7$ | 
+ $41.8$ | 
+ $4.9$ | 
+ $21.3$ | 
+ $\mathbf{60.4}$ | 
+ $32.7$ | 
+ $\underline{2.4}$ | 
+ $14.2$ | 
+ $\underline{60.3}$ | 
+ Discard | 
+ $46.0$ | 
+ $\underline{46.3}$ | 
+ $33.6$ | 
+ $10.2$ | 
+ $77.2$ | 
+ $\underline{20.6}$ | 
+ $21.1$ | 
+ $\mathbf{0.0}$ | 
+ $55.4$ | 
+ $\underline{25.2}$ | 
+ $12.0$ | 
+ $1.8$ | 
+ $59.5$ | 
+ Keep Latest | 
+ $42.0$ | 
+ $50.3$ | 
+ $39.0$ | 
+ $\underline{5.8}$ | 
+ $\mathbf{80.2}$ | 
+ $28.2$ | 
+ $18.4$ | 
+ $\underline{0.1}$ | 
+ $57.4$ | 
+ $26.1$ | 
+ $13.8$ | 
+ $\underline{0.8}$ | 
+ $59.9$ | 
+ Keep Latest (w/ sum.) | 
+ $44.6$ | 
+ $50.1$ | 
+ $31.0$ | 
+ $12.8$ | 
+ $\underline{79.1}$ | 
+ $28.5$ | 
+ $19.3$ | 
+ $0.2$ | 
+ $56.8$ | 
+ $\underline{25.2}$ | 
+ $11.6$ | 
+ $2.6$ | 
+ $60.2$ | 
+ FoldAgent | 
+ $44.0$ | 
+ $65.8$ | 
+ $3.8$ | 
+ $42.6$ | 
+ $71.2$ | 
+ $33.9$ | 
+ $27.5$ | 
+ $\mathbf{0.0}$ | 
+ $57.2$ | 
+ $36.0$ | 
+ $5.4$ | 
+ $7.2$ | 
+ $57.5$ | 
+ Table 3: Comparison of context management methods across BrowseComp, BrowseComp-Plus, and xbench-DeepSearch. For each dataset, we report accuracy (Acc.), the average number of tool calls (# Tool), the premature termination rate (PT), and the no-answer rate (NA). The Overall column presents the average accuracy across the three datasets; bold and underline mark the best and second best values within each model block. 
+ Thres. | 
+ # Tool | 
+ Acc. | 
+ PT | 
+ NA | 
+ $32$ K | 
+ $57.7_{\pm 0.9}$ | 
+ $46.6_{\pm 0.9}$ | 
+ $2.4_{\pm 1.1}$ | 
+ $38.0_{\pm 1.0}$ | 
+ $48$ K | 
+ $50.6_{\pm 3.0}$ | 
+ $45.2_{\pm 5.2}$ | 
+ $7.2_{\pm 2.6}$ | 
+ $26.4_{\pm 4.8}$ | 
+ $64$ K | 
+ $41.7_{\pm 2.2}$ | 
+ $45.0_{\pm 2.9}$ | 
+ $20.2_{\pm 4.8}$ | 
+ $16.0_{\pm 2.3}$ | 
+ Table 4: Threshold sensitivity of the summary (length) method on BrowseComp with Qwen3.5-397B-A17B. Metrics include accuracy (Acc.), the average number of tool calls (# Tool), the premature termination rate (PT), and the no-answer rate (NA). Values are mean $\pm$ standard deviation across runs. 
+ Main Results
+ Table 3 presents the main results. Please refer to Table 9 for the detailed results including standard deviations. The key findings are summarized as follows:
+ Model | 
+ BrowseComp | 
+ BrowseComp-Plus | 
+ xbench-DeepSearch | 
+ Average | 
+ FT | 
+ FL | 
+ MV | 
+ FT | 
+ FL | 
+ MV | 
+ FT | 
+ FL | 
+ MV | 
+ FT | 
+ FL | 
+ MV | 
+ Qwen3.5 | 
+ $54.0$ | 
+ $56.7$ | 
+ $52.7$ | 
+ $74.0$ | 
+ $76.7$ | 
+ $77.7$ | 
+ $61.3$ | 
+ $63.0$ | 
+ $64.3$ | 
+ $63.1$ | 
+ $65.5$ | 
+ $64.9$ | 
+ + Filter | 
+ $61.7$ | 
+ $63.0$ | 
+ $62.3$ | 
+ $79.7$ | 
+ $80.5$ | 
+ $80.7$ | 
+ $62.6$ | 
+ $63.0$ | 
+ $65.3$ | 
+ $68.0_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+4.9}\hss}}$ | 
+ $68.8_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+3.3}\hss}}$ | 
+ $69.4_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+4.5}\hss}}$ | 
+ GLM4.7 | 
+ $52.7$ | 
+ $54.3$ | 
+ $52.3$ | 
+ $74.2$ | 
+ $76.5$ | 
+ $79.3$ | 
+ $59.3$ | 
+ $59.6$ | 
+ $60.3$ | 
+ $62.1$ | 
+ $63.5$ | 
+ $64.0$ | 
+ + Filter | 
+ $56.7$ | 
+ $57.3$ | 
+ $56.3$ | 
+ $80.0$ | 
+ $81.2$ | 
+ $81.8$ | 
+ $62.0$ | 
+ $61.6$ | 
+ $61.6$ | 
+ $66.2_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+4.1}\hss}}$ | 
+ $66.7_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+3.2}\hss}}$ | 
+ $66.6_{\hbox to0.0pt{{\color[rgb]{0,1,0}\scriptsize+2.6}\hss}}$ | 
+ Table 5: Effect of behavior-aware filtering for trajectory selection. FT selects the trajectory with the fewest turns, FL selects the trajectory with the minimum length, and MV denotes majority voting. Average columns report mean accuracy over BrowseComp, BrowseComp-Plus, and xbench-DeepSearch. 
+ Figure 5: Integration of parallel sampling with the ReAct agent and context management methods. We set the maximum sampling number to 4 for the context management methods and 8 for the ReAct agent. We plot the performance curve by incrementally increasing the sampling number from 1 to the maximum. For a fair cost comparison, the x-axis represents the number of tool calls. 
+ 1) Context management acts as a test-time scaling method that reduces the premature termination rate to enable more exploration. As shown in Table 3 , compared with the ReAct agent, context management methods substantially reduce the premature termination rate and improve accuracy, but at the cost of more tool calls and more unfinished trajectories. This indicates that context management acts as a test-time scaling method: by reducing the peak context length, it mitigates the premature termination phenomenon to enable more exploration. To further demonstrate this, we set different length thresholds for the summary (length) context management method. As shown in Table 4 , as the length threshold decreases, i.e., context compaction is triggered more frequently, the premature termination rate drops further at the cost of more tool calls, while the accuracy generally increases. We also analyze the other context management methods and observe similar trends. Please refer to Appendix D for details.
+ 2) The context management method should be chosen based on the model’s agentic capability. As shown in Table 3 , for Qwen3.5-397B-A17B with strong agentic ability 4 4 
+ 4 
+ The comparison is based on the models’ performance across the three benchmarks under the standard ReAct agent. , context isolation via sub-agent calls performs best. In contrast, for GLM-4.7 with weaker agentic ability, FoldAgent is among the worst methods, whereas the passive method keep-latest (w/ sum.) achieves the best balance between accuracy and cost.
+ 4.2 Parallel Sampling
+ In this section, we first demonstrate the effectiveness of our behavior-aware filtering, and then compare the performance of context management and the ReAct agent, both under the improved parallel sampling.
+ Setup
+ For each problem, we sample multiple trajectories using the ReAct framework without context management and apply an aggregation strategy to determine the final answer. Through preliminary studies, we find that give-up and uncertain-answer terminations are
+highly correlated with incorrect answers. Please refer to Appendix F for details. Therefore, before aggregation, we apply a behavior-aware filter that excludes trajectories ending in give-up or uncertain answers, retaining only confident answers. 5 5 
+ 5 
+ For cases where no confident answer remains, we fall back to the original no-filter version. The trajectory labeling method is similar to that in § 3.2 , except that the ground-truth answers are omitted to prevent data leakage. We evaluate the performance of the filter on three aggregation strategies: selecting the trajectory with the minimum length, selecting the trajectory with the fewest turns, and majority voting. 6 6 
+ 6 
+ For simplicity, we use exact match for the equivalence between answers. We set the sampling number to 8 and repeat each experiment three times.
+ Main Results
+ Table 5 presents the main results. As shown, behavior-aware filtering significantly improves performance, achieving an average performance gain of 2.6% to 4.9% across the three aggregation methods. The performance gain is greatest for datasets like BrowseComp and BrowseComp-Plus, where premature termination is severe.
+ Integration and Comparison with Context Management
+ We set the maximum sampling number to 4 for the context management methods and 8 for the ReAct agent without context management, considering that context management methods usually consume more tool calls. For multiple trajectories, we apply the behavior-aware filtering approach and use the majority voting aggregation method. Figure 5 presents the main results. The best-performing context management method outperforms the ReAct agent on datasets like BrowseComp and BrowseComp-Plus, where premature termination is severe. However, for datasets like xbench-DeepSearch, where premature termination is less severe, ReAct can even match or outperform the best context management methods.
+ 5 Conclusion
+ In this paper, we study context rot in long-horizon agentic search and identify premature termination: under extensive context, models give up or provide uncertain incorrect answers long before exhausting the context window. To mitigate it, we revisit seven context management methods and reveal them as test-time scaling strategies, providing principles for method selection. We further develop an optimized parallel sampling strategy and demonstrate its effectiveness across three aggregation methods.
+ Limitations
+ While our study provides valuable insights into diagnosing and mitigating context rot, it still has some limitations. Our evaluation focuses exclusively on open-source models. We excluded closed-source models because they usually encrypt the reasoning content within the trajectory, making analysis infeasible. Additionally, because our investigation is specifically centered on long-horizon deep search tasks, it remains unclear whether the error distributions we observed fully generalize to other long-horizon agentic domains like software development.
+ Ethical Considerations
+ Our study relies exclusively on publicly available benchmarks and open-source models, and does not involve any private, personal, or user-generated data. The human annotations used to validate our automatic evaluation were provided by consenting NLP researchers, and cover only model-generated trajectories rather than any sensitive content. Our experiments issue live web search queries through a third-party API; we use the retrieved content solely for research purposes.
+ References
+ Anthropic (2025) 
+ Anthropic 
+ Effective context engineering for AI agents .
+ Note: Anthropic Engineering Blog https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents 
+ Cited by: §1 ,
+ §1 ,
+ §2 .
+ Chen et al. (2025a) 
+ K. Chen, Y. Ren, Y. Liu, X. Hu, H. Tian, T. Xie, F. Liu, H. Zhang, H. Liu, Y. Gong, C. Sun, H. Hou, H. Yang, J. Pan, J. Lou, J. Mao, J. Liu, J. Li, K. Liu, K. Liu, R. Wang, R. Li, T. Niu, W. Zhang, W. Yan, X. Wang, Y. Zhang, Y. Hung, Y. Jiang, Z. Liu, Z. Yin, Z. Ma, and Z. Mo 
+ Xbench: tracking agents productivity scaling with profession-aligned real-world evaluations .
+ External Links: 2506.13651 ,
+ Link 
+ Cited by: §3.3 .
+ Chen et al. (2025b) 
+ Z. Chen, X. Ma, S. Zhuang, P. Nie, K. Zou, A. Liu, J. Green, K. Patel, R. Meng, M. Su, S. Sharifymoghaddam, Y. Li, H. Hong, X. Shi, X. Liu, N. Thakur, C. Zhang, L. Gao, W. Chen, and J. Lin 
+ BrowseComp-plus: a more fair and transparent evaluation benchmark of deep-research agent .
+ External Links: 2508.06600 ,
+ Link 
+ Cited by: §1 ,
+ §3.3 .
+ Chung et al. (2025) 
+ A. Chung, Y. Zhang, K. Lin, A. Rawal, Q. Gao, and J. Chai 
+ Evaluating long-context reasoning in llm-based webagents .
+ External Links: 2512.04307 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ DeepSeek-AI et al. (2025) 
+ DeepSeek-AI, A. Liu, A. Mei, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, B. Zhang, C. Lin, C. Dong, C. Lu, C. Zhao, C. Deng, C. Xu, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, E. Li, F. Zhou, F. Lin, F. Dai, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu, H. Li, H. Liang, H. Wei, H. Zhang, H. Luo, H. Ji, H. Ding, H. Tang, H. Cao, H. Gao, H. Qu, H. Zeng, J. Huang, J. Li, J. Xu, J. Hu, J. Chen, J. Xiang, J. Yuan, J. Cheng, J. Zhu, J. Ran, J. Jiang, J. Qiu, J. Li, J. Song, K. Dong, K. Gao, K. Guan, K. Huang, K. Zhou, K. Huang, K. Yu, L. Wang, L. Zhang, L. Wang, L. Zhao, L. Yin, L. Guo, L. Luo, L. Ma, L. Wang, L. Zhang, M. S. Di, M. Y. Xu, M. Zhang, M. Zhang, M. Tang, M. Zhou, P. Huang, P. Cong, P. Wang, Q. Wang, Q. Zhu, Q. Li, Q. Chen, Q. Du, R. Xu, R. Ge, R. Zhang, R. Pan, R. Wang, R. Yin, R. Xu, R. Shen, R. Zhang, S. H. Liu, S. Lu, S. Zhou, S. Chen, S. Cai, S. Chen, S. Hu, S. Liu, S. Hu, S. Ma, S. Wang, S. Yu, S. Zhou, S. Pan, S. Zhou, T. Ni, T. Yun, T. Pei, T. Ye, T. Yue, W. Zeng, W. Liu, W. Liang, W. Pang, W. Luo, W. Gao, W. Zhang, X. Gao, X. Wang, X. Bi, X. Liu, X. Wang, X. Chen, X. Zhang, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Li, X. Yang, X. Li, X. Chen, X. Su, X. Pan, X. Lin, X. Fu, Y. Q. Wang, Y. Zhang, Y. Xu, Y. Ma, Y. Li, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Qian, Y. Yu, Y. Zhang, Y. Ding, Y. Shi, Y. Xiong, Y. He, Y. Zhou, Y. Zhong, Y. Piao, Y. Wang, Y. Chen, Y. Tan, Y. Wei, Y. Ma, Y. Liu, Y. Yang, Y. Guo, Y. Wu, Y. Wu, Y. Cheng, Y. Ou, Y. Xu, Y. Wang, Y. Gong, Y. Wu, Y. Zou, Y. Li, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Zhao, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Huang, Z. Wu, Z. Li, Z. Zhang, Z. Xu, Z. Wang, Z. Gu, Z. Zhu, Z. Li, Z. Zhang, Z. Xie, Z. Gao, Z. Pan, Z. Yao, B. Feng, H. Li, J. L. Cai, J. Ni, L. Xu, M. Li, N. Tian, R. J. Chen, R. L. Jin, S. S. Li, S. Zhou, T. Sun, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Song, X. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Z. Huang, Z. Xu, Z. Zhang, D. Ji, J. Liang, J. Guo, J. Chen, L. Xia, M. Wang, M. Li, P. Zhang, R. Chen, S. Sun, S. Wu, S. Ye, T. Wang, W. L. Xiao, W. An, X. Wang, X. Sun, X. Wang, Y. Tang, Y. Zha, Z. Zhang, Z. Ju, Z. Zhang, and Z. Qu 
+ DeepSeek-v3.2: pushing the frontier of open large language models .
+ External Links: 2512.02556 ,
+ Link 
+ Cited by: §1 ,
+ §2 ,
+ §4.1 .
+ Dongre et al. (2025) 
+ V. Dongre, R. A. Rossi, V. D. Lai, D. S. Yoon, D. Hakkani-Tür, and T. Bui 
+ Drift no more? context equilibria in multi-turn llm interactions .
+ External Links: 2510.07777 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Du et al. (2025) 
+ Y. Du, M. Tian, S. Ronanki, S. Rongali, S. Bodapati, A. Galstyan, A. Wells, R. Schwartz, E. A. Huerta, and H. Peng 
+ Context length alone hurts llm performance despite perfect retrieval .
+ External Links: 2510.05381 ,
+ Link 
+ Cited by: §2 .
+ Gao et al. (2025) 
+ J. Gao, W. Fu, M. Xie, S. Xu, C. He, Z. Mei, B. Zhu, and Y. Wu 
+ Beyond ten turns: unlocking long-horizon agentic search with large-scale asynchronous rl .
+ External Links: 2508.07976 ,
+ Link 
+ Cited by: §1 .
+ GLM-5-Team et al. (2026) 
+ GLM-5-Team, A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie, C. Zhu, C. Yin, C. Wang, G. Pan, H. Zeng, H. Zhang, H. Wang, H. Chen, J. Zhang, J. Jiao, J. Guo, J. Wang, J. Du, J. Wu, K. Wang, L. Li, L. Fan, L. Zhong, M. Liu, M. Zhao, P. Du, Q. Dong, R. Lu, Shuang-Li, S. Cao, S. Liu, T. Jiang, X. Chen, X. Zhang, X. Huang, X. Dong, Y. Xu, Y. Wei, Y. An, Y. Niu, Y. Zhu, Y. Wen, Y. Cen, Y. Bai, Z. Qiao, Z. Wang, Z. Wang, Z. Zhu, Z. Liu, Z. Li, B. Wang, B. Wen, C. Huang, C. Cai, C. Yu, C. Li, C. Hu, C. Zhang, D. Zhang, D. Lin, D. Yang, D. Wang, D. Ai, E. Zhu, F. Yi, F. Chen, G. Wen, H. Sun, H. Zhao, H. Hu, H. Zhang, H. Liu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Liu, H. Wang, H. Yan, H. Ge, H. Liu, H. Chu, J. Zhao, J. Wang, J. Zhao, J. Ren, J. Wang, J. Zhang, J. Gui, J. Zhao, J. Li, J. An, J. Li, J. Yuan, J. Du, J. Liu, J. Zhi, J. Duan, K. Zhou, K. Wei, K. Wang, K. Luo, L. Zhang, L. Sha, L. Xu, L. Wu, L. Ding, L. Chen, M. Li, N. Lin, P. Ta, Q. Zou, R. Song, R. Yang, S. Tu, S. Yang, S. Wu, S. Zhang, S. Li, S. Li, S. Fan, W. Qin, W. Tian, W. Zhang, W. Yu, W. Liang, X. Kuang, X. Cheng, X. Li, X. Yan, X. Hu, X. Ling, X. Fan, X. Xia, X. Zhang, X. Zhang, X. Pan, X. Zou, X. Zhang, Y. Liu, Y. Wu, Y. Li, Y. Wang, Y. Zhu, Y. Tan, Y. Zhou, Y. Pan, Y. Zhang, Y. Su, Y. Geng, Y. Yan, Y. Tan, Y. Bi, Y. Shen, Y. Yang, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Wu, Y. Zhang, Y. Duan, Y. Zhang, Z. Liu, Z. Jiang, Z. Yan, Z. Zhang, Z. Wei, Z. Chen, Z. Feng, Z. Yao, Z. Chai, Z. Wang, Z. Zhang, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang 
+ GLM-5: from vibe coding to agentic engineering .
+ External Links: 2602.15763 ,
+ Link 
+ Cited by: §3.3 .
+ Google (2025) 
+ Google 
+ Gemini deep research overview .
+ Note: https://gemini.google/overview/deep-research/ 
+ Cited by: §1 .
+ Hong et al. (2025) 
+ K. Hong, A. Troynikov, and J. Huber 
+ Context rot: how increasing input tokens impacts llm performance .
+ Technical report 
+ Chroma .
+ External Links: Link 
+ Cited by: §1 .
+ Hsieh et al. (2024) 
+ C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg 
+ RULER: what’s the real context size of your long-context language models? .
+ External Links: 2404.06654 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Kang et al. (2025) 
+ M. Kang, W. Chen, D. Han, H. A. Inan, L. Wutschitz, Y. Chen, R. Sim, and S. Rajmohan 
+ ACON: optimizing context compression for long-horizon llm agents .
+ External Links: 2510.00615 ,
+ Link 
+ Cited by: §2 .
+ Kerboua et al. (2025) 
+ I. Kerboua, S. O. Shayegan, M. Thakkar, X. H. Lù, L. Boisvert, M. Caccia, J. Espinas, A. Aussem, V. Eglin, and A. Lacoste 
+ FocusAgent: simple yet effective ways of trimming the large context of web agents .
+ External Links: 2510.03204 ,
+ Link 
+ Cited by: §2 .
+ Laban et al. (2025) 
+ P. Laban, H. Hayashi, Y. Zhou, and J. Neville 
+ LLMs get lost in multi-turn conversation .
+ External Links: 2505.06120 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Liu et al. (2023) 
+ N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang 
+ Lost in the middle: how language models use long contexts .
+ External Links: 2307.03172 ,
+ Link 
+ Cited by: §1 ,
+ §1 ,
+ §2 .
+ Martin (2025) 
+ L. Martin 
+ Context engineering for agents .
+ Note: LangChain Blog https://blog.langchain.com/context-engineering-for-agents/ 
+ Cited by: §2 ,
+ §4.1 .
+ MiniMax (2026) 
+ MiniMax 
+ MiniMax m2.5: built for real-world productivity. .
+ Note: https://www.minimax.io/news/minimax-m25 
+ Cited by: §3.3 .
+ Modarressi et al. (2025) 
+ A. Modarressi, H. Deilamsalehy, F. Dernoncourt, T. Bui, R. A. Rossi, S. Yoon, and H. Schütze 
+ NoLiMa: long-context evaluation beyond literal matching .
+ External Links: 2502.05167 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ OpenAI et al. (2025) 
+ OpenAI, S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, B. Barak, A. Bennett, T. Bertao, N. Brett, E. Brevdo, G. Brockman, S. Bubeck, C. Chang, K. Chen, M. Chen, E. Cheung, A. Clark, D. Cook, M. Dukhan, C. Dvorak, K. Fives, V. Fomenko, T. Garipov, K. Georgiev, M. Glaese, T. Gogineni, A. Goucher, L. Gross, K. G. Guzman, J. Hallman, J. Hehir, J. Heidecke, A. Helyar, H. Hu, R. Huet, J. Huh, S. Jain, Z. Johnson, C. Koch, I. Kofman, D. Kundel, J. Kwon, V. Kyrylov, E. Y. Le, G. Leclerc, J. P. Lennon, S. Lessans, M. Lezcano-Casado, Y. Li, Z. Li, J. Lin, J. Liss, Lily, Liu, J. Liu, K. Lu, C. Lu, Z. Martinovic, L. McCallum, J. McGrath, S. McKinney, A. McLaughlin, S. Mei, S. Mostovoy, T. Mu, G. Myles, A. Neitz, A. Nichol, J. Pachocki, A. Paino, D. Palmie, A. Pantuliano, G. Parascandolo, J. Park, L. Pathak, C. Paz, L. Peran, D. Pimenov, M. Pokrass, E. Proehl, H. Qiu, G. Raila, F. Raso, H. Ren, K. Richardson, D. Robinson, B. Rotsted, H. Salman, S. Sanjeev, M. Schwarzer, D. Sculley, H. Sikchi, K. Simon, K. Singhal, Y. Song, D. Stuckey, Z. Sun, P. Tillet, S. Toizer, F. Tsimpourlas, N. Vyas, E. Wallace, X. Wang, M. Wang, O. Watkins, K. Weil, A. Wendling, K. Whinnery, C. Whitney, H. Wong, L. Yang, Y. Yang, M. Yasunaga, K. Ying, W. Zaremba, W. Zhan, C. Zhang, B. Zhang, E. Zhang, and S. Zhao 
+ Gpt-oss-120b & gpt-oss-20b model card .
+ External Links: 2508.10925 ,
+ Link 
+ Cited by: §3.2 .
+ OpenAI (2025) 
+ OpenAI 
+ Deep research system card .
+ Note: https://cdn.openai.com/deep-research-system-card.pdf 
+ Cited by: §1 .
+ Qwen Team (2026) 
+ Qwen Team 
+ Qwen3.5: towards native multimodal agents .
+ External Links: Link 
+ Cited by: §3.3 .
+ Shi et al. (2023) 
+ F. Shi, X. Chen, K. Misra, N. Scales, D. Dohan, E. Chi, N. Schärli, and D. Zhou 
+ Large language models can be easily distracted by irrelevant context .
+ External Links: 2302.00093 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Sinha et al. (2026) 
+ A. Sinha, A. Arun, S. Goel, S. Staab, and J. Geiping 
+ The illusion of diminishing returns: measuring long horizon execution in llms .
+ External Links: 2509.09677 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Sirdeshmukh et al. (2025) 
+ V. Sirdeshmukh, K. Deshpande, J. Mols, L. Jin, E. Cardona, D. Lee, J. Kritz, W. Primack, S. Yue, and C. Xing 
+ MultiChallenge: a realistic multi-turn conversation evaluation benchmark challenging to frontier llms .
+ External Links: 2501.17399 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Sun et al. (2025) 
+ W. Sun, M. Lu, Z. Ling, K. Liu, X. Yao, Y. Yang, and J. Chen 
+ Scaling long-horizon llm agent via context-folding .
+ External Links: 2510.11967 ,
+ Link 
+ Cited by: Appendix A ,
+ §1 ,
+ §2 ,
+ §4.1 .
+ Team et al. (2026) 
+ K. Team, T. Bai, Y. Bai, Y. Bao, S. H. Cai, Y. Cao, Y. Charles, H. S. Che, C. Chen, G. Chen, H. Chen, J. Chen, J. Chen, J. Chen, J. Chen, K. Chen, L. Chen, R. Chen, X. Chen, Y. Chen, Y. Chen, Y. Chen, Y. Chen, Y. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, Z. Chen, D. Cheng, M. Chu, J. Cui, J. Deng, M. Diao, H. Ding, M. Dong, M. Dong, Y. Dong, Y. Dong, A. Du, C. Du, D. Du, L. Du, Y. Du, Y. Fan, S. Fang, Q. Feng, Y. Feng, G. Fu, K. Fu, H. Gao, T. Gao, Y. Ge, S. Geng, C. Gong, X. Gong, Z. Gongque, Q. Gu, X. Gu, Y. Gu, L. Guan, Y. Guo, X. Hao, W. He, W. He, Y. He, C. Hong, H. Hu, J. Hu, Y. Hu, Z. Hu, K. Huang, R. Huang, W. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Jing, G. Lai, A. Li, C. Li, C. Li, F. Li, G. Li, G. Li, H. Li, H. Li, J. Li, J. Li, J. Li, L. Li, M. Li, W. Li, W. Li, X. Li, X. Li, Y. Li, Y. Li, Y. Li, Y. Li, Z. Li, Z. Li, W. Liao, J. Lin, X. Lin, Z. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, L. Liu, S. Liu, S. Liu, S. Liu, T. Liu, T. Liu, W. Liu, X. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, Z. Liu, E. Lu, H. Lu, Z. Lu, J. Luo, T. Luo, Y. Luo, L. Ma, Y. Ma, S. Mao, Y. Mei, X. Men, F. Meng, Z. Meng, Y. Miao, M. Ni, K. Ouyang, S. Pan, B. Pang, Y. Qian, R. Qin, Z. Qin, J. Qiu, B. Qu, Z. Shang, Y. Shao, T. Shen, Z. Shen, J. Shi, L. Shi, S. Shi, F. Song, P. Song, T. Song, X. Song, H. Su, J. Su, Z. Su, L. Sui, J. Sun, J. Sun, T. Sun, F. Sung, Y. Tai, C. Tang, H. Tang, X. Tang, Z. Tang, J. Tao, S. Teng, C. Tian, P. Tian, A. Wang, B. Wang, C. Wang, C. Wang, C. Wang, D. Wang, D. Wang, D. Wang, F. Wang, H. Wang, H. Wang, H. Wang, H. Wang, H. Wang, J. Wang, J. Wang, J. Wang, K. Wang, L. Wang, Q. Wang, S. Wang, S. Wang, S. Wang, W. Wang, X. Wang, X. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, M. Wei, C. Wen, Z. Wen, C. Wu, H. Wu, J. Wu, R. Wu, W. Wu, Y. Wu, Y. Wu, Y. Wu, Z. Wu, C. Xiao, J. Xie, X. Xie, Y. Xie, Y. Xin, B. Xing, B. Xu, J. Xu, J. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, X. Xu, Y. Xu, Y. Xu, Y. Xu, Z. Xu, Z. Xu, J. Yan, Y. Yan, G. Yang, H. Yang, J. Yang, K. Yang, N. Yang, R. Yang, X. Yang, X. Yang, Y. Yang, Y. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, D. Ye, W. Ye, Z. Ye, B. Yin, C. Yu, L. Yu, T. Yu, T. Yu, E. Yuan, M. Yuan, X. Yuan, Y. Yue, W. Zeng, D. Zha, H. Zhan, D. Zhang, H. Zhang, J. Zhang, P. Zhang, Q. Zhang, R. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, C. Zhao, F. Zhao, J. Zhao, S. Zhao, X. Zhao, Y. Zhao, Z. Zhao, H. Zheng, R. Zheng, S. Zheng, T. Zheng, J. Zhong, L. Zhong, W. Zhong, M. Zhou, R. Zhou, X. Zhou, Z. Zhou, J. Zhu, L. Zhu, X. Zhu, Y. Zhu, Z. Zhu, J. Zhuang, W. Zhuang, Y. Zou, and X. Zu 
+ Kimi k2.5: visual agentic intelligence .
+ External Links: 2602.02276 ,
+ Link 
+ Cited by: §4.1 .
+ Team et al. (2025) 
+ T. D. Team, B. Li, B. Zhang, D. Zhang, F. Huang, G. Li, G. Chen, H. Yin, J. Wu, J. Zhou, K. Li, L. Su, L. Ou, L. Zhang, P. Xie, R. Ye, W. Yin, X. Yu, X. Wang, X. Wu, X. Chen, Y. Zhao, Z. Zhang, Z. Tao, Z. Zhang, Z. Qiao, C. Wang, D. Yu, G. Fu, H. Shen, J. Yang, J. Lin, J. Zhang, K. Zeng, L. Yang, H. Yin, M. Song, M. Yan, M. Liao, P. Xia, Q. Xiao, R. Min, R. Ding, R. Fang, S. Chen, S. Huang, S. Wang, S. Cai, W. Shen, X. Wang, X. Guan, X. Geng, Y. Shi, Y. Wu, Z. Chen, Z. Li, and Y. Jiang 
+ Tongyi deepresearch technical report .
+ External Links: 2510.24701 ,
+ Link 
+ Cited by: Appendix A .
+ Wang et al. (2026) 
+ X. J. Wang, H. Bai, Y. Sun, H. Wang, S. Zhang, W. Hu, M. Schroder, B. Mutlu, D. Song, and R. D. Nowak 
+ The long-horizon task mirage? diagnosing where and why agentic systems break .
+ External Links: 2604.11978 ,
+ Link 
+ Cited by: §1 ,
+ §2 .
+ Wei et al. (2025) 
+ J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and A. Glaese 
+ BrowseComp: a simple yet challenging benchmark for browsing agents .
+ External Links: 2504.12516 ,
+ Link 
+ Cited by: §3.3 .
+ Wu et al. (2026) 
+ X. Wu, K. Li, Y. Zhao, L. Zhang, L. Ou, H. Yin, Z. Zhang, X. Yu, D. Zhang, Y. Jiang, P. Xie, F. Huang, M. Cheng, S. Wang, H. Cheng, and J. Zhou 
+ ReSum: unlocking long-horizon search intelligence via context summarization .
+ External Links: 2509.13313 ,
+ Link 
+ Cited by: §1 ,
+ §1 ,
+ §2 ,
+ §4.1 .
+ Xiao et al. (2026) 
+ Y. Xiao, P. Gao, C. Peng, and Y. Xiong 
+ Reducing cost of llm agents with trajectory reduction .
+ External Links: 2509.23586 ,
+ Document ,
+ Link 
+ Cited by: §2 .
+ Yang et al. (2025a) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu 
+ Qwen3 technical report .
+ External Links: 2505.09388 ,
+ Link 
+ Cited by: Appendix A .
+ Yang et al. (2025b) 
+ M. Yang, E. Huang, L. Zhang, M. Surdeanu, W. Wang, and L. Pan 
+ How is llm reasoning distracted by irrelevant context? an analysis using a controlled benchmark .
+ External Links: 2505.18761 ,
+ Link 
+ Cited by: §2 .
+ Yao et al. (2023) 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao 
+ ReAct: synergizing reasoning and acting in language models .
+ External Links: 2210.03629 ,
+ Link 
+ Cited by: §1 ,
+ §1 ,
+ §3.1 .
+ Ye et al. (2025) 
+ R. Ye, Z. Zhang, K. Li, H. Yin, Z. Tao, Y. Zhao, L. Su, L. Zhang, Z. Qiao, X. Wang, P. Xie, F. Huang, S. Chen, J. Zhou, and Y. Jiang 
+ AgentFold: long-horizon web agents with proactive context management .
+ External Links: 2510.24699 ,
+ Link 
+ Cited by: §2 .
+ Yen et al. (2025) 
+ H. Yen, A. Paranjape, M. Xia, T. Venkatesh, J. Hessel, D. Chen, and Y. Zhang 
+ Lost in the maze: overcoming context limitations in long-horizon agentic search .
+ External Links: 2510.18939 ,
+ Link 
+ Cited by: §4.1 .
+ Yuksel (2025) 
+ K. A. Yuksel 
+ PAACE: a plan-aware automated agent context engineering framework .
+ External Links: 2512.16970 ,
+ Link 
+ Cited by: §2 .
+ Zeng et al. (2025) 
+ W. Zeng, K. He, C. Kuang, X. Li, and J. He 
+ Pushing test-time scaling limits of deep search with asymmetric verification .
+ External Links: 2510.06135 ,
+ Link 
+ Cited by: §3.3 .
+ Zhang et al. (2026) 
+ Y. Zhang, J. Shu, Y. Ma, X. Lin, S. Wu, and J. Sang 
+ Memory as action: autonomous context curation for long-horizon agentic tasks .
+ External Links: 2510.12635 ,
+ Link 
+ Cited by: §2 .
+ Zhipu (2025) 
+ Zhipu 
+ GLM4.7 .
+ Note: https://z.ai/blog/glm-4.7 
+ Cited by: §3.3 .
+ Appendix A The Scaffold Implementation
+ For the BrowseComp and xbench-DeepSearch datasets, which represent web search scenarios, we evaluate them using the scaffold from ( Team et al., 2025 ) . For the search and visit tools, we use the service provided by Serper 7 7 
+ 7 
+ https://serper.dev/ for web search and reading. We use Qwen3-30B-A3B-Instruct-2507 8 8 
+ 8 
+ https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507 ( Yang et al., 2025a ) for web page summarization in the visit tool. For BrowseComp-Plus, which represents local corpus scenarios, we use the scaffold from ( Sun et al., 2025 ) . We use Qwen3-Embedding-8B 9 9 
+ 9 
+ https://huggingface.co/Qwen/Qwen3-Embedding-8B as the document retriever.
+ Appendix B LLM-as-a-Judge Evaluation
+ B.1 Terminal States Taxonomy 
+ Figure 6 presents the prompt template used for classifying agent termination states. To ensure alignment with human judgment, we conducted a preliminary study in which 300 trajectories were labeled by two experienced NLP researchers using the same prompts as annotation guidelines. The 300 trajectories were sourced from the four models evaluated: GLM-4.7, GLM-5.0, Qwen3.5-397B-A17B, and MiniMax-M2.5. Any discrepancies were resolved via discussion between the two annotators. The results show a 98.7% agreement rate with human evaluations, demonstrating the reliability of the automated judge.
+ B.2 Struggle Score
+ Figure 7 presents the prompt template used for classifying the struggling state of the reasoning content. In practical evaluation, we employ GPT-OSS-120B as the evaluator. For each classification, we repeat the process five times to obtain a majority vote to improve reliability. To ensure consistency with human labels, we conducted a preliminary study, collecting 24 trajectories from four models used in the experiments, totaling 198 steps. Human labels for these steps were assigned by two experienced NLP researchers independently, and any discrepancies were resolved via discussion. The results show a 91.4% agreement rate with human evaluations, which is sufficient for our evaluation needs.
+ Appendix C Case Studies
+ Figures 8 , 9 , and 10 present cases labeled as “confident answer,” “uncertain answer,” and “give up,” respectively.
+ Appendix D Effect of the Threshold on Other Context Management Methods
+ Table 6 presents the threshold analysis of the discard-all strategy, and Table 7 presents the threshold analysis of the keep-latest (w/ sum.) strategy. As shown, when the length threshold decreases, the premature termination phenomenon is further alleviated, but this also consumes more tool calls and leads to more unfinished trajectories.
+ Thres. | 
+ # Tool | 
+ Acc. | 
+ PT | 
+ NA | 
+ $32$ K | 
+ $40.8_{\pm 1.5}$ | 
+ $44.6_{\pm 3.8}$ | 
+ $19.4_{\pm 4.4}$ | 
+ $17.0_{\pm 2.4}$ | 
+ $48$ K | 
+ $35.1_{\pm 0.7}$ | 
+ $43.4_{\pm 3.2}$ | 
+ $34.6_{\pm 3.6}$ | 
+ $3.0_{\pm 2.0}$ | 
+ $64$ K | 
+ $29.8_{\pm 1.1}$ | 
+ $41.8_{\pm 3.3}$ | 
+ $41.2_{\pm 3.6}$ | 
+ $1.8_{\pm 0.8}$ | 
+ Table 6: Threshold sensitivity of the discard-all strategy on BrowseComp with Qwen3.5-397B-A17B. Metrics include accuracy (Acc.), the average number of tool calls (# Tool), the premature termination rate (PT), and the no-answer rate (NA). Values are mean $\pm$ standard deviation across runs. 
+ Thres. | 
+ # Tool | 
+ Acc. | 
+ PT | 
+ NA | 
+ $32$ K | 
+ $46.8_{\pm 1.4}$ | 
+ $48.2_{\pm 3.6}$ | 
+ $16.2_{\pm 2.4}$ | 
+ $17.6_{\pm 4.4}$ | 
+ $48$ K | 
+ $40.2_{\pm 2.1}$ | 
+ $45.2_{\pm 3.0}$ | 
+ $30.2_{\pm 3.7}$ | 
+ $5.0_{\pm 1.6}$ | 
+ $64$ K | 
+ $40.4_{\pm 1.1}$ | 
+ $44.2_{\pm 2.3}$ | 
+ $34.2_{\pm 1.5}$ | 
+ $3.4_{\pm 1.7}$ | 
+ Table 7: Threshold sensitivity of the keep-latest (w/ sum.) strategy on BrowseComp with Qwen3.5-397B-A17B. Metrics include accuracy (Acc.), the average number of tool calls (# Tool), the premature termination rate (PT), and the no-answer rate (NA). Values are mean $\pm$ standard deviation across runs. 
+ Appendix E Computational Resources
+ The primary computational resources involve the local deployment of open-source models. All open-source models evaluated in this study can be deployed on a maximum of 8 NVIDIA H200 GPUs. We use SGLang as our inference infrastructure. Regarding inference time, each dataset requires a maximum of 24 hours per run.
+ Appendix F Classification Performance
+ Table 8 presents the performance of using confident answer labels to predict correctness. The results demonstrate consistently high precision and recall across all evaluated datasets.
+ Metrics | 
+ BC | 
+ BC+ | 
+ xbench | 
+ Precision | 
+ 0.779 | 
+ 0.981 | 
+ 0.692 | 
+ Recall | 
+ 0.939 | 
+ 0.796 | 
+ 0.975 | 
+ F1 | 
+ 0.852 | 
+ 0.879 | 
+ 0.809 | 
+ Table 8: Classification performance using confident answer labels to predict correctness for Qwen3.5-397B-A17B. Precision, recall, and F1 are reported on BrowseComp (BC), BrowseComp-Plus (BC+), and xbench-DeepSearch (xbench), treating the trajectory label (confident answer vs. others) as the prediction, and the actual evaluation result (correct vs. incorrect) as the ground truth. 
+ Method | 
+ BrowseComp | 
+ BrowseComp-Plus | 
+ xbench-DeepSearch | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Acc. $\uparrow$ | 
+ # Tool $\downarrow$ | 
+ PT $\downarrow$ | 
+ NA $\downarrow$ | 
+ Qwen3.5-397B-A17B | 
+ ReAct | 
+ $35.0_{\pm 3.6}$ | 
+ $\mathbf{21.7}_{\pm 0.8}$ | 
+ $53.4_{\pm 2.1}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ $72.0_{\pm 1.0}$ | 
+ $\mathbf{14.8}_{\pm 0.7}$ | 
+ $23.6_{\pm 2.0}$ | 
+ $3.0_{\pm 2.1}$ | 
+ $56.2_{\pm 3.1}$ | 
+ $\mathbf{12.5}_{\pm 0.3}$ | 
+ $20.4_{\pm 3.9}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ Summary (Length) | 
+ $46.6_{\pm 0.9}$ | 
+ $57.7_{\pm 0.9}$ | 
+ $\underline{2.4}_{\pm 1.1}$ | 
+ $38.0_{\pm 1.0}$ | 
+ $74.5_{\pm 1.1}$ | 
+ $68.8_{\pm 2.0}$ | 
+ $\mathbf{0.9}_{\pm 0.9}$ | 
+ $24.0_{\pm 1.1}$ | 
+ $56.8_{\pm 1.9}$ | 
+ $28.2_{\pm 2.0}$ | 
+ $\mathbf{3.0}_{\pm 1.2}$ | 
+ $14.8_{\pm 1.8}$ | 
+ Summary (Turn) | 
+ $46.6_{\pm 3.0}$ | 
+ $53.7_{\pm 2.6}$ | 
+ $\mathbf{1.8}_{\pm 1.3}$ | 
+ $38.4_{\pm 2.3}$ | 
+ $76.2_{\pm 1.2}$ | 
+ $26.2_{\pm 1.4}$ | 
+ $20.9_{\pm 1.8}$ | 
+ $1.2_{\pm 0.9}$ | 
+ $59.4_{\pm 2.5}$ | 
+ $26.3_{\pm 0.9}$ | 
+ $5.0_{\pm 2.4}$ | 
+ $13.8_{\pm 1.6}$ | 
+ Summary (Semantic) | 
+ $45.8_{\pm 3.3}$ | 
+ $53.4_{\pm 1.8}$ | 
+ $4.6_{\pm 1.1}$ | 
+ $37.0_{\pm 3.2}$ | 
+ $75.5_{\pm 3.4}$ | 
+ $26.1_{\pm 1.3}$ | 
+ $22.0_{\pm 3.0}$ | 
+ $1.1_{\pm 0.8}$ | 
+ $56.6_{\pm 2.1}$ | 
+ $24.4_{\pm 0.5}$ | 
+ $\underline{4.6}_{\pm 2.5}$ | 
+ $12.6_{\pm 1.1}$ | 
+ Discard | 
+ $44.6_{\pm 3.8}$ | 
+ $40.8_{\pm 1.5}$ | 
+ $19.4_{\pm 4.4}$ | 
+ $17.0_{\pm 2.4}$ | 
+ $76.3_{\pm 1.0}$ | 
+ $\underline{21.0}_{\pm 0.8}$ | 
+ $22.2_{\pm 0.9}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ $60.0_{\pm 3.2}$ | 
+ $\underline{19.8}_{\pm 1.1}$ | 
+ $9.2_{\pm 2.0}$ | 
+ $5.0_{\pm 2.3}$ | 
+ Keep Latest | 
+ $43.8_{\pm 2.5}$ | 
+ $\underline{40.5}_{\pm 1.9}$ | 
+ $33.8_{\pm 2.3}$ | 
+ $\underline{4.2}_{\pm 2.5}$ | 
+ $78.3_{\pm 0.8}$ | 
+ $30.2_{\pm 0.5}$ | 
+ $19.5_{\pm 0.5}$ | 
+ $1.0_{\pm 0.4}$ | 
+ $58.2_{\pm 3.6}$ | 
+ $22.8_{\pm 1.6}$ | 
+ $9.2_{\pm 1.6}$ | 
+ $5.2_{\pm 0.8}$ | 
+ Keep Latest (w/ sum.) | 
+ $\underline{48.2}_{\pm 3.6}$ | 
+ $46.8_{\pm 1.4}$ | 
+ $16.2_{\pm 2.4}$ | 
+ $17.6_{\pm 4.4}$ | 
+ $\mathbf{79.3}_{\pm 1.7}$ | 
+ $30.0_{\pm 1.6}$ | 
+ $\underline{17.9}_{\pm 0.9}$ | 
+ $1.2_{\pm 0.8}$ | 
+ $\underline{61.2}_{\pm 3.6}$ | 
+ $23.6_{\pm 0.8}$ | 
+ $5.6_{\pm 2.3}$ | 
+ $7.6_{\pm 1.3}$ | 
+ FoldAgent | 
+ $\mathbf{54.0}_{\pm 2.3}$ | 
+ $57.4_{\pm 1.3}$ | 
+ $6.4_{\pm 2.2}$ | 
+ $30.4_{\pm 1.1}$ | 
+ $\underline{78.7}_{\pm 1.9}$ | 
+ $44.4_{\pm 0.7}$ | 
+ $19.9_{\pm 2.0}$ | 
+ $\underline{0.3}_{\pm 0.3}$ | 
+ $\mathbf{62.0}_{\pm 2.7}$ | 
+ $29.3_{\pm 0.9}$ | 
+ $6.8_{\pm 0.8}$ | 
+ $\underline{4.8}_{\pm 1.3}$ | 
+ GLM-4.7 | 
+ ReAct | 
+ $33.8_{\pm 2.0}$ | 
+ $\mathbf{27.7}_{\pm 1.2}$ | 
+ $58.2_{\pm 3.0}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ $65.6_{\pm 1.4}$ | 
+ $\mathbf{15.5}_{\pm 0.5}$ | 
+ $26.0_{\pm 1.5}$ | 
+ $7.6_{\pm 1.7}$ | 
+ $56.0_{\pm 2.7}$ | 
+ $\mathbf{17.8}_{\pm 1.1}$ | 
+ $17.0_{\pm 1.2}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ Summary (Length) | 
+ $\mathbf{49.0}_{\pm 3.9}$ | 
+ $62.8_{\pm 3.1}$ | 
+ $\underline{1.4}_{\pm 1.7}$ | 
+ $41.6_{\pm 3.1}$ | 
+ $74.4_{\pm 3.7}$ | 
+ $38.8_{\pm 2.3}$ | 
+ $\mathbf{4.4}_{\pm 0.7}$ | 
+ $20.0_{\pm 2.4}$ | 
+ $\underline{57.8}_{\pm 2.8}$ | 
+ $39.7_{\pm 1.5}$ | 
+ $\mathbf{1.6}_{\pm 1.8}$ | 
+ $18.2_{\pm 2.5}$ | 
+ Summary (Turn) | 
+ $44.0_{\pm 2.4}$ | 
+ $65.3_{\pm 2.6}$ | 
+ $\mathbf{0.2}_{\pm 0.4}$ | 
+ $48.8_{\pm 1.6}$ | 
+ $73.2_{\pm 1.8}$ | 
+ $42.2_{\pm 0.3}$ | 
+ $\underline{4.7}_{\pm 1.4}$ | 
+ $21.4_{\pm 0.7}$ | 
+ $57.4_{\pm 3.6}$ | 
+ $42.8_{\pm 0.5}$ | 
+ $2.6_{\pm 1.1}$ | 
+ $21.6_{\pm 3.1}$ | 
+ Summary (Semantic) | 
+ $\underline{46.8}_{\pm 4.0}$ | 
+ $58.6_{\pm 0.4}$ | 
+ $1.6_{\pm 0.9}$ | 
+ $43.4_{\pm 2.2}$ | 
+ $73.7_{\pm 1.4}$ | 
+ $41.8_{\pm 1.7}$ | 
+ $4.9_{\pm 1.1}$ | 
+ $21.3_{\pm 2.0}$ | 
+ $\mathbf{60.4}_{\pm 1.1}$ | 
+ $32.7_{\pm 2.2}$ | 
+ $\underline{2.4}_{\pm 1.1}$ | 
+ $14.2_{\pm 2.5}$ | 
+ Discard | 
+ $46.0_{\pm 1.6}$ | 
+ $\underline{46.3}_{\pm 1.1}$ | 
+ $33.6_{\pm 1.8}$ | 
+ $10.2_{\pm 1.9}$ | 
+ $77.2_{\pm 1.0}$ | 
+ $\underline{20.6}_{\pm 0.6}$ | 
+ $21.1_{\pm 1.6}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ $55.4_{\pm 2.8}$ | 
+ $\underline{25.2}_{\pm 1.3}$ | 
+ $12.0_{\pm 2.1}$ | 
+ $1.8_{\pm 1.5}$ | 
+ Keep Latest | 
+ $42.0_{\pm 3.7}$ | 
+ $50.3_{\pm 3.2}$ | 
+ $39.0_{\pm 3.1}$ | 
+ $\underline{5.8}_{\pm 1.8}$ | 
+ $\mathbf{80.2}_{\pm 1.3}$ | 
+ $28.2_{\pm 0.7}$ | 
+ $18.4_{\pm 1.3}$ | 
+ $\underline{0.1}_{\pm 0.2}$ | 
+ $57.4_{\pm 5.7}$ | 
+ $26.1_{\pm 2.1}$ | 
+ $13.8_{\pm 2.2}$ | 
+ $\underline{0.8}_{\pm 1.3}$ | 
+ Keep Latest (w/ sum.) | 
+ $44.6_{\pm 2.9}$ | 
+ $50.1_{\pm 1.8}$ | 
+ $31.0_{\pm 4.0}$ | 
+ $12.8_{\pm 2.7}$ | 
+ $\underline{79.1}_{\pm 1.4}$ | 
+ $28.5_{\pm 0.6}$ | 
+ $19.3_{\pm 1.4}$ | 
+ $0.2_{\pm 0.3}$ | 
+ $56.8_{\pm 3.6}$ | 
+ $\underline{25.2}_{\pm 1.7}$ | 
+ $11.6_{\pm 2.5}$ | 
+ $2.6_{\pm 1.3}$ | 
+ FoldAgent | 
+ $44.0_{\pm 4.6}$ | 
+ $65.8_{\pm 2.3}$ | 
+ $3.8_{\pm 2.4}$ | 
+ $42.6_{\pm 4.2}$ | 
+ $71.2_{\pm 1.9}$ | 
+ $33.9_{\pm 0.5}$ | 
+ $27.5_{\pm 1.7}$ | 
+ $\mathbf{0.0}_{\pm 0.0}$ | 
+ $57.2_{\pm 1.6}$ | 
+ $36.0_{\pm 0.9}$ | 
+ $5.4_{\pm 2.5}$ | 
+ $7.2_{\pm 1.8}$ | 
+ Table 9: Comparison of context management methods across BrowseComp, BrowseComp-Plus, and xbench-DeepSearch. For each dataset, we report accuracy (Acc.), the average number of tool calls (# Tool), the premature termination rate (PT), and the no-answer rate (NA). Bold and underline mark the best and second best values within each model block. Values are mean $\pm$ standard deviation across runs. 
+ Figure 6: The prompt template used for classifying agent termination states. 
+ Figure 7: The prompt template used for classifying the struggle state. 
+ Figure 8: Case studies: Confident Answer. 
+ Figure 9: Case studies: Uncertain Answer. 
+ Figure 10: Case studies: Give-up. 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

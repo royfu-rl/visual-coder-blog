@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 不插 <base>：/view 网关的网址总带 index.html，相对路径本来就对；插了 <base href=目录> 反而会让 "#xxx" 解析到目录上，刷新时打开文件夹列表 -->
+<title>__TITLE__</title>
+<style>
+  :root{
+    --bg:#ffffff; --bg-soft:#f6f7f9; --bg-band:#f0f2f5;
+    --ink:#111418; --ink-soft:#5b636e; --line:#e4e7ec;
+    --accent:#1a1a1a; --brand:#2f6bff; --brand-soft:#eaf0ff;
+    --radius:14px; --maxw:1080px;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65;-webkit-font-smoothing:antialiased}
+
+  /* ---------- header ---------- */
+  .header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.85);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
+  .header-inner{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:14px 24px}
+  .logo{font-weight:700;font-size:17px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+  .logo .logo-img{height:26px;width:auto;display:block}
+  .header-actions{display:flex;gap:10px;align-items:center}
+  .btn{font-size:13.5px;padding:7px 14px;border-radius:999px;text-decoration:none;border:1px solid var(--line);color:var(--ink);transition:.15s}
+  .btn:hover{background:var(--bg-soft)}
+  .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .btn-primary:hover{opacity:.88;background:var(--accent)}
+
+  /* ---------- hero ---------- */
+  .hero{max-width:var(--maxw);margin:0 auto;padding:64px 24px 28px;text-align:center}
+  .hero .eyebrow{font-size:13px;color:var(--ink-soft);letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+  .hero h1{font-size:clamp(38px,6vw,64px);line-height:1.05;margin:14px 0 12px;letter-spacing:-.03em;font-weight:800}
+  .hero .sub{font-size:clamp(16px,2.4vw,21px);color:var(--ink-soft);max-width:720px;margin:0 auto 26px}
+  .hero-links{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .hero-links a{display:inline-flex;align-items:center;gap:7px;font-size:14.5px}
+
+  /* ---------- result showcase ---------- */
+  .showcase{max-width:var(--maxw);margin:8px auto 10px;padding:0 24px}
+  .showcase-grid{display:grid;grid-template-columns:1fr;gap:22px}
+  .result-card{background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius);padding:22px 22px 12px;overflow:hidden}
+  .result-card h3{margin:0 0 4px;font-size:16px;font-weight:700}
+  .result-card p{margin:0 0 14px;font-size:13.5px;color:var(--ink-soft)}
+  .result-card img{width:100%;height:auto;border-radius:8px;display:block}
+  .result-card iframe{width:100%;height:440px;border:none;border-radius:8px;display:block}
+
+  /* ---------- tabs ---------- */
+  .tabs-wrap{position:sticky;top:57px;z-index:40;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);margin-top:36px}
+  .tabs{max-width:var(--maxw);margin:0 auto;display:flex;gap:4px;padding:0 24px;overflow-x:auto}
+  .tab{appearance:none;border:0;background:none;font-family:inherit;font-size:14.5px;font-weight:600;color:var(--ink-soft);padding:15px 16px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:.15s}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--ink);border-bottom-color:var(--brand)}
+
+  /* ---------- doc content ---------- */
+  .doc-wrap{max-width:var(--maxw);margin:0 auto;padding:40px 24px 96px}
+  .doc{display:none;animation:fade .25s ease}
+  .doc.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .breadcrumb{margin:0 0 8px}
+  .breadcrumb a{font-size:13.5px;color:var(--ink-soft);text-decoration:none;font-weight:600}
+  .breadcrumb a:hover{color:var(--brand)}
+
+  .doc h1{font-size:32px;font-weight:800;letter-spacing:-.02em;margin:0 0 8px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .doc h2{font-size:23px;font-weight:750;margin:44px 0 14px;letter-spacing:-.01em}
+  .doc h3{font-size:18px;font-weight:700;margin:28px 0 10px}
+  .doc h4{font-size:15.5px;font-weight:700;margin:20px 0 8px;color:var(--ink-soft)}
+  .doc p{margin:12px 0}
+  .doc a{color:var(--brand);text-decoration:none}
+  .doc a:hover{text-decoration:underline}
+  .doc ul,.doc ol{padding-left:24px;margin:12px 0}
+  .doc li{margin:6px 0}
+  .doc img{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--line);margin:8px 0}
+  /* Inline logos inside tables: keep them text-sized (respect the tag's height attr), no border/margin */
+  .doc td img,.doc th img{height:1.1em;width:auto;max-width:none;border:0;border-radius:0;margin:0 4px 0 0;vertical-align:-0.15em;display:inline-block}
+  .doc div[align="center"]{text-align:center;margin:24px 0}
+  /* Wide embeds: charts that need more room than the 1080px text column. Breaks out of
+     .doc-wrap symmetrically and is capped to the viewport, so the page itself never
+     gains a horizontal scrollbar. On narrow screens it degrades to the column width. */
+  .doc .wide-embed{width:min(1440px,calc(100vw - 40px));margin-left:calc(50% - min(720px,50vw - 20px));margin-right:0}
+  .doc .wide-embed iframe{width:100%;display:block}
+  .doc code{font-family:var(--mono);font-size:.88em;background:var(--bg-band);padding:2px 6px;border-radius:5px}
+  .doc pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto}
+  .doc pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+  .doc blockquote{margin:16px 0;padding:8px 18px;border-left:3px solid var(--brand);background:var(--brand-soft);border-radius:0 8px 8px 0;color:var(--ink-soft)}
+  .doc blockquote p{margin:4px 0}
+  /* ── table — Kimi K3 Full Benchmark Table style ── */
+  /* The card + horizontal scroll live on a wrapper div (injected in renderDoc),
+     NOT on the table itself. A `display:block` table wraps its rows in an
+     anonymous shrink-to-fit table box that ignores the block's min-width:100%,
+     so the card stretched full width while the rows stopped at their content
+     width — that gap was the blank block. A real display:table honours
+     width:100%, and the wrapper gives position:sticky a scrollport. */
+  /* ---------- 目录块 ----------
+     Contents 原本就是一个 h2 加一个 ul，混在正文里跟普通小节长得一样。
+     渲染后把这两个元素包进 <nav class="toc">，做成一块明显分离的卡片。 */
+  .doc .toc{margin:0 0 40px;padding:18px 22px 16px;background:var(--bg-soft,#f7f8fa);
+            border:1px solid var(--line,#e4e7ec);border-radius:14px}
+  .doc .toc > h2{margin:0 0 10px;padding:0;border:0;font-size:12px;font-weight:800;
+                 letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft,#5b636e)}
+  .doc .toc ul{margin:0;padding-left:18px}
+  .doc .toc ul ul{margin:2px 0}
+  .doc .toc li{margin:3px 0;font-size:14.5px}
+  .doc .toc a{text-decoration:none}
+  .doc .toc a:hover{text-decoration:underline}
+
+  .doc .tbl-scroll{margin:32px 0;overflow-x:auto;background:#fff;border-radius:12px;
+    box-shadow:0 0 0 1px var(--line),0 2px 12px rgba(0,0,0,.05);
+    scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .doc .tbl-scroll::-webkit-scrollbar{height:4px}
+  .doc .tbl-scroll::-webkit-scrollbar-track{background:transparent}
+  .doc .tbl-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .doc table{border-collapse:collapse;display:table;width:100%;margin:0;font-size:13.5px;background:#fff}
+  .doc th{background:#f7f8fa;font-size:11px;font-weight:600;color:var(--ink-soft);letter-spacing:.05em;text-transform:uppercase;padding:11px 16px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
+  .doc td{padding:10px 16px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.55;background:#fff}
+  .doc tr:last-child td{border-bottom:none}
+  /* sticky first column */
+  .doc th:nth-child(1),.doc td:nth-child(1){position:sticky;left:0;z-index:2;border-right:1px solid var(--line);white-space:nowrap}
+  .doc th:nth-child(1){background:#f7f8fa}
+  .doc td:nth-child(1){background:#fff;font-weight:500}
+  /* hover row */
+  .doc tbody tr:hover td{background:#f9fafb}
+  .doc tbody tr:hover td:nth-child(1){background:#f3f4f6}
+  /* compact columns */
+  /* Column widths are decided per table at render time (see the classifier in the
+     render pass): columns whose cells are all short get .c-tight and hug their
+     content, prose columns get .c-prose and absorb the leftover width. A table whose
+     every column is tight hugs its container instead of stretching — otherwise a
+     10-column metrics table pads each number out to a tenth of the page. */
+  .doc th.c-tight,.doc td.c-tight{white-space:nowrap;width:1px}
+  .doc td.c-prose{white-space:normal;min-width:160px}
+  .doc .tbl-scroll.hug{width:fit-content;max-width:100%}
+  .doc .tbl-scroll.hug table{width:auto}
+  .doc table a{color:var(--brand);text-decoration:none}
+  .doc table a:hover{text-decoration:underline}
+  .doc hr{border:0;border-top:1px solid var(--line);margin:36px 0}
+
+
+  /* ---------- logo ---------- */
+  .logo-mark{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:14px;font-weight:800}
+
+  /* ---------- Environment 视图切换（Web / 3D / Game） ---------- */
+  .view-switch{display:inline-flex;gap:4px;padding:4px;margin:4px 0 8px;background:var(--bg-band);border-radius:999px}
+  .view-switch button{appearance:none;border:0;background:none;font:inherit;font-size:14px;font-weight:600;color:var(--ink-soft);padding:7px 20px;border-radius:999px;cursor:pointer;transition:.15s}
+  .view-switch button:hover{color:var(--ink)}
+  .view-switch button.active{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .env-view{display:none}
+  .env-view.active{display:block;animation:fade .25s ease}
+
+
+  /* ---------- 机构标识 ---------- */
+  .doc .org{font-size:11.5px;color:var(--ink-soft);white-space:nowrap;margin-left:2px}
+  .doc .org-mark{display:inline-grid;place-items:center;width:14px;height:14px;border-radius:3px;background:var(--bg-band);color:var(--ink-soft);font-size:9.5px;font-weight:700;vertical-align:-0.15em;margin-right:2px}
+
+  /* 细讲标题左侧的机构 logo */
+  .doc h4 .h-logo{height:20px;width:auto;border:0;border-radius:4px;margin:0 6px 0 0;vertical-align:-4px;display:inline-block}
+  .doc h4 .org-mark.h-logo{width:20px;height:20px;font-size:12px;display:inline-grid}
+  .doc h4 .org{font-size:12.5px;font-weight:500;margin-left:6px}
+  .doc h4 .impact{font-size:11.5px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:2px;white-space:nowrap}
+  /* HuggingFace 风格影响力徽章 */
+  .doc .hf{display:inline-flex;gap:5px;flex-wrap:wrap;align-items:center;vertical-align:middle;text-decoration:none}
+  .doc .hf-b{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;line-height:1;color:var(--ink-soft);background:var(--bg-band);border:1px solid var(--line);border-radius:6px;padding:2.5px 6px;white-space:nowrap}
+  .doc .hf-i{width:11px;height:11px;flex:none;opacity:.9}
+  .doc .hf-lk .hf-i{color:#e0566a}
+  .doc .hf-st .hf-i{color:#e8a13a}
+  .doc a.hf:hover .hf-b{border-color:var(--brand);color:var(--brand)}
+  .doc h4 .hf,.doc .deep-title .hf{margin-left:6px}
+  /* 合并总表：类型标签 / 来源徽章 / top5 加权高亮 */
+  .doc .type{display:inline-block;font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
+  .doc .type-bench{color:#2563c9;background:rgba(37,99,201,.12)}
+  .doc .type-data{color:#9333a8;background:rgba(147,51,168,.12)}
+  .doc .src{display:inline-block;font-size:11px;font-weight:600;text-decoration:none;padding:1.5px 7px;border-radius:5px;border:1px solid var(--line);color:var(--ink-soft);white-space:nowrap}
+  .doc a.src:hover{border-color:var(--brand);color:var(--brand)}
+  .doc .src-hf{color:#d98a00;border-color:rgba(217,138,0,.4)}
+  .doc .src-gh{color:var(--ink)}
+  .doc table.merged tbody tr.top5{background:rgba(46,160,67,.13)}
+  .doc table.merged tbody tr.top5 td:first-child{box-shadow:inset 3px 0 0 #2ea043}
+  .doc table.merged tbody tr.top5:hover{background:rgba(46,160,67,.2)}
+
+  /* ---------- 视图内目录 + 锚点 ---------- */
+  .doc .view-toc ul{list-style:none;padding-left:0;margin:0}
+  .doc .view-toc li{margin:2px 0}
+  .doc .view-toc li.l2{font-weight:700;margin-top:10px}
+  .doc .view-toc li.l2:first-child{margin-top:0}
+  .doc .view-toc li.l3{padding-left:22px}
+  .doc .view-toc li.l4{padding-left:44px;font-size:13.5px}
+  .doc .view-toc .num{display:inline-block;min-width:46px;color:var(--ink-soft);font-family:var(--mono);font-size:12px;font-weight:500}
+  .doc .anchor{scroll-margin-top:130px}
+  .doc p:has(> a.anchor:only-child){margin:0;height:0}
+
+  /* ---------- 前沿厂商表：Benchmark 列合并单元格 ---------- */
+  .doc table.frontier td.bench{vertical-align:middle;font-weight:600;white-space:normal;min-width:150px;background:#fafbfc}
+  .doc table.frontier td{white-space:normal}
+  .doc table.frontier .self-tag{display:inline-block;margin-left:6px;font-size:11px;font-weight:500;color:var(--ink-soft);background:var(--bg-band);padding:0 6px;border-radius:4px;vertical-align:1px}
+  .doc table.frontier tbody tr:has(td.bench) td{border-top:2px solid var(--line)}
+  .doc table.frontier td:nth-child(1):not(.bench){position:static;font-weight:400;border-right:0;white-space:normal}
+
+  /* ---------- 数据样例组件（细讲内） ---------- */
+  .doc .ds-demo{margin:18px 0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--bg-soft)}
+  .doc .ds-head{font-size:13px;color:var(--ink-soft);margin-bottom:12px;line-height:1.6}
+  .doc .ds-head b{color:var(--ink);font-size:13.5px}
+  .doc .ds-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+  .doc .ds-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .doc .ds-card img.ds-img{width:100%;height:auto;max-height:260px;object-fit:contain;border:1px solid var(--line);border-radius:6px;margin:0;background:#fafafa}
+  .doc .ds-meta{font-size:12.5px;color:var(--ink);line-height:1.55}
+  .doc details.ds-code{font-size:12px}
+  .doc details.ds-code > summary{cursor:pointer;color:var(--brand);font-weight:600}
+  .doc details.ds-code pre{margin:6px 0 0;max-height:320px;overflow:auto;white-space:pre;font-size:11.5px;line-height:1.5;padding:10px}
+
+  /* ---------- 细讲：可折叠组件 ---------- */
+  .doc details.deep{border:1px solid var(--line);border-radius:12px;margin:14px 0;background:#fff}
+  .doc details.deep > summary{cursor:pointer;list-style:none;padding:14px 18px;display:flex;align-items:center;gap:10px}
+  .doc details.deep > summary::-webkit-details-marker{display:none}
+  .doc details.deep > summary::before{content:"▸";color:var(--ink-soft);font-size:13px;transition:transform .15s;flex:none}
+  .doc details.deep[open] > summary::before{transform:rotate(90deg)}
+  .doc details.deep > summary:hover{background:var(--bg-soft);border-radius:12px}
+  .doc details.deep[open] > summary{border-bottom:1px solid var(--line);border-radius:12px 12px 0 0}
+  .doc details.deep > :not(summary){margin-left:18px;margin-right:18px}
+  .doc details.deep .deep-title{font-size:15.5px;font-weight:700;line-height:1.5}
+  .doc .deep-title .h-logo{height:20px;width:auto;border:0;border-radius:4px;margin:0 6px 0 0;vertical-align:-4px;display:inline-block}
+  .doc .deep-title .org-mark.h-logo{width:20px;height:20px;font-size:12px;display:inline-grid}
+  .doc .deep-title .org{font-size:12.5px;font-weight:500;margin-left:6px}
+  .doc .deep-title .impact{font-size:11.5px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:2px;white-space:nowrap}
+
+  /* ---------- 可切换分组表（.tbl-tabs） ---------- */
+  .doc .tbl-tabs{margin:28px 0 32px}
+  .doc .tbl-tabs-bar{display:flex;flex-wrap:wrap;gap:6px;padding:5px;background:var(--bg-band);border-radius:12px;width:fit-content;max-width:100%}
+  .doc .tbl-tabs-bar button{appearance:none;border:0;background:none;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink-soft);padding:7px 14px;border-radius:8px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:7px}
+  .doc .tbl-tabs-bar button:hover{color:var(--ink)}
+  .doc .tbl-tabs-bar button.active{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .doc .tbl-tabs-bar .n{font-family:var(--mono);font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:rgba(0,0,0,.06);color:var(--ink-soft)}
+  .doc .tbl-tabs-bar button.active .n{background:var(--brand-soft);color:var(--brand)}
+  .doc .tbl-pane{display:none}
+  .doc .tbl-pane.active{display:block;animation:fade .2s ease}
+  .doc .tbl-pane .tbl-desc{margin:14px 2px 0;font-size:13.5px;color:var(--ink-soft)}
+  .doc .tbl-pane .tbl-scroll{margin:12px 0 0}
+
+  /* ---------- 自绘流程图（论文无管线图时） ---------- */
+  .doc .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:0}
+  .doc .flow .step{flex:1 1 130px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5;color:var(--ink-soft)}
+  .doc .flow .step b{display:block;font-size:13px;color:var(--ink);margin-bottom:3px}
+  .doc .flow .arr{align-self:center;color:var(--ink-soft);font-size:15px}
+
+  /* ---------- 论文原图 ---------- */
+  .doc figure.paper-fig{margin:22px 0 18px;padding:16px 16px 10px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.04)}
+  .doc figure.paper-fig img{display:block;width:100%;max-height:520px;object-fit:contain;border:0;border-radius:0;margin:0}
+  .doc figure.paper-fig figcaption{margin-top:10px;font-size:12.5px;color:var(--ink-soft);text-align:center}
+
+  /* ---------- Basic 页：三家厨房地图 ---------- */
+  .doc .fam-map{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0}
+  .doc .fam{border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;background:var(--bg-soft)}
+  .doc .fam h4{margin:2px 0 6px;color:var(--ink);font-size:15.5px;font-weight:750}
+  .doc .fam .fam-tag{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--brand)}
+  .doc .fam p{margin:6px 0 11px;font-size:12.5px;color:var(--ink-soft);line-height:1.6}
+  .doc .fam .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .doc .fam .chip{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:#fff;border:1px solid var(--line);color:var(--ink)}
+  @media(max-width:720px){.doc .fam-map{grid-template-columns:1fr}}
+
+  /* ---------- Basic 页：代码↔实时渲染 demo ---------- */
+  .doc .demo{margin:22px 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.05)}
+  .doc .demo-top{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-soft);border-bottom:1px solid var(--line)}
+  .doc .demo-lang{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:6px;color:#fff;background:#888;white-space:nowrap}
+  .doc .lang-css{background:#2f6bff}.doc .lang-html{background:#e0566a}
+  .doc .lang-js{background:#e8a13a;color:#1a1200}.doc .lang-svg{background:#16a34a}
+  .doc .lang-react{background:#0ea5c4}.doc .lang-json{background:#9333a8}
+  .doc .lang-py{background:#375a9e}
+  .doc .demo-title{font-size:14px;font-weight:700;color:var(--ink)}
+  .doc .demo-split{display:grid;grid-template-columns:1fr 1fr;align-items:stretch}
+  .doc .demo-code{margin:0;border:0;border-radius:0;background:#0f1115;color:#e6e9ef;
+    font-family:var(--mono);font-size:12px;line-height:1.65;padding:14px 16px;overflow:auto;max-height:360px;white-space:pre}
+  .doc .demo-code code{background:none;padding:0;color:inherit;font-size:12px;white-space:pre}
+  .doc .demo-frame{width:100%;border:0;border-left:1px solid var(--line);background:#fff;display:block}
+  .doc .demo-note{margin:0;padding:11px 15px;font-size:12.5px;color:var(--ink-soft);background:var(--bg-soft);border-top:1px solid var(--line);line-height:1.65}
+  .doc .demo-note b{color:var(--ink);font-weight:650}
+  @media(max-width:720px){.doc .demo-split{grid-template-columns:1fr}.doc .demo-frame{border-left:0;border-top:1px solid var(--line)}}
+
+  /* Gallery（画廊）——卡片陈列墙 + 全屏 lightbox。海报是主题渐变 + 衬线英文名；
+     点卡片由 galOpen() 懒建 iframe（见页尾脚本），关闭即销毁，任何时刻最多一个
+     WebGL 上下文，绕开浏览器对并发 WebGL 上下文数的上限。 */
+  .doc .gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:18px;margin:28px 0 10px}
+  .doc .gal-card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--bg);cursor:pointer;outline:none;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+  .doc .gal-card:hover,.doc .gal-card:focus-visible{transform:translateY(-4px);box-shadow:0 16px 36px rgba(17,20,24,.15);border-color:#d6dae1}
+  /* 海报 = demo 的实拍截图（background，含主体+标题+控制台），渐变作为加载前/失败兜底 */
+  .doc .gal-poster{position:relative;aspect-ratio:4/3;overflow:hidden;display:grid;place-items:center}
+  /* 悬停变暗遮罩 + 居中「点击全屏」提示 */
+  .doc .gal-poster::after{content:"";position:absolute;inset:0;background:rgba(10,12,16,.28);opacity:0;transition:opacity .18s ease}
+  .doc .gal-card:hover .gal-poster::after,.doc .gal-card:focus-visible .gal-poster::after{opacity:1}
+  .doc .gal-play{position:relative;z-index:1;font-size:12.5px;font-weight:600;color:#fff;background:rgba(14,17,22,.55);border:1px solid rgba(255,255,255,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);padding:6px 15px;border-radius:999px;opacity:0;transform:translateY(5px);transition:.18s}
+  .doc .gal-card:hover .gal-play,.doc .gal-card:focus-visible .gal-play{opacity:1;transform:none}
+  .doc .gal-meta{padding:12px 15px 14px;display:flex;flex-direction:column;gap:5px}
+  .doc .gal-cn{font-size:15px;font-weight:700;color:var(--ink)}
+  .doc .gal-cap{font-size:12.5px;color:var(--ink-soft);line-height:1.55}
+  .doc .gal-slug{align-self:flex-start;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);background:var(--bg-band);padding:2px 7px;border-radius:5px;margin-top:2px}
+  .gal-lightbox{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:clamp(10px,3vw,34px);background:rgba(10,12,16,.6);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);opacity:0;transition:opacity .2s ease}
+  .gal-lightbox.show{opacity:1}
+  .gal-lb-panel{display:flex;flex-direction:column;width:min(1180px,100%);height:min(760px,100%);background:#0f1115;border-radius:16px;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.55);transform:scale(.985);transition:transform .2s ease}
+  .gal-lightbox.show .gal-lb-panel{transform:none}
+  .gal-lb-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#14171d;border-bottom:1px solid rgba(255,255,255,.08)}
+  .gal-lb-ttl{display:flex;align-items:baseline;gap:9px;min-width:0}
+  .gal-lb-ttl b{font-size:14px;color:#f4f6f8;font-weight:600;white-space:nowrap}
+  .gal-lb-ttl span{font-family:"Instrument Serif",Georgia,serif;font-size:14px;color:#8b93a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gal-lb-act{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .gal-lb-ext{font-size:12px;color:#aab2bf;text-decoration:none;border:1px solid rgba(255,255,255,.14);padding:5px 11px;border-radius:8px;transition:.15s;white-space:nowrap}
+  .gal-lb-ext:hover{color:#fff;border-color:rgba(255,255,255,.3)}
+  .gal-lb-x{appearance:none;border:0;background:rgba(255,255,255,.08);color:#cfd5dd;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;transition:.15s}
+  .gal-lb-x:hover{background:rgba(255,255,255,.18);color:#fff}
+  .gal-lb-stage{position:relative;flex:1;background:#0f1115;display:grid;place-items:center;min-height:0}
+  .gal-lb-frame{position:relative;z-index:1;width:100%;height:100%;border:0;background:#0f1115;opacity:0;transition:opacity .25s ease}
+  .gal-lightbox.loaded .gal-lb-frame{opacity:1}
+  .gal-lb-spin{position:absolute;width:30px;height:30px;border:3px solid rgba(255,255,255,.18);border-top-color:#fff;border-radius:50%;animation:gal-spin .8s linear infinite}
+  .gal-lightbox.loaded .gal-lb-spin{display:none}
+  @keyframes gal-spin{to{transform:rotate(360deg)}}
+  @media(max-width:720px){.gal-lb-panel{height:100%;width:100%;border-radius:0}.doc .gal-en{font-size:25px}}
+
+  .footer{border-top:1px solid var(--line);padding:28px 24px;text-align:center;color:var(--ink-soft);font-size:13px}
+
+  /* KaTeX display blocks: give them breathing room and horizontal scroll on overflow */
+  .doc .katex-display{margin:20px 0;overflow-x:auto;overflow-y:hidden;padding:2px 0}
+  .doc .katex{font-size:1.05em}
+</style>
+<style>
+/*__KATEX_CSS__*/
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <div class="logo"><span class="logo-mark">V</span>__TITLE__</div>
+    <div class="header-actions">
+      <a class="btn btn-primary" href="__ARXIV__" target="_blank" rel="noopener">Deep Research ↗</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="eyebrow">Web Dev · Blender × 3D · Vibe Gaming</div>
+    <h1>__TITLE__</h1>
+    <p class="sub">__SUBTITLE__</p>
+    <div class="hero-links">
+      <a class="btn btn-primary" href="__ARXIV__" target="_blank" rel="noopener">📄 Read the Deep Research</a>
+      <a class="btn" href="https://www.vals.ai/benchmarks/vibe-code" target="_blank" rel="noopener">Vibe Code Bench ↗</a>
+      <a class="btn" href="https://arxiv.org/abs/2504.01786" target="_blank" rel="noopener">BlenderGym ↗</a>
+    </div>
+  </section>
+
+  <div class="tabs-wrap">
+    <div class="tabs" id="tabs"></div>
+  </div>
+
+  <div class="doc-wrap" id="docs"></div>
+</main>
+
+<footer class="footer">
+  Visual Coder · built from local markdown · Snapshot 2026.09
+</footer>
+
+<script>/*__MARKED__*/</script>
+<script>/*__KATEX_JS__*/</script>
+<script>
+  // ---- constants -----------------------------------------------------------
+  // Combined height of the two sticky bars (header + tabs-wrap) in pixels.
+  // scrollTo subtracts this so the newly-activated section isn't hidden behind them.
+  const STICKY_HEADER_HEIGHT = 60;
+  // Max parent hops when walking up to the nearest tab ancestor.
+  // Guards against cycles if the doc graph is somehow malformed.
+  const MAX_ANCESTOR_DEPTH = 50;
+
+  // ---- data ----------------------------------------------------------------
+  const DOCS   = __DOCS__;
+  const tabsEl = document.getElementById('tabs');
+  const docsEl = document.getElementById('docs');
+
+  /** Map doc id → doc object for O(1) lookup. */
+  const byId = {};
+  DOCS.forEach(doc => { byId[doc.id] = doc; });
+
+  const firstId = DOCS[0].id;
+
+  marked.setOptions({ gfm: true, breaks: false });
+
+  // ---- heading id (TOC anchor support) -------------------------------------
+  // Inject GitHub-style slug ids so TOC links like #1-system-architecture work.
+  marked.use({
+    renderer: {
+      heading({ text, depth }) {
+        // Strip any HTML tags (e.g. <strong>) to get plain text for slug
+        const plain = text.replace(/<[^>]+>/g, '').trim();
+        const slug = plain
+          .toLowerCase()
+          .replace(/[^\w一-鿿\s\-]/g, '') // keep alphanum, CJK, space, hyphen
+          .trim()
+          .replace(/\s+/g, '-');
+        return `<h${depth} id="${slug}">${text}</h${depth}>\n`;
+      }
+    }
+  });
+
+  // ---- math-safe markdown render -------------------------------------------
+  // marked would mangle LaTeX ($a_t$ → emphasis, \frac → lost backslash), so
+  // we stash code spans/blocks first (never treat $ inside code as math), pull
+  // math out to indexed sentinels, run marked, then restore raw $…$/$$…$$ for KaTeX.
+  //
+  // Sentinels wrap the index in Private-Use-Area chars (U+E000…U+E001) that
+  // never occur in real prose or markdown. An earlier scheme used space-padded
+  // " C<n> " / " M<n> " tokens, which collided with ordinary text such as
+  // "美团 M17 fully async" — the restore step then looked up a nonexistent math
+  // entry and threw, aborting the render loop and hiding every later tab.
+  const _S0 = '', _S1 = '';
+  const _CODE_RE = new RegExp(_S0 + 'C(\\d+)' + _S1, 'g');
+  const _MATH_RE = new RegExp(_S0 + 'M(\\d+)' + _S1, 'g');
+  function renderDoc(md) {
+    const codeStash = [];
+    const codeTok = m => { codeStash.push(m); return _S0 + 'C' + (codeStash.length - 1) + _S1; };
+    md = md.replace(/```[\s\S]*?```/g, codeTok);
+    md = md.replace(/`[^`\n]*`/g,      codeTok);
+
+    const mathStash = [];
+    md = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, x) => { mathStash.push({ display: true,  tex: x }); return _S0 + 'M' + (mathStash.length - 1) + _S1; });
+    md = md.replace(/\$([^\$\n]+?)\$/g,    (_, x) => { mathStash.push({ display: false, tex: x }); return _S0 + 'M' + (mathStash.length - 1) + _S1; });
+
+    md = md.replace(_CODE_RE, (_, i) => codeStash[+i]);   // restore code before marked
+    let html = marked.parse(md);
+    html = html.replace(_MATH_RE, (_, i) => {
+      const entry = mathStash[+i];
+      // HTML-escape < > & so the browser doesn't parse LaTeX as HTML tags when
+      // assigned to innerHTML. KaTeX's renderMathInElement reads textContent and
+      // will decode these back to the correct LaTeX characters automatically.
+      const tex = entry.tex.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return entry.display ? ('$$' + tex + '$$') : ('$' + tex + '$');
+    });
+    return html;
+  }
+
+  function typesetMath(el) {
+    if (window.renderMathInElement) renderMathInElement(el, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true  },
+        { left: '$',  right: '$',  display: false },
+      ],
+      throwOnError: false,
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+    });
+  }
+
+  // ---- doc-graph traversal -------------------------------------------------
+
+  /** Walk parent links upward to find the nearest tab ancestor of `id`. */
+  function tabAncestor(id) {
+    let doc = byId[id], depth = 0;
+    while (doc && !doc.tab && doc.parent && depth++ < MAX_ANCESTOR_DEPTH) {
+      doc = byId[doc.parent];
+    }
+    return doc ? doc.id : id;
+  }
+
+  // ---- DOM construction ----------------------------------------------------
+
+  DOCS.forEach(docData => {
+    // Tab button (only for top-level tab docs)
+    if (docData.tab) {
+      const btn       = document.createElement('button');
+      btn.className   = 'tab' + (docData.id === firstId ? ' active' : '');
+      btn.textContent = docData.label;
+      btn.dataset.target = docData.id;
+      btn.onclick     = () => activate(docData.id);
+      tabsEl.appendChild(btn);
+    }
+
+    // Article element that holds the rendered markdown
+    const article     = document.createElement('article');
+    article.className = 'doc' + (docData.id === firstId ? ' active' : '');
+    article.id        = 'doc-' + docData.id;
+
+    // Breadcrumb link for sub-docs
+    if (docData.parent && byId[docData.parent]) {
+      const breadcrumb     = document.createElement('div');
+      breadcrumb.className = 'breadcrumb';
+      breadcrumb.innerHTML = '<a href="#">← 返回 ' + byId[docData.parent].label + '</a>';
+      breadcrumb.querySelector('a').onclick = (e) => { e.preventDefault(); activate(docData.parent); };
+      article.appendChild(breadcrumb);
+    }
+
+    // Rendered markdown body
+    const body     = document.createElement('div');
+    body.innerHTML = renderDoc(docData.md);
+
+    // Wrap every table in a scroll container. The card styling and overflow live
+    // on the wrapper (see .tbl-scroll) so the table can stay a real display:table.
+    // Done on the DOM rather than by regex so raw <table> blocks written directly
+    // in markdown are wrapped too.
+    //
+    // Then size the columns from their actual content: a column of numbers or short
+    // labels hugs its text, prose columns take what's left, and an all-short table
+    // stops stretching to full width (a 10-column P/R/F1 table used to spread four
+    // characters across a tenth of the page each).
+    const TIGHT_MAX = 12;   // longest cell, in characters, that still counts as short
+    // 目录：h2#contents 与其后的 ul 抽成一块 nav.toc，跟正文隔开
+    const cH = body.querySelector('h2#contents');
+    if (cH && cH.nextElementSibling && cH.nextElementSibling.tagName === 'UL') {
+      const nav = document.createElement('nav');
+      nav.className = 'toc';
+      cH.parentNode.insertBefore(nav, cH);
+      nav.appendChild(cH);
+      nav.appendChild(nav.nextElementSibling);   // 上一步之后 ul 正好紧跟在 nav 后面
+    }
+
+    body.querySelectorAll('table').forEach(t => {
+      let w = t.parentElement;
+      if (!w || !w.classList.contains('tbl-scroll')) {
+        w = document.createElement('div');
+        w.className = 'tbl-scroll';
+        t.parentNode.insertBefore(w, t);
+        w.appendChild(t);
+      }
+      // 带合并单元格（rowspan）的表每行格子数不同，按列分类会错位：只包滚动容器，不定列宽
+      if (t.querySelector('[rowspan]')) return;
+      const rows = Array.prototype.slice.call(t.rows);
+      const ncol = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+      let allTight = ncol > 0;
+      for (let c = 0; c < ncol; c++) {
+        let longest = 0, wrapped = false;
+        rows.forEach(r => {
+          const cell = r.cells[c];
+          if (!cell || cell.tagName === 'TH') return;   // headers don't decide the class
+          longest = Math.max(longest, (cell.textContent || '').trim().length);
+          if (cell.querySelector('br,ul,ol,p,pre')) wrapped = true;
+        });
+        const tight = !wrapped && longest > 0 && longest <= TIGHT_MAX;
+        if (!tight) allTight = false;
+        rows.forEach(r => {
+          const cell = r.cells[c];
+          if (cell) cell.classList.add(tight ? 'c-tight' : 'c-prose');
+        });
+      }
+      if (allTight) w.classList.add('hug');
+    });
+
+    // External links open in a new tab; local .md links were rewritten by
+    // build.py to #doc:<id> and are handled by the click interceptor below.
+    body.querySelectorAll('a[href]').forEach(a => {
+      const href = a.getAttribute('href') || '';
+      if (/^(https?:|mailto:)/.test(href)) { a.target = '_blank'; a.rel = 'noopener'; }
+    });
+
+    typesetMath(body);
+    article.appendChild(body);
+    docsEl.appendChild(article);
+  });
+
+  // ---- navigation ----------------------------------------------------------
+
+  // Never stretch a table past its natural width. The class pass above sizes
+  // columns, but a table with three short columns and one 20-char prose column
+  // still gets width:100% — the prose column then absorbs ~700px of leftover for
+  // 20 characters, which reads as a broken layout (评测维度 / 视频数 was exactly
+  // that). So measure each table once at width:auto: if its content comfortably
+  // fits the column, let the wrapper hug it (same .hug path all-tight tables take);
+  // otherwise it keeps width:100% and wraps as before. Deferred to activate()
+  // because .doc is display:none until then, and clientWidth would read 0 — hence
+  // the dataset.fit latch, which is only set once a real width was measured.
+  function fitTables(scope) {
+    scope.querySelectorAll('.tbl-scroll').forEach(w => {
+      if (w.dataset.fit || !w.clientWidth) return;
+      w.dataset.fit = '1';
+      const t = w.querySelector('table');
+      if (!t || w.classList.contains('hug')) return;
+      const avail = w.clientWidth;
+      t.style.width = 'auto';
+      const natural = t.scrollWidth;
+      t.style.width = '';
+      if (natural <= avail * 0.94) w.classList.add('hug');
+    });
+  }
+  document.querySelectorAll('.doc.active').forEach(fitTables);
+
+  function activate(id) {
+    const doc = byId[id];
+    if (!doc) return;
+
+    const tabId = tabAncestor(id);
+    document.querySelectorAll('.tab').forEach(
+      tab => tab.classList.toggle('active', tab.dataset.target === tabId)
+    );
+    document.querySelectorAll('.doc').forEach(
+      docEl => docEl.classList.toggle('active', docEl.id === 'doc-' + id)
+    );
+    document.querySelectorAll('.doc.active').forEach(fitTables);
+
+    if (location.hash.slice(1) !== id) history.replaceState(null, '', location.pathname + location.search + '#' + id);   // 写全路径，保证地址栏始终带 index.html
+    window.scrollTo({
+      top: document.querySelector('.tabs-wrap').offsetTop - STICKY_HEADER_HEIGHT,
+      behavior: 'smooth',
+    });
+  }
+
+
+  // ---- Environment 视图切换 ------------------------------------------------
+  // md 里用 <div class="env-view" data-view="web" data-label="Web"> 包住每个视图，
+  // 这里把同一 doc 内的 .view-switch 占位填成按钮组。URL 深链：#env/3d
+  function showView(docEl, key, push) {
+    docEl.querySelectorAll('.env-view').forEach(v => v.classList.toggle('active', v.dataset.view === key));
+    docEl.querySelectorAll('.view-switch button').forEach(b => b.classList.toggle('active', b.dataset.view === key));
+    fitTables(docEl);
+    if (push) history.replaceState(null, '', location.pathname + location.search + '#' + docEl.id.replace(/^doc-/, '') + '/' + key);
+  }
+  document.querySelectorAll('.doc').forEach(docEl => {
+    const views = docEl.querySelectorAll('.env-view');
+    if (!views.length) return;
+    docEl.querySelectorAll('.view-switch').forEach(sw => {
+      views.forEach(v => {
+        const b = document.createElement('button');
+        b.textContent = v.dataset.label; b.dataset.view = v.dataset.view;
+        b.onclick = () => showView(docEl, v.dataset.view, true);
+        sw.appendChild(b);
+      });
+    });
+    showView(docEl, views[0].dataset.view, false);
+  });
+
+
+  // ---- 可切换分组表 -------------------------------------------------------
+  // md 里 <div class="tbl-tabs"> 包若干 <div class="tbl-pane" data-label data-count>，
+  // 这里生成顶部按钮条，默认显示第一组。
+  document.querySelectorAll('.tbl-tabs').forEach(box => {
+    const panes = Array.prototype.filter.call(box.children, c => c.classList.contains('tbl-pane'));
+    if (!panes.length) return;
+    const bar = document.createElement('div');
+    bar.className = 'tbl-tabs-bar';
+    const show = i => {
+      panes.forEach((p, j) => p.classList.toggle('active', i === j));
+      bar.querySelectorAll('button').forEach((b, j) => b.classList.toggle('active', i === j));
+      fitTables(box);
+    };
+    panes.forEach((p, i) => {
+      const b = document.createElement('button');
+      b.innerHTML = p.dataset.label + '<span class="n">' + p.dataset.count + '</span>';
+      b.onclick = () => show(i);
+      bar.appendChild(b);
+    });
+    box.insertBefore(bar, box.firstChild);
+    show(0);
+  });
+
+  // Intercept in-page doc links (build.py rewrites local .md links to #doc:<id>).
+  docsEl.addEventListener('click', (e) => {
+    const a = e.target.closest('a');
+    if (!a) return;
+    const href  = a.getAttribute('href') || '';
+    // 页内锚点（视图目录）：只滚动，不改 hash——改 hash 会让 #env/3d 这类视图深链失效
+    if (/^#[\w-]+$/.test(href) && !href.startsWith('#doc:')) {
+      const target = a.closest('.doc').querySelector(href);
+      if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    }
+    const match = href.match(/^#doc:(.+)$/);
+    if (match && byId[match[1]]) { e.preventDefault(); activate(match[1]); }
+    // External links (target=_blank) and plain #anchors fall through to default.
+  });
+
+  // Deep-link support: accepts both #<id> and #doc:<id> in the URL hash.
+  const [initial, view] = location.hash.slice(1).replace(/^doc:/, '').split('/');
+  if (initial && byId[initial]) {
+    activate(initial);
+    if (view) showView(document.getElementById('doc-' + initial), view, true);
+  }
+</script>
+
+<!-- kc-expand: tag-system iframe 内打开 modal 时，把发消息的那个 iframe 放大到全屏，
+     modal 悬浮其上；背后铺一层「模糊 + 变暗」遮罩，真实博客页面透过来（不再是图表
+     自己的白底），符合「背景该是什么还是什么，只是模糊一些」。iframe 本身透明，只显示
+     居中的 modal。关闭时精确还原，用占位符保持文档流不跳动。 -->
+<script>
+(function(){
+  var expanded = null;      // 当前被放大的 iframe
+  var savedCss = '';        // 它放大前的 style
+  var placeholder = null;   // 占位符：iframe 变 fixed 后顶住它原来的空间，防止页面回流
+  var scrim = null;         // 变暗 + 模糊遮罩层（盖在博客页面上，iframe 之下）
+  var revealTimer = null;   // 兜底：子页不回 kc-modal-ready 时也要把 iframe 显影
+  var finishTimer = null;   // 兜底：子页不回 kc-revealed 时也要撤遮罩收尾
+  function frameOf(win){
+    var ifr = document.getElementsByTagName('iframe');
+    for (var i = 0; i < ifr.length; i++){
+      if (ifr[i].contentWindow === win) return ifr[i];
+    }
+    return null;
+  }
+  function expand(win){
+    var fr = frameOf(win);
+    if (!fr || expanded) return;
+    expanded = fr; savedCss = fr.getAttribute('style') || '';
+    // 占位符撑住原空间，避免 iframe 脱离文档流导致下方内容上跳
+    var r = fr.getBoundingClientRect();
+    placeholder = document.createElement('div');
+    placeholder.style.cssText = 'height:' + r.height + 'px';
+    fr.parentNode.insertBefore(placeholder, fr);
+    // scrim：模糊+变暗真实页面
+    scrim = document.createElement('div');
+    scrim.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(12,15,20,.5);'
+                        + '-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
+    document.body.appendChild(scrim);
+    // iframe 透明铺满，但先 opacity:0 藏起来 —— 放大后的这一两帧里，子页面画的
+    // 还是「行内尺寸的图表」，不藏就会看到那块背景以全屏尺寸闪一下（flash.png）。
+    // 等子页 modal 成形后回 kc-modal-ready，再显影。
+    fr.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;'
+                     + 'z-index:9999;border:0;border-radius:0;background:transparent;opacity:0;';
+    document.body.style.overflow = 'hidden';
+    // 等两帧确保 iframe 的新尺寸已生效，再通知子页面开 modal（消除小→大跳动）
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      fr.contentWindow.postMessage({type: 'kc-expand-ack', vw: window.innerWidth, vh: window.innerHeight}, '*');
+    }); });
+    // 兜底：子页面若不回 kc-modal-ready（旧版图表），也不能永远隐身
+    revealTimer = setTimeout(reveal, 600);
+  }
+  // 显影。这里必须再等几帧，不能收到消息就 opacity:1。
+  // iframe 是独立进程：子页在自己进程里 double-rAF 只能证明「子页画完了」，不能证明
+  // 父页的合成器已经取到那一帧。抢跑的结果是父页把 iframe 显影出来，而合成器手上
+  // 还是子页的上一帧 —— 刚按全屏重排、classes 还没生效的标签树，清晰地盖在模糊页面
+  // 上。这就是 flash.png。多等 3 帧（~50ms）让新的子页面帧确定被合成，用户感知不到，
+  // 但闪烁彻底消失。
+  function revealSoon(fn){
+    var n = 0;
+    (function step(){
+      if (++n >= 3) { fn(); return; }
+      requestAnimationFrame(step);
+    })();
+    setTimeout(fn, 150);          // rAF 不跑（后台标签页）时的兜底
+  }
+  function reveal(){
+    clearTimeout(revealTimer); revealTimer = null;
+    var fr = expanded;
+    if (!fr) return;
+    var done = false;
+    revealSoon(function(){
+      if (done || expanded !== fr) return;
+      done = true;
+      fr.style.opacity = '1';
+    });
+  }
+  // 关闭分三步，几何还原和子页恢复内容全部发生在 opacity:0 之下：
+  //   ① collapse(): 先把 iframe 按成透明，再还原几何，然后请子页恢复图表内容。
+  //      这两件事顺序颠倒过来就是上一版残留的 bug —— setAttribute(style, savedCss)
+  //      同时还原了「尺寸」和「不透明」，而子页要等 ack 才恢复内容，中间必然有一帧
+  //      「行内尺寸的空白矩形」。
+  //   ② 子页恢复完内容回 kc-revealed。
+  //   ③ finish(): 同一帧里撤遮罩 + 显影。中间态一帧都不上屏。
+  function collapse(){
+    if (!expanded) return;
+    var fr = expanded;
+    clearTimeout(revealTimer); revealTimer = null;
+    // 隐身 + 还原几何，一次写完：位置、尺寸、边框圆角回到行内，但仍然不可见。
+    // 此时用户看到的还是「模糊的页面」（遮罩还在），iframe 里发生什么都不上屏。
+    fr.setAttribute('style', savedCss + ';opacity:0');
+    // 等两帧确保 iframe 已按行内尺寸重新布局，再让子页把图表放出来 —— 否则子页会
+    // 以全屏尺寸画一两帧。子页恢复完会回 kc-revealed，由 finish() 收尾。
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      try { fr.contentWindow.postMessage({type: 'kc-collapse-ack'}, '*'); } catch(_){}
+    }); });
+    finishTimer = setTimeout(finish, 400);   // 子页不回 kc-revealed 时的兜底
+  }
+  // 撤遮罩 + 显影，同一帧完成。
+  function finish(){
+    clearTimeout(finishTimer); finishTimer = null;
+    if (!expanded) return;
+    var fr = expanded;
+    // 同理：子页说「我恢复好了」不等于父页合成器已经拿到那一帧。抢跑会露出
+    // 「行内尺寸的空白矩形」。等几帧再撤遮罩+显影。
+    revealSoon(function(){
+      if (fr !== expanded) return;
+      if (placeholder) placeholder.remove();
+      if (scrim) scrim.remove();
+      fr.setAttribute('style', savedCss);    // 去掉 opacity:0，恢复原样
+      expanded = null; savedCss = ''; placeholder = null; scrim = null;
+      document.body.style.overflow = '';
+    });
+  }
+  // kc-height: 子页报告自己内容的真实高度，父页把 iframe 高度贴合过去 —— 图表在窄屏
+  // 折行后会变高，写死的行内 height 会把它裁掉（变成 iframe 内的竖向滚动条）。
+  // 放大态的 iframe 是 fixed inset:0，此时不能动它的高度。
+  function fitHeight(win, h){
+    var fr = frameOf(win);
+    if (!fr || fr === expanded || !(h > 0)) return;
+    fr.style.height = Math.ceil(h) + 'px';
+  }
+  window.addEventListener('message', function(e){
+    if (!e.data) return;
+    if (e.data.type === 'kc-expand')      expand(e.source);
+    if (e.data.type === 'kc-modal-ready') reveal();
+    if (e.data.type === 'kc-collapse')    collapse();
+    if (e.data.type === 'kc-revealed')    finish();
+    if (e.data.type === 'kc-height')      fitHeight(e.source, e.data.h);
+  });
+})();
+</script>
+
+<!-- Gallery lightbox：点卡片全屏运行某个 three.js demo。iframe 点开才建、关闭即销毁，
+     所以任何时刻最多一个活跃 WebGL 上下文（浏览器对并发 WebGL 上下文数有上限，若把 11
+     个 demo 都常驻会被回收、画面变黑）。galOpen 由卡片的 inline onclick 调用（innerHTML
+     注入的节点上，inline handler 照常生效，而 <script> 不会执行，所以逻辑放这里）。 -->
+<script>
+(function(){
+  var ov = null, prevOverflow = '';
+  function onKey(e){ if (e.key === 'Escape') window.galClose(); }
+  window.galOpen = function(card){
+    if (ov) return;                                  // 已有一个在开，忽略
+    var src = card.getAttribute('data-src'),
+        cn  = card.getAttribute('data-title') || '',
+        en  = card.getAttribute('data-en') || '';
+    ov = document.createElement('div');
+    ov.className = 'gal-lightbox';
+    ov.innerHTML =
+      '<div class="gal-lb-panel">'
+    +   '<div class="gal-lb-bar">'
+    +     '<div class="gal-lb-ttl"><b></b><span></span></div>'
+    +     '<div class="gal-lb-act">'
+    +       '<a class="gal-lb-ext" target="_blank" rel="noopener">在新标签打开 ↗</a>'
+    +       '<button class="gal-lb-x" aria-label="关闭">✕</button>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="gal-lb-stage"><div class="gal-lb-spin"></div></div>'
+    + '</div>';
+    // 用 textContent 填标题，避免 demo 名里的字符破坏结构
+    ov.querySelector('.gal-lb-ttl b').textContent = cn;
+    ov.querySelector('.gal-lb-ttl span').textContent = en;
+    var ext = ov.querySelector('.gal-lb-ext'); ext.href = src;
+    document.body.appendChild(ov);
+    // 懒建 iframe
+    var ifr = document.createElement('iframe');
+    ifr.className = 'gal-lb-frame';
+    ifr.setAttribute('allow', 'autoplay; fullscreen; xr-spatial-tracking');
+    ifr.addEventListener('load', function(){ if (ov) ov.classList.add('loaded'); });
+    ifr.src = src;
+    ov.querySelector('.gal-lb-stage').appendChild(ifr);
+    prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(function(){ if (ov) ov.classList.add('show'); });
+    ov.addEventListener('click', function(e){ if (e.target === ov) window.galClose(); });
+    ov.querySelector('.gal-lb-x').onclick = window.galClose;
+    document.addEventListener('keydown', onKey);
+  };
+  window.galClose = function(){
+    if (!ov) return;
+    document.removeEventListener('keydown', onKey);
+    var dead = ov; ov = null;
+    dead.classList.remove('show');
+    document.body.style.overflow = prevOverflow;
+    setTimeout(function(){ dead.remove(); }, 200);   // 移除 = 销毁 iframe、释放 WebGL 上下文
+  };
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,2101 @@
+Reinforcing Multi-Turn Reasoning in LLM Agents via Fine-Grained Reward Structure and Credit Assignment 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Related Work 
+
+ 2.1 Process Reward and Credit Assignment in RL 
+
+ 2.2 RL for LLM Agents 
+
+ 3 Problem Setup for Multi-Turn Tasks 
+
+ 3.1 Multi-Turn Rollout as Turn-Level MDP 
+
+ 3.2 Turn-Level Reward Assignment 
+
+ 4 Credit Assignment for GRPO-Type Algorithms in Multi-Turn Tasks 
+
+ 4.1 Preliminaries: GPRO 
+
+ 4.2 GRPO with Fine-Grained Credit Assignment 
+
+ 4.3 Experiments for GPRO-Type Algorithms 
+
+ 5 Credit Assignment for PPO-Type Algorithms in Multi-Turn Tasks 
+
+ 5.1 Preliminaries: PPO 
+
+ 5.2 Turn-Level Reward Assignment in PPO 
+
+ 5.3 Turn-Decomposed PPO 
+
+ 6 Experiments on Multi-Turn Search Agents 
+
+ 6.1 Experiment Setup 
+
+ 6.2 Evaluated Methods 
+
+ 6.3 Main Results 
+
+ 7 Experiments on Multi-Turn Game Agents 
+
+ 8 Conclusion 
+
+ 9 Impact Statements 
+
+ References 
+
+ A PPO Experiments on Search Agents 
+
+ A.1 Details for Experimental Setup (PPO) 
+
+ A.1.1 Evaluated Methods 
+
+ A.1.2 Evaluation Metrics 
+
+ A.1.3 Training Details 
+
+ A.2 LLM Judge Setup for Turn-Level Evaluation (PPO) 
+
+ A.3 Additional Experiment Results (PPO) 
+
+ A.4 Ablation Study (PPO) 
+
+ A.5 Rollout Exmaples (PPO) 
+
+ A.6 Turn-Decomposed PPO Illustration 
+
+ B PPO Experiments on Game Agents 
+
+ C GRPO Experiments 
+
+ C.1 Task Formulation (GRPO) 
+
+ C.2 Reward Design (GRPO) 
+
+ C.3 Experiment Setup (GRPO) 
+
+ C.4 System Prompt (GRPO) 
+
+ C.5 Rollout Examples (GRPO) 
+
+ C.6 Additional Experimental Results (GRPO) 
+
+ License: CC BY 4.0
+
+arXiv:2505.11821v3 [cs.LG] 21 Aug 2026
+
+ Reinforcing Multi-Turn Reasoning in LLM Agents via Fine-Grained 
+ Reward Structure and Credit Assignment
+
+ Quan Wei
+
+ Affiliation: University of Minnesota, USA
+
+ Siliang Zeng
+
+ Affiliation: University of Minnesota, USA
+
+ Chenliang Li
+
+ Affiliation: Texas A&M University, USA
+
+ Zhongruo Wang
+
+ Affiliation: Independent Researcher
+
+ William Brown
+
+ Affiliation: Prime Intellect, USA
+
+ Oana Frunza
+
+ Affiliation: Morgan Stanley, USA
+
+ Wei Deng
+
+ Affiliation: Morgan Stanley, USA
+
+ Anderson Schneider
+
+ Affiliation: Morgan Stanley, USA
+
+ Yuriy Nevmyvaka
+
+ Affiliation: Morgan Stanley, USA
+
+ Yang (Katie) Zhao
+
+ Affiliation: University of Minnesota, USA
+
+ Alfredo Garcia
+
+ Affiliation: Texas A&M University, USA
+
+ Mingyi Hong
+
+ Affiliation: University of Minnesota, USA
+
+ Correspondence to: mhong@umn.edu 
+
+ Abstract 
+
+ Reinforcement Learning (RL) approaches have been wildly used to enhance the reasoning capabilities of Large Language Model (LLM) agents in long-horizon, multi-turn scenarios.
+Such interactions can be formalized as turn-level Markov decision processes (MDPs), where intermediate rewards are often available.
+However, most prior work relies on sparse trajectory-level rewards, resulting in poor credit assignment, while dense turn-level rewards remain underexplored.
+In this paper, we investigate how to effectively leverage dense turn-level reward structures in RL algorithms, specifically Group Relative Policy Optimization (GRPO) and Proximal Policy Optimization (PPO), to enable fine-grained credit assignment.
+We categorize reward structures into three types based on their granularity: (1) terminal reward; (2) delayed reward; (3) per-turn reward, each corresponding to a distinct turn-level MDP formulation, and derive GRPO and PPO algorithms tailored to each case, respectively.
+Experiments on multi-turn search and game agent tasks show that, for both GRPO and PPO, dense per-turn reward structures consistently outperform sparse terminal and delayed reward structures in terms of training dynamics and numerical results.
+Furthermore, on search tasks, PPO with dense per-turn rewards achieves greater training stability and faster convergence, and delivers the highest answer correctness among all state-of-the-art methods across diverse question-answering datasets.
+
+ Keywords: Machine Learning, ICML
+
+ 1 Introduction
+
+ Reinforcement Learning (RL) has recently emerged as a powerful approach for improving the reasoning capabilities of Large Language Models (LLMs), allowing them to explore and refine long Chains of Thought (CoT) ( Wei et al., 2022 ) in complex decision-making tasks. Building on this paradigm, reasoning-based LLMs, such as OpenAI’s o1 ( Jaech et al., 2024 ) and DeepSeek’s R1 ( Guo et al., 2025a ) , demonstrate remarkable performance in textual reasoning tasks by learning analytical thinking and self-reflection.
+Despite these advancements, LLMs that rely solely on textual reasoning remain limited in tasks that require precise and complex numerical computation, information retrieval from web pages or local databases, or code execution.
+Equipping LLMs with access to external tools, such as search engines, scientific calculators, or code interpreters, as autonomous agents for multi-turn interactions can significantly extend their capabilities beyond pure text-based reasoning ( Gou et al., 2023 ) .
+
+ Training LLMs to operate as autonomous agents in interactive environments presents challenges that extend beyond single-turn inference.
+In these settings, models must perform sequential decision-making, generating actions across multiple interaction turns to solve complex reasoning tasks.
+This sequential structure naturally situates LLM agents in multi-turn, long-horizon regimes, which can be formally modeled as turn-level Markov decision processes (MDPs).
+Within this framework, two types of rewards are commonly considered: the outcome (terminal) reward, which reflects the correctness of the final answer, and intermediate rewards, which correspond to the correctness of individual turns and are available at each interaction step with the environment.
+To optimize LLM agents under this MDP framework, RL algorithms, including Group Relative Policy Optimization (GRPO) ( Shao et al., 2024 ) and Proximal Policy Optimization (PPO) ( Schulman et al., 2017 ) , are commonly employed.
+GRPO leverages group-based normalization for advantage estimation, whereas PPO relies on a learned critic to compute advantages via Generalized Advantage Estimation (GAE) ( Schulman et al., 2015 ) .
+
+ One line of research ( Chen et al., 2025b ; Jin et al., 2025b ; Feng et al., 2025a ) formulate multi-turn interactive tasks as single-turn problems, relying solely on final outcome-level rewards such as answer correctness.
+However, such single-turn formulation is inadequate for long-horizon multi-turn reasoning as it treats the entire trajectory as a single decision step, ignoring the multi-turn structure of the interactive tasks. In particular, it ignores intermediate signals that evaluate each complete agent-environment interaction, such as a tool call and its result, providing feedback at the granularity of a single turn in multi-turn tasks ( Lightman et al., 2023 ; Zhang et al., 2025b ; Ma et al., 2023 ; Choudhury, 2025 ) .
+Without access to dense turn-level feedback, agents struggle to refine their behavior, making it difficult to interact effectively with dynamic environments over multiple steps.
+For example, in a search agent ( Chen et al., 2025b ; Jin et al., 2025a ) , selecting a good query early on is crucial for retrieving relevant information; without turn-level retrieval feedback, the agent may not learn which queries contribute to correct answers.
+
+ Another line of research ( Li et al., 2025 ; Qian et al., 2025 ; Wang et al., 2025a ; Labs, 2025 ; Wang et al., 2025b ; Singh et al., 2025 ; Zhang et al., 2025a ; Jin et al., 2025a ) incorporate intermediate rewards, such as signals derived from tool execution.
+However, these approaches suffer from a credit assignment problem, as outcome-level and intermediate rewards are merged into a trajectory-level training signal for reinforcement learning.
+This reward aggregation leads to inaccurate advantage estimation and limits the ability of RL algorithms to provide fine-grained supervision at intermediate interaction steps, ultimately hindering effective learning in multi-turn, long-horizon settings ( Guo et al., 2025b ; Feng et al., 2025b ; Zhang et al., 2025c ) .
+
+ Overall, most prior work relies on sparse trajectory-level rewards, resulting in poor credit assignment, while dense turn-level rewards remain underexplored.
+This observation raises a fundamental question:
+
+ How can dense turn-level reward structures be effectively leveraged within RL algorithms to enable fine-grained credit assignment? 
+
+ Motivated by this question, we investigate the use of dense turn-level rewards in this paper.
+Our key contributions are summarized as follows:
+
+ • 
+
+ We categorize reward structures into three types based on their granularity: (1) terminal reward; (2) delayed reward; (3) per-turn reward, each corresponding to a distinct turn-level MDP formulation. We derive GRPO and PPO algorithms tailored to each case, respectively.
+
+ • 
+
+ For GRPO, we introduce a novel variant based on per-turn rollouts.
+The resulting advantage function enables credit assignment at both global and local scales by aggregating current and future advantages.
+Experiments across three GRPO-based algorithms, each corresponding to a different MDP formulation, demonstrate that dense per-turn reward structures consistently outperform sparse terminal and delayed rewards, both in terms of training dynamics and final numerical performance.
+
+ • 
+
+ For PPO, we present the reward assignment strategy within GAE for three MDP cases. Experiments on multi-turn search and game agent tasks demonstrate that dense per-turn reward structures consistently outperform sparse terminal and delayed rewards, both in terms of training dynamics and numerical results, with PPO trained on dense per-turn rewards exhibiting greater training stability and faster convergence. Furthermore, benchmarks on both in-domain and out-of-domain search tasks demonstrates PPO with dense per-turn rewards derived from LLM-based judges achieves the highest answer correctness among all state-of-the-art methods. These findings verify that dense turn-level reward structure and fined-grained credit assignment can improve the performance of LLM agents.
+
+ 2 Related Work
+
+ 2.1 Process Reward and Credit Assignment in RL
+
+ Process rewards provide fine-grained credit assignment and enhance both training efficiency and optimization stability in RL.
+Such dense rewards have proven effective in classical RL domains such as games and robotic control ( Schrittwieser et al., 2020 ; Liu et al., 2022 ; Sun et al., 2025 ) .
+Process reward models (PRMs) have also been extensively explored for inference-time scaling in LLMs ( Lightman et al., 2023 ; Uesato et al., 2022 ) .
+Recent studies have further highlighted the importance of effective credit assignment in RL ( Pignatelli et al., 2023 ; Shao et al., 2024 ; Cui et al., 2025 ; Cheng et al., 2025 ; Feng et al., 2025b ; Guo et al., 2025b ) , particularly for textual reasoning tasks such as mathematical problem solving.
+In multi-turn agent interaction settings, turn-level rewards evaluate each complete agent–environment interaction, such as a tool invocation and its resulting output, providing feedback at the granularity of a single turn.
+This setting naturally emphasizes the advantages of process-level rewards and fine-grained credit assignment.
+However, dense turn-level reward structures and the corresponding RL algorithms for multi-turn settings remain underexplored.
+
+ 2.2 RL for LLM Agents
+
+ RL has been applied to train long-horizon multi-turn LLM agents in diverse domains, including search ( Chen et al., 2025b ; Jin et al., 2025b ; Jin et al., 2025a ) , tool use ( Feng et al., 2025a ; Li et al., 2025 ; Qian et al., 2025 ; Wang et al., 2025a ; Labs, 2025 ; Zhang et al., 2025a ; Singh et al., 2025 ) , text-based games ( Yao et al., 2020 ; Carta et al., 2023 ; Zhai et al., 2024 ; Wang et al., 2025b ) , web shopping ( Yao et al., 2022 ) , digital app interaction ( Chen et al., 2025a ) , and mobile device control ( Bai et al., 2024 ) .
+A number of these studies ( Jin et al., 2025a ; Feng et al., 2025a ; Li et al., 2025 ; Qian et al., 2025 ; Wang et al., 2025a ; Labs, 2025 ; Zhang et al., 2025a ; Singh et al., 2025 ) apply RL algorithms such as GRPO and PPO to train tool-using LLM agents, including calculators, code interpreters, and search engines, thus enabling reasoning with external tools.
+However, these methods generally use terminal rewards or collapse outcome and intermediate signals into a single trajectory-level reward, limiting fine-grained credit assignment.
+The most closely related work includes StepSearch ( Wang et al., 2025c ) and PPR ( Xu et al., 2025 ) , both of which apply PPO with turn-level rewards for multi-turn search tasks. Our work differs in that we focus on a systematic comparison of different reward structures, which is not explored in detail in these prior studies.
+In particular, StepSearch uses information gain as the reward signal, while PPR relies on trainable reward models. In contrast, our approach employs an LLM-based judge as a PRM.
+
+ 3 Problem Setup for Multi-Turn Tasks
+
+ 3.1 Multi-Turn Rollout as Turn-Level MDP
+
+ Multi-Turn Rollout. 
+Let x x denote the input prompt sampled from the dataset 𝒟 \mathcal{D} .
+A multi-turn rollout produces a complete response
+ y = [ l 1 , f 1 , … , l K , f K ] y=[l_{1},f_{1},\ldots,l_{K},f_{K}] ,
+where l k l_{k} is the response generated from an LLM policy π θ \pi_{\theta} , and f k f_{k} is the corresponding environment feedback at the k k -th turn.
+
+ Turn-Level MDP. 
+LLM agents operate in interactive environments where each turn yields stochastic feedback.
+To capture these dynamics, we formulate the multi-turn rollout as a turn-level MDP, which is formally defined as ℳ = { 𝒮 , 𝒜 , P , R , γ } \mathcal{M}=\{\mathcal{S},\mathcal{A},P,R,\gamma\} .
+Here, 𝒮 \mathcal{S} denotes the state space, and 𝒜 \mathcal{A} denotes the action space; A state s ∈ 𝒮 s\in\mathcal{S} typically corresponds to an interaction history, while an action a ∈ 𝒜 a\in\mathcal{A} often corresponds to a sequence of generated tokens; P P represents the transition dynamics; R R is the turn-level reward function; γ \gamma is the discount factor.
+At the k k -th turn, conditioned on the current state s k s_{k} , the agent makes an action a k a_{k} according to the policy π θ \pi_{\theta} , where a k = [ l k , f k ] a_{k}=[l_{k},f_{k}] if environment feedback exists, otherwise a k = l k a_{k}=l_{k} . The agent then receives a turn-level reward R k = R ⁡ ( s k , a k ) R_{k}=R(s_{k},a_{k}) , and transitions to the next state s k + 1 s_{k+1} .
+We formalize this process as follows:
+ a k ∼ π θ ( ⋅ ∣ s k ) a_{k}\sim\pi_{\theta}(\cdot\mid s_{k}) , s k + 1 ∼ P ( ⋅ ∣ s k , a k ) s_{k+1}\sim P(\cdot\mid s_{k},a_{k}) .
+A multi-turn rollout trajectory is τ = { ( s 1 , a 1 , R 1 ) , ( s 2 , a 2 , R 2 ) , … , ( s K , a K , R K ) } \tau=\{(s_{1},a_{1},R_{1}),(s_{2},a_{2},R_{2}),\ldots,(s_{K},a_{K},R_{K})\} .
+Note that the outcome reward is denoted by R ⁡ ( x , y ) = R K R(x,y)=R_{K} for a prompt–response pair ( x , y ) (x,y) .
+Under the turn-level MDP framework, the objective can be written as maximizing the cumulative reward at the turn level:
+
+ | 
+ max π θ ⁡ 𝔼 τ ∼ π θ ​ [ ∑ k = 1 K γ k ​ R ​ ( s k , a k ) ] \max_{\pi_{\theta}}\;\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{k=1}^{K}\gamma^{k}R(s_{k},a_{k})\right] | 
+ | 
+ (1) | 
+
+ 3.2 Turn-Level Reward Assignment
+
+ In multi-turn tasks, the outcome reward typically corresponds to the correctness of the final answer, while intermediate rewards are often available from each round of interaction with the environment.
+Based on the granularity of reward assignment, we categorize multi-turn formulations into three types of turn-level MDPs:
+
+ 1. 
+
+ Turn-level MDP with a terminal reward ℳ 1 \mathcal{M}_{1} : provides only a final outcome (terminal) reward with no intermediate rewards.
+
+ 2. 
+
+ Turn-level MDP with a delayed reward ℳ 2 \mathcal{M}_{2} : provides an accumulated reward that merges both intermediate and outcome rewards into a single delayed signal.
+
+ 3. 
+
+ Turn-level MDP with explicit per-turn rewards ℳ 3 \mathcal{M}_{3} : provides explicit rewards at each turn.
+
+ Here, ℳ 1 \mathcal{M}_{1} contains only outcome rewards, whereas both ℳ 2 \mathcal{M}_{2} and ℳ 3 \mathcal{M}_{3} include intermediate rewards but differ in how these rewards are distributed across the turns.
+Moreover, ℳ 1 \mathcal{M}_{1} and ℳ 2 \mathcal{M}_{2} provide trajectory-level rewards, whereas ℳ 3 \mathcal{M}_{3} provides explicit turn-level rewards.
+For ℳ 1 \mathcal{M}_{1} , the objective reduces to maximizing the final outcome reward.
+ ℳ 2 \mathcal{M}_{2} and ℳ 3 \mathcal{M}_{3} are return-equivalent.
+Figure 1 compares three turn-level reward assignment strategies for multi-turn tasks.
+
+ Figure 1 : Comparison of three turn-level reward assignment strategies for multi-turn tasks.
+Squares represent tokens; color indicates whether the assigned reward is zero or nonzero.
+Turn-level rewards are assigned to the final token of each turn. 
+
+ In the following section, we investigate how to effectively leverage dense turn-level reward structures in RL algorithms, specifically GPRO and PPO, to enable fine-grained credit assignment.
+Table 1 summarizes the main RL algorithms discussed in this paper under three different MDP formulations.
+
+ Table 1 : RL algorithms discussed in this paper under different MDP formulations. 
+
+ Reward Structure | 
+ GPRO | 
+ PPO | 
+
+ Turn-Decomposed 
+
+ PPO 
+ | 
+
+ Terminal reward ℳ 1 \mathcal{M}_{1} | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+
+ Delayed reward ℳ 2 \mathcal{M}_{2} | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+
+ Per-turn reward ℳ 3 \mathcal{M}_{3} | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+ ✓ \checkmark | 
+
+ 4 Credit Assignment for GRPO-Type Algorithms in Multi-Turn Tasks
+
+ 4.1 Preliminaries: GPRO
+
+ GRPO. 
+The Group Relative Policy Optimization (GRPO) algorithm ( Shao et al., 2024 ) has been widely used to enhance the reasoning capabilities of LLMs, which estimates the advantage in a group-relative manner.
+Specifically, for each input question x x , it samples a group of responses { y 1 , y 2 , … , y G } \{y_{1},y_{2},\ldots,y_{G}\} from the reference policy π ref \pi_{\text{ref}} .
+GRPO optimizes the policy by maximizing the following objective function:
+
+ | 
+ 𝔼 x ∼ 𝒟 , { y i } i = 1 G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G 1 | y i | ∑ t = 1 | y i | min ( w i , t ( θ ) A i , t , \displaystyle\mathbb{E}_{x\sim\mathcal{D},\,\{y_{i}\}_{i=1}^{G}\sim\pi_{\text{old}}(\cdot\mid x)}\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\Big(w_{i,t}(\theta)A_{i,t}, | 
+ | 
+
+ | 
+ clip ( w i , t ( θ ) , 1 − ϵ , 1 + ϵ ) A i , t ) − β 𝔻 KL [ π θ ∥ π ref ] ] \displaystyle\text{clip}\!\big(w_{i,t}(\theta),1-\epsilon,1+\epsilon\big)A_{i,t}\Big)-\beta\,\mathbb{D}_{\text{KL}}\!\left[\pi_{\theta}\,\|\,\pi_{\text{ref}}\right]\Bigg] | 
+ | 
+
+ where w i , t ​ ( θ ) = π θ ​ ( y i , t ∣ x , y i , < t ) π old ​ ( y i , t ∣ x , y i , < t ) w_{i,t}(\theta)=\frac{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}{\pi_{\text{old}}(y_{i,t}\mid x,y_{i,<t})} is the token-level importance sampling ratio between the current policy π θ \pi_{\theta} and the previous policy π old \pi_{\text{old}} , ϵ \epsilon is the clipping parameter, and β \beta is the KL divergence coefficient.
+Given a group of trajectory-level rewards { R i traj } i = 1 G \{R^{\text{traj}}_{i}\}_{i=1}^{G} , the advantage of the i i -th response A i , t A_{i,t} is calculated by
+
+ | 
+ A i , t = A i GRPO = R i traj − mean ​ ( { R i traj } i = 1 G ) std ​ ( { R i traj } i = 1 G ) A_{i,t}=A^{\text{GRPO}}_{i}=\frac{R^{\text{traj}}_{i}-\text{mean}(\{R^{\text{traj}}_{i}\}_{i=1}^{G})}{\text{std}(\{R^{\text{traj}}_{i}\}_{i=1}^{G})} | 
+ | 
+ (2) | 
+
+ GRPO is naturally suited for MDPs with trajectory-level rewards, namely ℳ 1 \mathcal{M}_{1} and ℳ 2 \mathcal{M}_{2} ;
+for ℳ 1 \mathcal{M}_{1} , R i traj = R ⁡ ( x , y i ) R^{\text{traj}}_{i}=R(x,y_{i}) ,
+and for ℳ 2 \mathcal{M}_{2} , R i traj = ∑ k = 1 K γ k ​ R i , k R^{\text{traj}}_{i}=\sum_{k=1}^{K}\gamma^{k}R_{i,k} 
+with R i , k = R ⁡ ( s i , k , a i , k ) R_{i,k}=R(s_{i,k},a_{i,k}) denoting the intermediate reward given the state s i , k s_{i,k} and action a i , k a_{i,k} at the k k -th turn.
+
+ Limitations of GRPO in Multi-Turn Settings. 
+For GPRO, the advantage function A i , t A_{i,t} in Eq. ( 2 ) is computed at the trajectory level , which means the same advantage is assigned uniformly across the entire trajectory, without distinguishing the contributions of individual turns or tokens.
+For long-horizon multi-turn tasks, such coarse-grained credit assignment often leads to unstable training and suboptimal performance ( Guo et al., 2025b ; Feng et al., 2025b ; Zhang et al., 2025c ) .
+
+ 4.2 GRPO with Fine-Grained Credit Assignment
+
+ We now derive GRPO with fine-grained credit assignment under a dense reward structure for ℳ 3 \mathcal{M}_{3} , which we refer to as multi-turn GRPO (MT-GRPO).
+We begin by defining two types of advantages: the outcome advantage and the intermediate advantage.
+
+ • 
+
+ The outcome advantage captures global task completion signals. Given a group of outcome rewards R i O = R ⁡ ( x , y i ) R^{O}_{i}=R(x,y_{i}) , it is defined as
+
+ | 
+ A i O = R i O − mean ​ ( { R i O } i = 1 G ) std ​ ( { R i O } i = 1 G ) , A^{O}_{i}=\frac{R^{O}_{i}-\text{mean}(\{R^{O}_{i}\}_{i=1}^{G})}{\text{std}(\{R^{O}_{i}\}_{i=1}^{G})}, | 
+ | 
+ (3) | 
+
+ • 
+
+ The intermediate advantage captures local optimization signals by comparing returns across trajectories at the same timestep.
+At the k k -th turn ( k = 1 , … , K − 1 k=1,\ldots,K-1 ), given a state s k s_{k} , the algorithm samples G G actions { a i , ( k ) } i = 1 G \{a_{i,(k)}\}_{i=1}^{G} , resulting in a group of intermediate rewards R i , ( k ) I = R ⁡ ( s k , a i , ( k ) ) R^{I}_{i,(k)}=R(s_{k},a_{i,(k)}) .
+The intermediate advantage is defined as
+
+ | 
+ A i , ( k ) I = R i , ( k ) I − mean ​ ( { R i , ( k ) I } i = 1 G ) std ​ ( { R i , ( k ) I } i = 1 G ) A^{I}_{i,(k)}=\frac{R^{I}_{i,(k)}-\text{mean}(\{R^{I}_{i,(k)}\}_{i=1}^{G})}{\text{std}(\{R^{I}_{i,(k)}\}_{i=1}^{G})} | 
+ | 
+ (4) | 
+
+ We combine these into a unified advantage that assigns credit at both global and local scales by aggregating current and future advantages:
+
+ | 
+ A i , ( k ) MT-GPRO = ∑ l = k K − 1 α l − k ​ A i , ( l ) I + α K − k ​ A i O A^{\text{MT-GPRO}}_{i,(k)}=\sum_{l=k}^{K-1}\alpha^{l-k}A^{I}_{i,(l)}+\alpha^{K-k}A^{O}_{i} | 
+ | 
+ (5) | 
+
+ where α ∈ [ 0 , 1 ] \alpha\in[0,1] is a discount coefficient controlling the relative weight of current and future terms.
+This aggregated advantage is uniformly assigned to all tokens generated within the k k -th turn, i.e., A i , 1 = ⋯ = A i , t = A i , ( k ) MT-GPRO A_{i,1}=\cdots=A_{i,t}=A^{\text{MT-GPRO}}_{i,(k)} , where t t indexes tokens within the k k -th turn.
+It is easy to see that the per-turn rollout mechanism of MT-GRPO can also be applied to other group-normalization advantage algorithms, including DAPO ( Yu et al., 2025 ) , Dr.GRPO ( Liu et al., 2025 ) , and RLOO ( Kool et al., 2019 ; Ahmadian et al., 2024 ) .
+In MT-GRPO, computing the intermediate advantages requires G G rollout samples at each turn for k = 1 , … , K − 1 k=1,\ldots,K-1 .
+Note that rollouts are not needed at the final turn; instead, the final advantage is computed after collecting all per-state rollout samples.
+Therefore, over a horizon of K K turns, this results in G K − 1 G^{K-1} rollout trajectories in total.
+When k = 2 k=2 , only G G rollout trajectories are required, which is the same as in the vanilla GRPO setting.
+
+ Figure 2 : Comparison of rollout structures among GRPO variants.
+GRPO-OR for ℳ 1 \mathcal{M}_{1} , GPRO-MR for ℳ 2 \mathcal{M}_{2} , and MT-GRPO for ℳ 3 \mathcal{M}_{3} 
+The red and green nodes denote the presence of turn-level rewards, while uncolored nodes indicate the absence of turn-level rewards. 
+
+ We compare GRPO variants under different turn-level MDP formulations in Section 3.2 , namely GRPO-OR for ℳ 1 \mathcal{M}_{1} , GRPO-MR for ℳ 2 \mathcal{M}_{2} , and MT-GRPO for ℳ 3 \mathcal{M}_{3} .
+Figure 2 illustrates the rollout structures of these GRPO variants.
+We observe that GRPO-OR and GRPO-MR perform per-trajectory rollouts (chain-based structures), whereas MT-GPRO performs per-state (per-turn) rollouts (tree-based structures).
+As a result, the computational complexity of GRPO scales linearly with the number of turns, while that of MT-GPRO grows exponentially with respect to the number of turns.
+
+ Remark. 
+MT-GPRO has two limitations:
+(1) In MT-GRPO, computing the intermediate advantages requires G G rollout samples at each turn.
+Therefore, over a horizon of K K turns, this results in G K − 1 G^{K-1} rollout trajectories in total. Such exponential growth in complexity makes the approach computationally prohibitive for long-horizon multi-turn tasks.
+(2) This strategy also assumes that all rollout samples in a group must contain the same number of turns , which requires enforcing this constraint in the system prompt and leads to a fixed-turn setting. Such a restriction limits the flexibility and applicability of GRPO in more diverse scenarios.
+For example, in a search task, one question may be resolved in a single tool call or require multiple calls to retrieve, filter, and refine results in a sampled group.
+
+ 4.3 Experiments for GPRO-Type Algorithms
+
+ Experiment Setup. 
+We conduct experiments to evaluate three GRPO algorithms in a two-turn agent setting, where the agent first calls the search tool with reasoning in the initial turn and then produces the final answer in the subsequent turn (see Appendix C for details).
+We use Qwen2.5-7B ( Yang et al., 2024 ) as the base model and use the TriviaQA dataset ( Joshi et al., 2017 ) to train the LLM agent for answering questions by interacting with a Wikipedia search engine.
+Beyond the outcome-level exact-match reward, we design intermediate rewards based on tool-execution feedback.
+
+ Figure 3 : Curves for different training reward components during training with various GRPO algorithms.
+GPRO-OR, GPRO-MR, and MT-GPRO correspond to the MDPs ℳ 1 \mathcal{M}_{1} , ℳ 2 \mathcal{M}_{2} , and ℳ 3 \mathcal{M}_{3} , respectively.
+Each plot shows the training reward score over training steps. Dotted lines represent the average reward across 10 runs, while solid lines show trends smoothed using the Exponential Moving Average (EMA).
+
+ Experiment Results on Training Dynamics. 
+Figure 3 presents training reward curves for different GPRO variants, which show that MT-GRPO achieves more stable tool usage (left figure), 100% success in tool execution, and higher exact-match accuracy (right figure), highlighting the importance of fine-grained credit assignment in multi-turn agentic tasks. Other reward component curves during training can be found in Figure 11 .
+Figures 12 , 13 , and 14 in Appendix C illustrate reward component curves during training with different algorithms, showcasing the variability in learning performance. Notably, the MT-GRPO method demonstrates lower variance during training, while GRPO-OR and GRPO-MR exhibit greater instability.
+An interesting observation is that the tool execution curve of MT-GRPO temporarily drops sharply around step 230–250 but subsequently recovers and stabilizes. This demonstrates that even if the agent forgets to call search tools in the middle of the training, it eventually learns to incorporate them in the final stages.
+This finding further emphasizes the significance of credit assignment, contributing to more stable training.
+
+ Experiment Results on Benchmark Performance. 
+Table 2 presents the validation reward scores across different models. MT-GRPO achieves the highest performance in all reward metrics. Compared to GRPO-MR, which reaches 0.3724 in final search answer and 0.3346 in exact match, MT-GRPO demonstrates clear improvements, especially in exact match with a margin of +0.1664. In contrast, GRPO-OR performs poorly across all metrics, scoring 0 in intermediate rewards and only 0.04 in XML format. These results confirm that fine-grained, dense reward structure and turn-level credit assignment employed by MT-GRPO lead to superior turn-level decision-making and more accurate final outcomes in multi-turn tasks, compared to the sparse, trajectory-level reward structure and trajectory-level credit assignment used in vanilla GRPO.
+
+ Table 2 : Performance comparison across different methods on reward scores evaluated on the validation set. Values in parentheses indicate the reward range for each metric. Bold numbers indicate the best performance for each reward type. 
+
+ Model 
+ | 
+ Intermediate Reward | 
+ Outcome Reward | 
+
+ | 
+
+ Tool Execution (0-0.2) 
+ | 
+
+ Search Answer (0-0.5) 
+ | 
+
+ XML Format (0-0.2) 
+ | 
+
+ Exact Match (0-1) 
+ | 
+
+ Qwen2.5-7B-Base 
+ | 
+
+ 0.0559 
+ | 
+
+ 0.0934 
+ | 
+
+ 0.1562 
+ | 
+
+ 0.0469 
+ | 
+
+ Qwen2.5-7B-Instruct 
+ | 
+
+ 0.1626 
+ | 
+
+ 0.2814 
+ | 
+
+ 0.1982 
+ | 
+
+ 0.1559 
+ | 
+
+ GRPO-OR 
+ | 
+
+ 0 
+ | 
+
+ 0 
+ | 
+
+ 0.04 
+ | 
+
+ 0 
+ | 
+
+ GRPO-MR 
+ | 
+
+ 0.2 
+ | 
+
+ 0.3724 
+ | 
+
+ 0.1994 
+ | 
+
+ 0.3346 
+ | 
+
+ MT-GRPO 
+ | 
+
+ 0.2 
+ | 
+
+ 0.3926 
+ | 
+
+ 0.1996 
+ | 
+
+ 0.5010 
+ | 
+
+ 5 Credit Assignment for PPO-Type Algorithms in Multi-Turn Tasks
+
+ 5.1 Preliminaries: PPO
+
+ Proximal Policy Optimization (PPO) ( Schulman et al., 2017 ) is a popular actor-critic RL algorithm commonly used for LLM training ( Ouyang et al., 2022 ) . In PPO, the advantage estimate A t A_{t} is computed using Generalized Advantage Estimation (GAE) ( Schulman et al., 2015 ) , based on rewards and a learned value function (critic model).
+Formally, for a trajectory of length T T , the GAE A t A_{t} at time step t t is computed as: A t = ∑ l = 0 T − t − 1 ( γ ​ λ ) l ​ δ t + l A_{t}=\sum_{l=0}^{T-t-1}(\gamma\lambda)^{l}\delta_{t+l} 
+where γ \gamma is the discount factor, λ ∈ [ 0 , 1 ] \lambda\in[0,1] is the GAE parameter, δ t = r t + γ ​ V t + 1 − V t \delta_{t}=r_{t}+\gamma V_{t+1}-V_{t} is the temporal-difference (TD) error, r t r_{t} is the token-level reward and V t V_{t} is the token-level value at step t t .
+Through the mechanism of GAE, the token-level value function enables token-level advantage estimation.
+
+ 5.2 Turn-Level Reward Assignment in PPO
+
+ In PPO, turn-level rewards can be readily incorporated through the use of GAE.
+We present the reward assignment strategy for the token-level reward signal r t r_{t} in GAE under three MDP formulations as illustrated in Figure 1 .
+
+ 1. 
+
+ ℳ 1 \mathcal{M}_{1} : the outcome reward is assigned to the final token of the entire trajectory.
+
+ 2. 
+
+ ℳ 2 \mathcal{M}_{2} : the merged reward from outcome and intermediate signals is assigned to the final token of the entire trajectory.
+
+ 3. 
+
+ ℳ 3 \mathcal{M}_{3} : the outcome reward is assigned to the final token of the entire trajectory, while intermediate rewards are assigned to the final token of the corresponding turn.
+
+ With explicit intermediate rewards, GAE provides fine-grained training signals at each turn.
+We refer to the PPO variants corresponding to three MDP formulations as PPO-OR, PPO-MR, and MT-PPO, respectively.
+Formally, the advantage estimate is defined as A t = ∑ l = 0 T − t − 1 ( γ ​ λ ) l ​ δ t + l A_{t}=\sum_{l=0}^{T-t-1}(\gamma\lambda)^{l}\delta_{t+l} with TD error
+
+ | 
+ δ t PPO = { γ ​ V t + 1 − V t t < T − 1 R traj − V T t = T − 1 \delta^{\text{PPO}}_{t}=\begin{cases}\gamma V_{t+1}-V_{t}&t<T-1\\
+R^{\text{traj}}-V_{T}&t=T-1\end{cases} | 
+ | 
+
+ where for ℳ 1 \mathcal{M}_{1} , R i traj = R ⁡ ( x , y i ) R^{\text{traj}}_{i}=R(x,y_{i}) ,
+and for ℳ 2 \mathcal{M}_{2} , R i traj = ∑ k = 1 K γ k ​ R i , k R^{\text{traj}}_{i}=\sum_{k=1}^{K}\gamma^{k}R_{i,k} .
+For ℳ 3 \mathcal{M}_{3} , the TD error is modified to incorporate explicit per-turn rewards:
+
+ | 
+ δ t MT-PPO = { R O − V T , t = t traj R I + γ ​ V t + 1 − V t , t = t turn γ ​ V t + 1 − V t , otherwise \delta^{\text{MT-PPO}}_{t}=\begin{cases}R^{O}-V_{T},&t=t_{\text{traj}}\\
+R^{I}+\gamma V_{t+1}-V_{t},&t=t_{\text{turn}}\\
+\gamma V_{t+1}-V_{t},&\text{otherwise}\end{cases} | 
+ | 
+
+ where t traj t_{\text{traj}} denotes the final token of the entire trajectory and
+ t turn t_{\text{turn}} denotes the final token of an intermediate turn.
+
+ 5.3 Turn-Decomposed PPO
+
+ Inspired by recent work on turn-decomposed training ( Feng et al., 2025b ) , we present the turn-decomposed PPO algorithm. Unlike trajectory-based RL algorithms, which rely on full multi-turn rollout trajectories as training data, turn-decomposed RL decomposes each multi-turn rollout into a set of single-turn training instances, as illustrated in Figure 9 .
+
+ In turn-decomposed RL training, each decomposed turn is treated as an independent single-turn data point associated with a reward. The core idea of turn-decomposed PPO is to first decompose multi-turn rollout data into single-turn instances and then apply PPO to each instance using an assigned reward signal. Depending on the reward structure discussed earlier, the reward for each turn-decomposed instance can be derived from terminal rewards, delayed rewards, or explicit per-turn rewards in the original trajectory-based formulation.
+
+ In the following experiment section, we compare trajectory-based PPO and turn-decomposed PPO, as well as different reward structures within turn-decomposed training, to study their impact on learning effectiveness and credit assignment.
+
+ 6 Experiments on Multi-Turn Search Agents
+
+ In our experiments, we build our codebase upon the open-source project Search-R1 ( Jin et al., 2025b ) , which trains LLM agents for multi-turn reasoning-augmented search tasks. More details on experimental settings can be found in Appendix A.1 .
+
+ 6.1 Experiment Setup
+
+ Datasets. 
+These datasets are categorized as follows:
+(1) General Question Answering: NQ ( Karpukhin et al., 2020 ) , TriviaQA ( Joshi et al., 2017 ) , and PopQA ( Mallen et al., 2022 ) .
+(2) Multi-Hop Question Answering: HotpotQA ( Yang et al., 2018 ) , 2WikiMultiHopQA ( Ho et al., 2020 ) , Musique ( Trivedi et al., 2022 ) and Bamboogle ( Press et al., 2023 ) .
+
+ Training Details. 
+We use Qwen2.5-7B ( Yang et al., 2024 ) as the base model, E5 ( Wang et al., 2022 ) as the retriever, and 2018 Wikipedia dump ( Karpukhin et al., 2020 ) as the corpus.
+We set the number of retrieved passages to 3, and the maximum number of turns N max N_{\max} to 4.
+The system prompt follows that of Search-R1 ( Jin et al., 2025b ) .
+We also enable policy loss masking on retrieved tokens.
+
+ LLM Judge as PRM. 
+We use gpt-oss-120b ( OpenAI, 2025 ) as the judge model to evaluate the quality of each turn and provide intermediate rewards. The outcome reward is computed based on exact-match answer correctness. The turn-level judge prompt can be found in Appendix A.2 .
+
+ Evaluation Metrics. 
+We evaluate model performance using three types of rewards: (1) answer correctness (exact match) reward, (2) format correctness reward, and (3) retrieval correctness reward. Each reward is assigned a value of 1.0 if the criterion is satisfied and 0 otherwise.
+
+ 6.2 Evaluated Methods
+
+ We compare both training reward dynamics and benchmark performance across different methods.
+
+ Training Dynamics. 
+We evaluate PPO-type algorithms, including PPO-OR, PPO-MR, and MT-PPO.
+We omit GRPO training curves since, as reported in ( Jin et al., 2025b ) , GRPO consistently crashes during training.
+
+ Benchmark Evaluation. 
+We benchmark several RL algorithms mentioned in this paper with state-of-the-art methods. These include PPO-based methods (PPO-OR, PPO-MR, and MT-PPO), GRPO-based methods (GRPO-OR and GRPO-MR), OTC trained with both GRPO and PPO ( Wang et al., 2025a ) , StepSearch trained with PPO ( Wang et al., 2025c ) , PPR trained with PPO ( Xu et al., 2025 ) , and turn-decomposed PPO.
+Since PPO-based baselines often experience training collapse, we report results using either the final checkpoint or the last stable checkpoint prior to collapse.
+
+ 6.3 Main Results
+
+ Figure 4 : Training reward (answer correctness) curves recorded during training for PPO-OR, PPO-MR and MT-PPO on the NQ and HotpotQA datasets. Solid lines show mean reward values, while shaded regions indicate variability across five independent runs. 
+
+ Table 3: 
+The performance results of different methods on six datasets.
+Bold numbers indicate the best performance for each dataset and metric.
+ † / * denote in-domain/out-of-domain datasets.
+ ‡ indicates results copied from the original paper.
+
+ Methods | 
+ General QA | 
+ Multi-Hop QA | 
+ Avg. | 
+
+ NQ † | 
+ TriviaQA * | 
+ PopQA * | 
+ HotpotQA † | 
+ 2wiki * | 
+ Musique * | 
+ Bamboogle * | 
+
+ Answer Correctness (Exact Match) | 
+
+ Qwen2.5-7B-Base | 
+ 0.177 | 
+ 0.319 | 
+ 0.181 | 
+ 0.160 | 
+ 0.167 | 
+ 0.040 | 
+ 0.120 | 
+ 0.174 | 
+
+ Qwen2.5-7B-Instruct | 
+ 0.320 | 
+ 0.563 | 
+ 0.349 | 
+ 0.292 | 
+ 0.277 | 
+ 0.118 | 
+ 0.112 | 
+ 0.320 | 
+
+ GRPO-OR (Search-R1) | 
+ 0.391 | 
+ 0.560 | 
+ 0.388 | 
+ 0.331 | 
+ 0.306 | 
+ 0.129 | 
+ 0.346 | 
+ 0.351 | 
+
+ GRPO-MR (Search-R1) ‡ | 
+ 0.453 | 
+ 0.628 | 
+ 0.450 | 
+ 0.416 | 
+ 0.375 | 
+ 0.164 | 
+ 0.387 | 
+ 0.414 | 
+
+ PPO-OR (Search-R1) | 
+ 0.483 | 
+ 0.639 | 
+ 0.456 | 
+ 0.435 | 
+ 0.382 | 
+ 0.199 | 
+ 0.432 | 
+ 0.432 | 
+
+ PPO-MR (Search-R1) ‡ | 
+ 0.472 | 
+ 0.629 | 
+ 0.452 | 
+ 0.436 | 
+ 0.402 | 
+ 0.180 | 
+ 0.363 | 
+ 0.429 | 
+
+ Turn-Decomposed PPO-OR | 
+ 0.425 | 
+ 0.598 | 
+ 0.448 | 
+ 0.322 | 
+ 0.324 | 
+ 0.102 | 
+ 0.125 | 
+ 0.335 | 
+
+ Turn-Decomposed PPO-MR | 
+ 0.269 | 
+ 0.522 | 
+ 0.260 | 
+ 0.224 | 
+ 0.274 | 
+ 0.062 | 
+ 0.349 | 
+ 0.280 | 
+
+ Turn-Decomposed MT-PPO | 
+ 0.304 | 
+ 0.522 | 
+ 0.309 | 
+ 0.259 | 
+ 0.286 | 
+ 0.085 | 
+ 0.287 | 
+ 0.293 | 
+
+ GRPO-OR (OTC) ‡ | 
+ 0.444 | 
+ 0.597 | 
+ 0.431 | 
+ 0.366 | 
+ 0.311 | 
+ 0.130 | 
+ 0.025 | 
+ 0.380 | 
+
+ PPO-OR (OTC) ‡ | 
+ 0.446 | 
+ 0.623 | 
+ 0.425 | 
+ 0.383 | 
+ 0.363 | 
+ 0.152 | 
+ 0.391 | 
+ 0.399 | 
+
+ MT-PPO (StepSearch) | 
+ 0.355 | 
+ 0.570 | 
+ 0.385 | 
+ 0.351 | 
+ 0.396 | 
+ 0.179 | 
+ 0.373 | 
+ 0.373 | 
+
+ MT-PPO (PPR) ‡ | 
+ 0.458 | 
+ 0.610 | 
+ 0.437 | 
+ 0.386 | 
+ 0.355 | 
+ 0.147 | 
+ 0.355 | 
+ 0.393 | 
+
+ MT-PPO (ours) | 
+ 0.490 | 
+ 0.647 | 
+ 0.459 | 
+ 0.453 | 
+ 0.424 | 
+ 0.209 | 
+ 0.445 | 
+ 0.447 | 
+
+ Format Correctness | 
+
+ Qwen2.5-7B-Base | 
+ 0.118 | 
+ 0.118 | 
+ 0.105 | 
+ 0.098 | 
+ 0.084 | 
+ 0.082 | 
+ 0.084 | 
+ 0.101 | 
+
+ Qwen2.5-7B-Instruct | 
+ 0.183 | 
+ 0.267 | 
+ 0.067 | 
+ 0.109 | 
+ 0.037 | 
+ 0.071 | 
+ 0.064 | 
+ 0.122 | 
+
+ GRPO-OR (Search-R1) | 
+ 0.706 | 
+ 0.685 | 
+ 0.597 | 
+ 0.513 | 
+ 0.376 | 
+ 0.328 | 
+ 0.564 | 
+ 0.534 | 
+
+ PPO-OR (Search-R1) | 
+ 0.909 | 
+ 0.954 | 
+ 0.952 | 
+ 0.916 | 
+ 0.806 | 
+ 0.834 | 
+ 0.951 | 
+ 0.895 | 
+
+ MT-PPO (StepSearch) | 
+ 0.521 | 
+ 0.614 | 
+ 0.668 | 
+ 0.560 | 
+ 0.396 | 
+ 0.571 | 
+ 0.541 | 
+ 0.555 | 
+
+ MT-PPO (ours) | 
+ 0.999 | 
+ 0.997 | 
+ 0.999 | 
+ 0.998 | 
+ 0.999 | 
+ 0.999 | 
+ 0.999 | 
+ 0.999 | 
+
+ Training Dynamics on PPO-Type Algorithms. 
+Figures 4 , and 6 and 7 in Appendix A.3 show training and validation reward curves for PPO-OR, PPO-MR and MT-PPO. MT-PPO achieves substantially more stable training, converging faster in the early phase (first 100 steps) thanks to intermediate rewards that provide stronger guidance. As training progresses, PPO-OR and PPO-MR exhibit high variance and even performance degradation, especially on HotpotQA, while MT-PPO maintains consistent improvement. MT-PPO attains higher average accuracy than PPO, demonstrating greater robustness.
+Format reward curves show that MT-PPO consistently follows the correct output format, while PPO-OR and PPO-MR struggle, especially on HotpotQA, where formatting mistakes prevent correct evaluation. This indicates that turn-level rewards in MT-PPO stabilize training and enforce structural correctness. Retrieval curves further show that MT-PPO achieves more consistent accuracy by leveraging intermediate signals to guide reasoning.
+
+ Benchmark Performance on PPO-Type Algorithms. 
+Our MT-PPO consistently outperforms PPO-OR and PPO-MR in answer correctness across all datasets. On average, MT-PPO improves over PPO-OR by approximately 3.5% and over PPO-MR by 4.2% in exact match accuracy. The gains are more pronounced on multi-hop datasets: MT-PPO achieves a 3.9% relative improvement on HotpotQA and a 5.5% improvement on 2Wiki, highlighting the effectiveness of dense turn-level reward structure for long-horizon reasoning.
+
+ Turn-Decomposed vs. Trajectory-Based Training. 
+Turn-decomposed PPO variants consistently underperform standard trajectory-based PPO, indicating that naïvely decomposing multi-turn trajectories can lead to suboptimal credit assignment. In particular, turn-decomposed PPO often achieves high intermediate rewards while yielding low outcome rewards, suggesting that the model over-optimizes local turn-level signals without sufficiently aligning them with final task success.
+
+ Comparison with Concurrent Work. 
+Compared to concurrent MT-PPO approaches, including PPR and StepSearch, our MT-PPO with judge-based turn-level rewards achieves consistently higher answer correctness, demonstrating the advantage of LLM-based process supervision.
+
+ Overall Performance. 
+Our MT-PPO method achieves the best performance over all SOTA method, and near-perfect format correctness across all datasets, approaching 100%. This result underscores the effectiveness of fine-grained credit assignment and turn-level reward structure in producing not only correct answers but also well-structured and executable outputs.
+
+ 7 Experiments on Multi-Turn Game Agents
+
+ In this section, we present an additional case study on multi-turn game agents, focusing on the classic grid-based puzzle Sokoban ( Schrader, 2018 ) . In this puzzle, the agent must push all boxes to designated target locations. The environment is represented as a 2D grid, and the action space is discrete (up, down, left, right). The key challenge is that Sokoban is irreversible: boxes can be pushed but not pulled, so a single wrong move may lead to an unrecoverable dead-end. As a result, solving the puzzle requires the agent to reason several steps ahead rather than relying on simple navigation heuristics.
+
+ Experiment Setup. 
+In our experiments, we use Qwen2.5-VL-3B ( Bai et al., 2023 ) as the base model. The Sokoban environment is configured with a ( 6 × 6 ) (6\times 6) grid and allows up to 100 steps per episode. Each puzzle contains one box, and solving it requires at least five actions. During interaction, the agent may take up to three actions per turn, and it can interact with the environment for a maximum of three turns. For reward design, the agent receives a success reward of 10 when all boxes are placed on their target locations in the final state. At each turn, it receives a box-placement reward of 1 for each box pushed onto a target, along with a format reward of 0.5 to encourage proper visual-state reasoning and structured output. A failure penalty of − 0.1 -0.1 is applied at each step when the task remains incomplete. We compare MT-PPO with GRPO-OR, GPRO-MR, PPO-OR, PPO-MR.
+
+ Figure 5 : Training curves on the Sokoban environment. Left: success rate over training steps. Right: effective action rate, measuring the proportion of actions that contribute to valid box movement. 
+
+ Experimental Results. 
+The experimental results in Figure 5 show the training dynamics of different methods on the Sokoban environment. MT-PPO consistently achieves a higher success rate throughout training and maintains a substantially higher effective action rate, demonstrating its ability to cope with the long-horizon and irreversible structure of Sokoban. These curves highlight how MT-PPO learns more stable and purposeful action sequences during optimization.
+Table 6 in Appendix 7 reports the final test performance at step 300. MT-PPO achieves the highest scores on both success rate and effective action rate, outperforming all PPO and GRPO baselines by a significant margin. The results illustrate the advantages of explicit turn-level rewards and fine-grained credit assignment, further validating the generality of our approach beyond language-based tasks.
+
+ 8 Conclusion
+
+ In this paper, we investigate how dense, turn-level reward structures can be effectively leveraged within GRPO and PPO, to achieve fine-grained credit assignment. Through extensive experiments on two agent tasks, we demonstrate that for both GRPO and PPO, dense per-turn reward structures consistently outperform sparse terminal and delayed reward designs, leading to more stable training dynamics and superior overall performance.
+
+ 9 Impact Statements
+
+ This paper presents work whose goal is to advance the field of machine learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+
+ References
+
+ Ahmadian et al. (2024) 
+ A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker 
+
+ Back to basics: revisiting REINFORCE-style optimization for learning from human feedback in LLMs .
+
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , L. Ku, A. Martins, and V. Srikumar (Eds.) ,
+
+ Bangkok, Thailand , pp. 12248–12267 .
+
+ External Links: Link ,
+ Document 
+
+ Cited by: §4.2 .
+
+ Bai et al. (2024) 
+ H. Bai, Y. Zhou, J. Pan, M. Cemri, A. Suhr, S. Levine, and A. Kumar 
+
+ Digirl: training in-the-wild device-control agents with autonomous reinforcement learning .
+
+ Advances in Neural Information Processing Systems 37 , pp. 12461–12495 .
+
+ Cited by: §2.2 .
+
+ Bai et al. (2023) 
+ J. Bai, S. Bai, S. Yang, S. Wang, S. Tan, P. Wang, J. Lin, C. Zhou, and J. Zhou 
+
+ Qwen-vl: a versatile vision-language model for understanding, localization, text reading, and beyond .
+
+ arXiv preprint arXiv:2308.12966 .
+
+ Cited by: §7 .
+
+ Brown (2025) 
+ W. Brown 
+
+ Verifiers: reinforcement learning with llms in verifiable environments .
+
+ GitHub .
+
+ Note: https://github.com/willccbb/verifiers 
+
+ Cited by: §C.3 .
+
+ Carta et al. (2023) 
+ T. Carta, C. Romac, T. Wolf, S. Lamprier, O. Sigaud, and P. Oudeyer 
+
+ Grounding large language models in interactive environments with online reinforcement learning .
+
+ In International Conference on Machine Learning ,
+
+ pp. 3676–3713 .
+
+ Cited by: §2.2 .
+
+ Chen et al. (2025a) 
+ K. Chen, M. Cusumano-Towner, B. Huval, A. Petrenko, J. Hamburger, V. Koltun, and P. Krähenbühl 
+
+ Reinforcement learning for long-horizon interactive llm agents .
+
+ arXiv preprint arXiv:2502.01600 .
+
+ Cited by: §2.2 .
+
+ Chen et al. (2025b) 
+ M. Chen, T. Li, H. Sun, Y. Zhou, C. Zhu, F. Yang, Z. Zhou, W. Chen, H. Wang, J. Z. Pan, et al. 
+
+ Learning to reason with search for llms via reinforcement learning .
+
+ arXiv preprint arXiv:2503.19470 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Cheng et al. (2025) 
+ J. Cheng, R. Qiao, L. Li, C. Guo, J. Wang, G. Xiong, Y. Lv, and F. Wang 
+
+ Stop summation: min-form credit assignment is all process reward model needs for reasoning .
+
+ arXiv preprint arXiv:2504.15275 .
+
+ Cited by: §2.1 .
+
+ Choudhury (2025) 
+ S. Choudhury 
+
+ Process reward models for llm agents: practical framework and directions .
+
+ arXiv preprint arXiv:2502.10325 .
+
+ Cited by: §1 .
+
+ Cui et al. (2025) 
+ G. Cui, L. Yuan, Z. Wang, H. Wang, W. Li, B. He, Y. Fan, T. Yu, Q. Xu, W. Chen, et al. 
+
+ Process reinforcement through implicit rewards .
+
+ arXiv preprint arXiv:2502.01456 .
+
+ Cited by: §2.1 .
+
+ Feng et al. (2025a) 
+ J. Feng, S. Huang, X. Qu, G. Zhang, Y. Qin, B. Zhong, C. Jiang, J. Chi, and W. Zhong 
+
+ ReTool: reinforcement learning for strategic tool use in llms .
+
+ arXiv preprint arXiv:2504.11536 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Feng et al. (2025b) 
+ L. Feng, Z. Xue, T. Liu, and B. An 
+
+ Group-in-group policy optimization for llm agent training .
+
+ arXiv preprint arXiv:2505.10978 .
+
+ Cited by: 9th item ,
+ §1 ,
+ §2.1 ,
+ §4.1 ,
+ §5.3 .
+
+ Gou et al. (2023) 
+ Z. Gou, Z. Shao, Y. Gong, Y. Shen, Y. Yang, M. Huang, N. Duan, and W. Chen 
+
+ Tora: a tool-integrated reasoning agent for mathematical problem solving .
+
+ arXiv preprint arXiv:2309.17452 .
+
+ Cited by: §1 .
+
+ Guo et al. (2025a) 
+ D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al. 
+
+ Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+
+ arXiv preprint arXiv:2501.12948 .
+
+ Cited by: §1 .
+
+ Guo et al. (2025b) 
+ Y. Guo, L. Xu, J. Liu, D. Ye, and S. Qiu 
+
+ Segment policy optimization: effective segment-level credit assignment in rl for large language models .
+
+ arXiv preprint arXiv:2505.23564 .
+
+ Cited by: §1 ,
+ §2.1 ,
+ §4.1 .
+
+ Ho et al. (2020) 
+ X. Ho, A. D. Nguyen, S. Sugawara, and A. Aizawa 
+
+ Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps .
+
+ arXiv preprint arXiv:2011.01060 .
+
+ Cited by: §6.1 .
+
+ Jaech et al. (2024) 
+ A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, et al. 
+
+ Openai o1 system card .
+
+ arXiv preprint arXiv:2412.16720 .
+
+ Cited by: §1 .
+
+ Jin et al. (2025a) 
+ B. Jin, J. Yoon, P. Kargupta, S. O. Arik, and J. Han 
+
+ An empirical study on reinforcement learning for reasoning-search interleaved llm agents .
+
+ arXiv preprint arXiv:2505.15117 .
+
+ Cited by: 2nd item ,
+ 5th item ,
+ §1 ,
+ §1 ,
+ §2.2 .
+
+ Jin et al. (2025b) 
+ B. Jin, H. Zeng, Z. Yue, D. Wang, H. Zamani, and J. Han 
+
+ Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+
+ arXiv preprint arXiv:2503.09516 .
+
+ Cited by: 1st item ,
+ 4th item ,
+ §A.1.2 ,
+ §A.1.3 ,
+ §1 ,
+ §2.2 ,
+ §6.1 ,
+ §6.2 ,
+ §6 .
+
+ Joshi et al. (2017) 
+ M. Joshi, E. Choi, D. Weld, and L. Zettlemoyer 
+
+ TriviaQA: a large scale distantly supervised challenge dataset for reading comprehension .
+
+ In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , R. Barzilay and M. Kan (Eds.) ,
+
+ Vancouver, Canada , pp. 1601–1611 .
+
+ External Links: Link ,
+ Document 
+
+ Cited by: §4.3 ,
+ §6.1 .
+
+ Karpukhin et al. (2020) 
+ V. Karpukhin, B. Oguz, S. Min, P. S. Lewis, L. Wu, S. Edunov, D. Chen, and W. Yih 
+
+ Dense passage retrieval for open-domain question answering. .
+
+ In EMNLP (1) ,
+
+ pp. 6769–6781 .
+
+ Cited by: §6.1 ,
+ §6.1 .
+
+ Kool et al. (2019) 
+ W. Kool, H. van Hoof, and M. Welling 
+
+ Buy 4 reinforce samples, get a baseline for free! .
+
+ Deep Reinforcement Learning Meets Structured Prediction ICLR workshop .
+
+ External Links: Link 
+
+ Cited by: §4.2 .
+
+ Kwon et al. (2023) 
+ W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica 
+
+ Efficient memory management for large language model serving with pagedattention .
+
+ In Proceedings of the 29th Symposium on Operating Systems Principles ,
+
+ pp. 611–626 .
+
+ Cited by: §A.1.3 ,
+ §C.3 .
+
+ Labs (2025) 
+ B. Labs 
+
+ Improving multi-turn tool use with reinforcement learning .
+
+ Note: https://www.bespokelabs.ai/blog/improving-multi-turn-tool-use-with-reinforcement-learning Accessed: 2025-04-17 
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Li et al. (2025) 
+ X. Li, H. Zou, and P. Liu 
+
+ Torl: scaling tool-integrated rl .
+
+ arXiv preprint arXiv:2503.23383 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Lightman et al. (2023) 
+ H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe 
+
+ Let’s verify step by step .
+
+ In The Twelfth International Conference on Learning Representations ,
+
+ Cited by: §1 ,
+ §2.1 .
+
+ Liu et al. (2022) 
+ R. Liu, F. Bai, Y. Du, and Y. Yang 
+
+ Meta-reward-net: implicitly differentiable reward learning for preference-based reinforcement learning .
+
+ Advances in Neural Information Processing Systems 35 , pp. 22270–22284 .
+
+ Cited by: §2.1 .
+
+ Liu et al. (2025) 
+ Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin 
+
+ Understanding r1-zero-like training: a critical perspective .
+
+ arXiv preprint arXiv:2503.20783 .
+
+ Cited by: §4.2 .
+
+ Ma et al. (2023) 
+ Q. Ma, H. Zhou, T. Liu, J. Yuan, P. Liu, Y. You, and H. Yang 
+
+ Let’s reward step by step: step-level reward model as the navigators for reasoning .
+
+ arXiv preprint arXiv:2310.10080 .
+
+ Cited by: §1 .
+
+ Mallen et al. (2022) 
+ A. Mallen, A. Asai, V. Zhong, R. Das, D. Khashabi, and H. Hajishirzi 
+
+ When not to trust language models: investigating effectiveness of parametric and non-parametric memories .
+
+ arXiv preprint arXiv:2212.10511 .
+
+ Cited by: §6.1 .
+
+ OpenAI (2025) 
+ OpenAI 
+
+ Gpt-oss-120b & gpt-oss-20b model card .
+
+ External Links: 2508.10925 ,
+ Link 
+
+ Cited by: §6.1 .
+
+ Ouyang et al. (2022) 
+ L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al. 
+
+ Training language models to follow instructions with human feedback .
+
+ Advances in neural information processing systems 35 , pp. 27730–27744 .
+
+ Cited by: §5.1 .
+
+ Pignatelli et al. (2023) 
+ E. Pignatelli, J. Ferret, M. Geist, T. Mesnard, H. van Hasselt, O. Pietquin, and L. Toni 
+
+ A survey of temporal credit assignment in deep reinforcement learning .
+
+ arXiv preprint arXiv:2312.01072 .
+
+ Cited by: §2.1 .
+
+ Press et al. (2023) 
+ O. Press, M. Zhang, S. Min, L. Schmidt, N. A. Smith, and M. Lewis 
+
+ Measuring and narrowing the compositionality gap in language models .
+
+ In Findings of the Association for Computational Linguistics: EMNLP 2023 ,
+
+ pp. 5687–5711 .
+
+ Cited by: §6.1 .
+
+ Qian et al. (2025) 
+ C. Qian, E. C. Acikgoz, Q. He, H. Wang, X. Chen, D. Hakkani-Tür, G. Tur, and H. Ji 
+
+ ToolRL: reward is all tool learning needs .
+
+ arXiv preprint arXiv:2504.13958 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Schrader (2018) 
+ M. B. Schrader 
+
+ Gym-sokoban .
+
+ GitHub .
+
+ Note: https://github.com/mpSchrader/gym-sokoban 
+
+ Cited by: §7 .
+
+ Schrittwieser et al. (2020) 
+ J. Schrittwieser, I. Antonoglou, T. Hubert, K. Simonyan, L. Sifre, S. Schmitt, A. Guez, E. Lockhart, D. Hassabis, T. Graepel, et al. 
+
+ Mastering atari, go, chess and shogi by planning with a learned model .
+
+ Nature 588 ( 7839 ), pp. 604–609 .
+
+ Cited by: §2.1 .
+
+ Schulman et al. (2015) 
+ J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel 
+
+ High-dimensional continuous control using generalized advantage estimation .
+
+ arXiv preprint arXiv:1506.02438 .
+
+ Cited by: §1 ,
+ §5.1 .
+
+ Schulman et al. (2017) 
+ J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov 
+
+ Proximal policy optimization algorithms .
+
+ arXiv preprint arXiv:1707.06347 .
+
+ Cited by: §1 ,
+ §5.1 .
+
+ Seed (2025) 
+ B. Seed 
+
+ Seed-thinking-v1. 5: advancing superb reasoning models with reinforcement learning .
+
+ Technical report 
+
+ Technical report, ByteDance .
+
+ External Links: Link 
+
+ Cited by: §C.1 .
+
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. 
+
+ Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+
+ arXiv preprint arXiv:2402.03300 .
+
+ Cited by: §1 ,
+ §2.1 ,
+ §4.1 .
+
+ Singh et al. (2025) 
+ J. Singh, R. Magazine, Y. Pandya, and A. Nambi 
+
+ Agentic reasoning and tool integration for llms via reinforcement learning .
+
+ arXiv preprint arXiv:2505.01441 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Sun et al. (2025) 
+ S. Sun, R. Liu, J. Lyu, J. Yang, L. Zhang, and X. Li 
+
+ A large language model-driven reward design framework via dynamic feedback for reinforcement learning .
+
+ Knowledge-Based Systems 326 , pp. 114065 .
+
+ Cited by: §2.1 .
+
+ Trivedi et al. (2022) 
+ H. Trivedi, N. Balasubramanian, T. Khot, and A. Sabharwal 
+
+ MuSiQue: multihop questions via single-hop question composition .
+
+ Transactions of the Association for Computational Linguistics 10 , pp. 539–554 .
+
+ Cited by: §6.1 .
+
+ Uesato et al. (2022) 
+ J. Uesato, N. Kushman, R. Kumar, F. Song, N. Siegel, L. Wang, A. Creswell, G. Irving, and I. Higgins 
+
+ Solving math word problems with process-and outcome-based feedback .
+
+ arXiv preprint arXiv:2211.14275 .
+
+ Cited by: §2.1 .
+
+ von Werra et al. (2020) 
+ L. von Werra, Y. Belkada, L. Tunstall, E. Beeching, T. Thrush, N. Lambert, S. Huang, K. Rasul, and Q. Gallouédec 
+
+ TRL: transformer reinforcement learning .
+
+ GitHub .
+
+ Note: https://github.com/huggingface/trl 
+
+ Cited by: §C.3 .
+
+ Wang et al. (2025a) 
+ H. Wang, C. Qian, W. Zhong, X. Chen, J. Qiu, S. Huang, B. Jin, M. Wang, K. Wong, and H. Ji 
+
+ OTC: optimal tool calls via reinforcement learning .
+
+ arXiv preprint arXiv:2504.14870 .
+
+ Cited by: 6th item ,
+ §1 ,
+ §2.2 ,
+ §6.2 .
+
+ Wang et al. (2022) 
+ L. Wang, N. Yang, X. Huang, B. Jiao, L. Yang, D. Jiang, R. Majumder, and F. Wei 
+
+ Text embeddings by weakly-supervised contrastive pre-training .
+
+ arXiv preprint arXiv:2212.03533 .
+
+ Cited by: §6.1 .
+
+ Wang et al. (2025b) 
+ Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, K. Yu, M. N. Nguyen, L. Liu, E. Gottlieb, et al. 
+
+ RAGEN: understanding self-evolution in llm agents via multi-turn reinforcement learning .
+
+ arXiv preprint arXiv:2504.20073 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Wang et al. (2025c) 
+ Z. Wang, X. Zheng, K. An, C. Ouyang, J. Cai, Y. Wang, and Y. Wu 
+
+ StepSearch: igniting llms search ability via step-wise proximal policy optimization .
+
+ arXiv preprint arXiv:2505.15107 .
+
+ Cited by: 7th item ,
+ §2.2 ,
+ §6.2 .
+
+ Wei et al. (2022) 
+ J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al. 
+
+ Chain-of-thought prompting elicits reasoning in large language models .
+
+ Advances in neural information processing systems 35 , pp. 24824–24837 .
+
+ Cited by: §1 .
+
+ Xu et al. (2025) 
+ P. Xu, Z. Li, X. Xing, G. Zhang, D. Li, and K. Shi 
+
+ Hybrid reward normalization for process-supervised non-verifiable agentic tasks .
+
+ arXiv preprint arXiv:2509.25598 .
+
+ Cited by: 8th item ,
+ §2.2 ,
+ §6.2 .
+
+ Yang et al. (2024) 
+ A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, et al. 
+
+ Qwen2. 5 technical report .
+
+ arXiv preprint arXiv:2412.15115 .
+
+ Cited by: §4.3 ,
+ §6.1 .
+
+ Yang et al. (2018) 
+ Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning 
+
+ HotpotQA: a dataset for diverse, explainable multi-hop question answering .
+
+ arXiv preprint arXiv:1809.09600 .
+
+ Cited by: §6.1 .
+
+ Yao et al. (2022) 
+ S. Yao, H. Chen, J. Yang, and K. Narasimhan 
+
+ Webshop: towards scalable real-world web interaction with grounded language agents .
+
+ Advances in Neural Information Processing Systems 35 , pp. 20744–20757 .
+
+ Cited by: §2.2 .
+
+ Yao et al. (2020) 
+ S. Yao, R. Rao, M. Hausknecht, and K. Narasimhan 
+
+ Keep CALM and explore: language models for action generation in text-based games .
+
+ In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) , B. Webber, T. Cohn, Y. He, and Y. Liu (Eds.) ,
+
+ Online , pp. 8736–8754 .
+
+ External Links: Link ,
+ Document 
+
+ Cited by: §2.2 .
+
+ Yu et al. (2025) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, et al. 
+
+ Dapo: an open-source llm reinforcement learning system at scale .
+
+ arXiv preprint arXiv:2503.14476 .
+
+ Cited by: §4.2 .
+
+ Zhai et al. (2024) 
+ S. Zhai, H. Bai, Z. Lin, J. Pan, P. Tong, Y. Zhou, A. Suhr, S. Xie, Y. LeCun, Y. Ma, et al. 
+
+ Fine-tuning large vision-language models as decision-making agents via reinforcement learning .
+
+ Advances in neural information processing systems 37 , pp. 110935–110971 .
+
+ Cited by: §2.2 .
+
+ Zhang et al. (2025a) 
+ S. Zhang, Y. Dong, J. Zhang, J. Kautz, B. Catanzaro, A. Tao, Q. Wu, Z. Yu, and G. Liu 
+
+ Nemotron-research-tool-n1: tool-using language models with reinforced reasoning .
+
+ arXiv preprint arXiv:2505.00024 .
+
+ Cited by: §1 ,
+ §2.2 .
+
+ Zhang et al. (2025b) 
+ Z. Zhang, C. Zheng, Y. Wu, B. Zhang, R. Lin, B. Yu, D. Liu, J. Zhou, and J. Lin 
+
+ The lessons of developing process reward models in mathematical reasoning .
+
+ arXiv preprint arXiv:2501.07301 .
+
+ Cited by: §1 .
+
+ Zhang et al. (2025c) 
+ Z. Zhang, Z. Chen, M. Li, Z. Tu, and X. Li 
+
+ RLVMR: reinforcement learning with verifiable meta-reasoning rewards for robust long-horizon agents .
+
+ arXiv preprint arXiv:2507.22844 .
+
+ Cited by: §1 ,
+ §4.1 .
+
+ Appendix A PPO Experiments on Search Agents
+
+ A.1 Details for Experimental Setup (PPO)
+
+ A.1.1 Evaluated Methods
+
+ We list all evaluated methods.
+
+ • 
+
+ PPO-OR ( Jin et al., 2025b ) : vanilla PPO trained with only o utcome r ewards, where the trajectory-level reward is a binary signal indicating final-answer correctness, corresponding to the terminal-reward MDP ℳ 1 \mathcal{M}_{1} .
+
+ • 
+
+ PPO-MR ( Jin et al., 2025a ) : vanilla PPO trained with m erged intermediate and outcome r ewards, where the trajectory-level reward combines intermediate rewards (retrieval correctness) and outcome rewards (answer correctness and format correctness), corresponding to the delayed-reward MDP ℳ 2 \mathcal{M}_{2} . The detailed reward design is provided in Section 4.1 of ( Jin et al., 2025a ) .
+
+ • 
+
+ MT-PPO (ours): PPO variant trained with both intermediate and outcome rewards, where the turn-level reward design is described in Section A.2 , with λ s = 0.1 \lambda_{s}=0.1 by default, corresponding to the turn-level-reward MDP ℳ 3 \mathcal{M}_{3} .
+
+ • 
+
+ GRPO-OR ( Jin et al., 2025b ) : vanilla GRPO trained with only o utcome r ewards, where the trajectory-level reward is a binary signal indicating final-answer correctness, corresponding to the terminal-reward MDP ℳ 1 \mathcal{M}_{1} .
+
+ • 
+
+ GRPO-MR ( Jin et al., 2025a ) : vanilla GRPO trained with m erged intermediate and outcome r ewards, where the trajectory-level reward combines intermediate rewards (retrieval correctness) and outcome rewards (answer correctness and format correctness), corresponding to the delayed-reward MDP ℳ 2 \mathcal{M}_{2} . The detailed reward design is provided in Section 4.1 of ( Jin et al., 2025a ) .
+
+ • 
+
+ OTC ( Wang et al., 2025a ) : trains Search-R1 using GRPO and PPO with trajectory-level rewards jointly consider correctness and tool efficiency.
+
+ • 
+
+ StepSearch ( Wang et al., 2025c ) : trains Search-R1 using PPO with turn-level rewards based on information gain and redundancy penalty.
+
+ • 
+
+ PPR ( Xu et al., 2025 ) : train Search-R1 using PPO with turn-level trainable reward models.
+
+ • 
+
+ Turn-Decomposed PPO ( Feng et al., 2025b ) : we implement turn-decomposed PPO based on verl-agent repo 1 1 
+ 1 
+
+ https://github.com/langfengQ/verl-agent .
+
+ We evaluate Search-R1 with both GRPO-OR and PPO-OR, and StepSearch using their official public checkpoints.
+Since Search-R1 with GRPO-MR and PPO-MR, as well as OTC and PPR, have not released their checkpoints, we directly report the results from their respective papers in Table 3 .
+
+ A.1.2 Evaluation Metrics
+
+ For each trajectory, we evaluate the following metrics:
+
+ Answer correctness. 
+The answer correctness reward evaluates whether the extracted answer (from the <answer> tag) exactly matches any accepted ground-truth answer after normalization (e.g., lowercasing and whitespace removal).
+
+ Format correctness. 
+The format correctness reward ensures structural validity by verifying that the outputs in both the final turn and all intermediate turns comply with the specifications described in ( Jin et al., 2025b ) .
+
+ Retrieval correctness. 
+The retrieval correctness reward evaluates whether any accepted answer appears in at least one search result (from the <information> tag), using case-insensitive string matching.
+
+ Each reward is assigned a value of 1.0 if the criterion is satisfied and 0 otherwise.
+
+ A.1.3 Training Details
+
+ We follow most of the experimental settings in Search-R1 ( Jin et al., 2025b ) .
+
+ PPO Training. 
+All experiments are conducted on 8 NVIDIA H100 GPUs.
+We enable gradient checkpointing and adopt Fully Sharded Data Parallel with CPU offloading.
+The learning rates of the policy and critic models are set to 1 ​ e − 6 1\mathrm{e}{-6} and 1 ​ e − 5 1\mathrm{e}{-5} , respectively.
+Training is performed for 500 steps over 4 epochs, with warm-up ratios of 0.285 and 0.015 for the policy and critic models, respectively.
+The total batch size is 512, with a mini-batch size of 256 and a micro-batch size of 64 for policy updates, and a micro-batch size of 8 for critic updates.
+We adopt GAE with λ = 1 \lambda=1 and γ = 1 \gamma=1 .
+The maximum sequence length is set to 4,096 tokens, with a maximum response length of 500 tokens and a maximum retrieved content length of 500 tokens.
+The KL-divergence regularization coefficient β \beta and clipping ratio ϵ \epsilon are set to 0.001 and 0.2, respectively.
+
+ Rollout Generation. 
+We use vLLM ( Kwon et al., 2023 ) with a tensor parallel size of 4, a GPU memory utilization ratio of 0.6, a temperature of 1.0, and a top- p p value of 1.0.
+
+ A.2 LLM Judge Setup for Turn-Level Evaluation (PPO)
+
+ We present the turn-level LLM-as-Jugde prompt. The LLM-based judge mainly assesses the qualilty of intermediate turn. We also include format correctness and search penalty with the coefficient λ s = 0.1 \lambda_{s}=0.1 as rubrics.
+
+ Turn-Level LLM-as-Judge Prompt 
+
+ You are an expert evaluator for multi-turn search-augmented reasoning systems.
+Given a user prompt, ground truth answer, and multi-turn generated response,
+evaluate each turn’s effectiveness and compliance. 
+ ## EVALUATION TASK 
+ Assess each turn’s format compliance, content quality, and contribution toward
+the ground truth answer. 
+ ## SCORING CRITERIA 
+ INTERMEDIATE TURNS - Score Range: [-1.0 to 1.0] 
+ Format Compliance: 
+
+ • 
+
+ Required: <think>...</think><search>...</search> 
+ <information>...</information> (tags only, once each, in order) 
+
+ • 
+
+ Correct format: +0.1 
+
+ • 
+
+ Incorrect format: -0.2 
+
+ Information Quality: 
+
+ • 
+
+ Relevant information in <information> tag that helps toward the ground truth answer (e.g., ground truth exists in the retrieved result within <information> tag): +0.3 
+
+ • 
+
+ Irrelevant or unhelpful information in <information> tag: +0.0 
+
+ Search Efficiency Penalty: 
+
+ • 
+
+ Number of searches = Total count of <search> tags across all turns from Turn 1 up to and including the current turn 
+
+ • 
+
+ Search penalty = Number of searches × (-0.1) 
+
+ • 
+
+ Encourages finding answers with fewer searches 
+
+ Intermediate Turn Score = Format Compliance + Information Quality + Search Penalty 
+ ## OUTPUT FORMAT 
+ Provide your evaluation using ONLY these XML tags: <reasoning>
+Systematically evaluate each turn: check format compliance,
+assess content quality, calculate scores with clear explanations
+</reasoning>
+
+<score>
+Turn1: X.X
+Turn2: X.X
+Turn3: X.X
+...
+</score>
+
+ REQUIREMENTS: 
+
+ • 
+
+ Must provide exactly {len(turns)} scores (one per turn) 
+
+ • 
+
+ Use decimal format (e.g., 0.5, -0.3, 1.0) 
+
+ • 
+
+ Use only the specified XML tags, no additional text 
+
+ ## EVALUATION DATA 
+ {prompt_text} 
+ {turns_text} 
+ {ground_truth_text} 
+ TURNS TO EVALUATE: {len(turns)} 
+ ## Your Evaluation 
+
+ A.3 Additional Experiment Results (PPO)
+
+ Figures 6 and 7 show training and validation reward curves for PPO-OR, PPO-MR and MT-PPO.
+
+ Figure 6 : Training reward curves recorded during training for PPO-OR, PPO-MR and MT-PPO on the NQ and HotpotQA datasets. The rewards include answer correctness, format correctness, and retrieval correctness. Solid lines show mean reward values, while shaded regions indicate variability across five independent runs. 
+
+ Figure 7 : Validate reward curves recorded during training for PPO-OR, PPO-MR and MT-PPO on the NQ and HotpotQA datasets. The rewards include answer correctness, format correctness, and retrieval correctness. Solid lines show mean reward values, while shaded regions indicate variability across five independent runs. 
+
+ A.4 Ablation Study (PPO)
+
+ Figure 8 : 
+Ablation studies on (1) the search count reward λ s \lambda_{s} and (2) the maximum number of turns N max N_{\max} on the NQ dataset.
+The left panel reports answer correctness, the middle panel shows the average number of turns, and the right panel illustrates accuracy under different N max N_{\max} settings.
+
+ We conduct two ablation studies to analyze the effects of (1) the search-count reward and (2) the maximum number of turns on training dynamics and final performance. As shown in Figure 8 , incorporating a moderate search-count reward (e.g., λ s = 0.1 \lambda_{s}=0.1 ) significantly improves training stability and answer correctness. The left panel shows that MT-PPO with λ s = 0.1 \lambda_{s}=0.1 achieves the highest and most consistent accuracy, while overly strong penalties (e.g., λ s = 0.3 \lambda_{s}=0.3 ) degrade performance.
+
+ The middle panel illustrates how the search-count reward shapes the agent’s turn usage. With λ s = 0.1 \lambda_{s}=0.1 , the agent learns to reduce unnecessary search calls early in training and eventually stabilizes around an efficient number of turns. In contrast, removing this term ( λ s = 0.0 \lambda_{s}=0.0 ) leads to unstable behavior, including excessive or erratic turn usage, which ultimately harms convergence.
+
+ Finally, the right panel shows the effect of varying the maximum number of allowed turns N max N_{\max} . The results indicate that MT-PPO is robust across different turn limits: adjusting N max N_{\max} from 4 to 6 yields nearly identical accuracy curves. This suggests that MT-PPO adapts its strategy effectively without being overly sensitive to the chosen turn budget.
+
+ A.5 Rollout Exmaples (PPO)
+
+ Table 4 : A rollout example of generating a response with a correct format. 
+
+ Question: who will take the throne after the queen dies? 
+ | 
+
+ <think> I need to find out who will take the throne after the queen dies. I’ll search for it. </think> 
+ | 
+
+ <search> who will take the throne after the queen dies </search> 
+ | 
+
+ <information> Doc 1(Title: “Succession to the British throne”) Catholics are eligible. Queen Elizabeth II is the sovereign, and her ..
+Doc 2(Title: “Monarchy of the United Kingdom”) Monarchy of the United Kingdom The monarchy of the United Kingdom, commonly referred to as …
+Doc 3(Title: “Demise of the Crown”) the Crown. This erroneous meaning is undermined by the principle in constitutional law of the continuity … </information> 
+ | 
+
+ <think> I found out that after the queen dies, her heir apparent will take the throne. I need to find out who the heir apparent is for Queen Elizabeth II. </think> 
+ | 
+
+ <search> heir apparent for Queen Elizabeth II </search> 
+ | 
+
+ <information> Doc 1(Title: “Heir apparent”) rank behind her brothers regardless of their ages or her age. Thus, normally, even an only …
+Doc 2(Title: “Heir apparent”) to the 16 thrones of Elizabeth II to absolute primogeniture, except for male heirs born …
+Doc 3(Title: “Heir presumptive”) or the senior member of a collateral line (if the monarch is childless); the birth … </information> 
+ | 
+
+ <think> I found out that the heir apparent for Queen Elizabeth II is her eldest son, Charles, Prince of Wales. Now I can provide the answer. </think> 
+ | 
+
+ <answer> Charles, Prince of Wales </answer> 
+ | 
+
+ Table 5 : A rollout example of generating a response with an incorrect format, where there is no answer in the last turn 
+
+ Question: in which sea pearl is found in india? 
+ | 
+
+ <think> I need to find out in which sea pearl is found in India. I’ll search for it. </think> 
+ | 
+
+ <search> in which sea pearl is found in India </search> 
+ | 
+
+ <information> Doc 1(Title: Pearl) pearl: saltwater and freshwater pearls come in …
+Doc 2(Title: Pearl) is a particularly large one weighing 14 lb (6.4 kg). The largest …
+Doc 3(Title: “Pearl Fishery Coast”) Pearl Fishery Coast The Pearl Fishery Coast refers to a coastal area … </information> 
+ | 
+
+ <think> I found out that pearls are found in the Indian Ocean. Now I need to find out in which sea pearls are found in India. </think> 
+ | 
+
+ <search> in which sea are pearls found in India </search> 
+ | 
+
+ <information> Doc 1(Title: Pearl) pearl: saltwater and freshwater pearls come in many different …
+Doc 2(Title: “Geography of India”) Great Nicobar Island); Rama’s Bridge, and Point Calimere. The Arabian …
+Doc 3(Title: “Bay of Bengal”) the gems of Sri Lanka. Garnet and other precious gems are also found in abundance in the … </information> 
+ | 
+
+ <think> I found out that pearls are found in the Indian Ocean. Now I need to find out in which sea pearls are found in India. </think> 
+ | 
+
+ <search> in which sea pearls are found in India </search> 
+ | 
+
+ <information> Doc 1(Title: Pearl) pearl: saltwater and freshwater pearls come in many different colors. While white, and …
+Doc 2(Title: Pearl) pearls”. The correct definition of a South Sea pearl – as described by CIBJO and GIA – is a pearl …
+Doc 3(Title: Pearl) is a particularly large one weighing 14 lb (6.4 kg). The largest known pearl (also from … </information> 
+ | 
+
+ <think> I found out that pearls are found in the Indian Ocean. Now I need to find out in which sea pearls are found in India. </think> 
+ | 
+
+ <search> in which sea are pearls found in India </search> 
+ | 
+
+ A.6 Turn-Decomposed PPO Illustration
+
+ Figure 9 compares trajectory-based training with turn-decomposed training.
+
+ Figure 9 : Comparison between trajectory-based and turn-decomposed training data. Trajectory-based training uses full multi-turn rollouts as responses, whereas turn-decomposed training splits each multi-turn rollout into single-turn instances, where the dialogue history serves as the prompt and the current turn serves as the response. 
+
+ Appendix B PPO Experiments on Game Agents
+
+ Table 6 reports the final test performance for different RL algorithms on the Sokoban environment at step 300.
+
+ Table 6 : Performance comparison of different RL algorithms on the Sokoban environment at step 300. 
+
+ Metric | 
+ GRPO-OR | 
+ GRPO-MR | 
+ PPO-OR | 
+ PPO-MR | 
+ MT-PPO | 
+
+ Success Rate | 
+ 0.0781 | 
+ 0.2578 | 
+ 0.3828 | 
+ 0.5078 | 
+ 0.6563 | 
+
+ Effective Action Rate | 
+ 0.2604 | 
+ 0.6771 | 
+ 0.6953 | 
+ 0.8451 | 
+ 0.9870 | 
+
+ Appendix C GRPO Experiments
+
+ C.1 Task Formulation (GRPO)
+
+ Figure 10 : Overview of the multi-turn LLM agent pipeline and comparison of different advantage estimation methods. The agent interacts with the tool environment across multiple steps: reasoning, tool use, and answer generation, receiving both intermediate and final rewards. GRPO is used as a representative algorithm to illustrate the different advantage estimation strategies. GRPO-OR and GRPO-MR serve as baselines with trajectory-level advantage estimation, while MT-GRPO is our proposed variant with fine-grained turn-level advantage estimation.
+
+ To emphasize the importance of fine-grained credit assignment in multi-turn agent interactions, we formulate the task under the MDP framework, involving multiple steps of reasoning, tool use, and answer summarization for question answering. Specifically, our tool-use environment is modeled on a Wikipedia search setup, where the agent learns to leverage a Wikipedia search engine to retrieve relevant information and generate accurate answers. The goal is to improve the agent’s performance through effective integration of external tool use. Without tool calling, the agent must rely solely on its internal knowledge to answer questions, which can limit accuracy, especially for fact-based queries requiring up-to-date or domain-specific information.
+
+ To clearly illustrate the impact of credit assignment, we design a simplified two-turn tool-use environment in which the LLM agent can interact with the search tool environment for a maximum of two turns. In this setup, the agent is allowed to call the Wikipedia search engine at most once before submitting an answer to the question. Figure 10 illustrates the pipeline of the multi-turn, tool-calling LLM agent system. Given a system prompt and a question, the LLM agent first performs a reasoning step and issues a tool call, specifying both the tool name and a query derived from its reasoning. The external tool environment processes the query and returns a search result. Based on the retrieved result, the agent performs a second round of reasoning to summarize the information and generate the final answer. The whole process can be summarized as
+
+ | 
+ reasoning → search → result → reasoning → answer \texttt{reasoning}\rightarrow\texttt{search}\rightarrow\texttt{result}\rightarrow\texttt{reasoning}\rightarrow\texttt{answer} | 
+ | 
+
+ These steps are explicitly outlined in the system prompt, which also enforces strict constraints, such as allowing only a single tool invocation and requiring the use of specific XML-like tags (e.g., <reasoning> , <tool> , <result> , <answer> ) to delineate each stage of the interaction. The full system prompt is provided in Appendix C.4 . Table 7 presents an example rollout in which the agent successfully calls the search tool.
+If the tool name or argument format is incorrect, the tool environment returns an error message, indicated by the response beginning with “Error:”.
+If the agent fails to include a tool-calling command in the first reasoning step, the tool environment will not be invoked.
+If the XML format or tag usage is incorrect—for example, if tags are missing, nested improperly, or misnamed—the environment may fail to parse the agent’s response, resulting in an error or a skipped tool invocation.
+Additional rollout examples where the agent fails to call the tool correctly are provided in Appendix C.5 .
+
+ Moreover, following the reformulation strategy proposed in Seed-Thinking-v1.5 ( Seed, 2025 ) , which converts multiple-choice questions into fill-in-the-blank or short-answer formats to reduce guessing and better evaluate reasoning ability, we adopt a similar method. Specifically, we convert our tasks into short-answer form and evaluate the model’s responses based on exact match with the ground-truth answers.
+
+ C.2 Reward Design (GRPO)
+
+ Figure 10 illustrates the pipeline of the multi-turn, tool-calling LLM agent system. To align with the environment of the tool-calling LLM agent, we design two types of verifiable reward functions.
+
+ Intermediate Verifiable Rewards: These depend solely on the first turn performed by the LLM agent. To compute intermediate rewards, we incorporate verifiers related to tool execution and search results. These verifiers ensure that the search engine is correctly invoked and that the ground-truth answer appears in the retrieved results.
+
+ • 
+
+ Tool Execution Reward: Awards 0.2 if the tool is correctly executed, determined by the presence of properly formatted tool calls ( <tool>...</tool> ) and successful responses (i.e., the environment’s response does not begin with “Error:”).
+
+ • 
+
+ Search Result Answer Presence: Awards 0.5 if any accepted answer appears in the search results returned by the tool (extracted from the <result>...</result> tag), using a case-insensitive comparison.
+
+ Outcome Verifiable Rewards: These evaluate the final model-generated responses. Specifically, they assess both the correctness of the answer and its formatting, ensuring that the output aligns with the expected structure and content.
+
+ • 
+
+ Final Answer Presence Reward: Awards 0.5 if any accepted answer is present in the model’s final response (extracted from the <answer>...</answer> tag).
+
+ • 
+
+ Exact Match Reward: Awards 1.0 if the model’s answer (extracted from <answer>...</answer> ) exactly matches any accepted answer after standard text preprocessing (i.e., lowercasing and stripping whitespace).
+
+ • 
+
+ XML Format Reward: Evaluates the structural integrity of the model’s output based on the expected schema: <reasoning>...</reasoning> followed by either <tool>...</tool> or <answer>...</answer> . See the agent’s pipeline in Figure 10 .
+Checks include: (1) the presence of at least one expected field ( <reasoning> , <tool> , <answer> ), (2) correct spacing (no leading or trailing whitespace within tags), (3) message starting with <reasoning> , and (4) message ending with </tool> or </answer> . Partial credit is awarded based on these criteria (weighted: 40% field presence, 20% spacing, 20% correct starting tag, 20% correct ending tag), and the final score is scaled by 0.2.
+
+ • 
+
+ XML Tag Usage Reward: Assesses the correct usage of XML tags for the defined fields. For each tag, the reward verifies that exactly one opening and one closing tag are present. The reward is the proportion of correctly used tags (normalized by the number of tags checked), scaled by 0.2.
+
+ Here, both final rewards and intermediate rewards are defined as the summation of their respective component rewards.
+It is easy to observe that intermediate rewards evaluate only the performance of the agent’s first turn, whereas outcome rewards assess the quality of the entire trajectory. This distinction leads to several characteristic scenarios:
+
+ • 
+
+ Tool Invocation with Poor Final Answer: The agent correctly invokes a tool in the first turn, but fails to produce a correct or well-formatted final answer, resulting in intermediate rewards but little or no outcome reward.
+
+ • 
+
+ Incorrect or Absent Tool Use with Valid Final Answer: The agent either skips tool usage or invokes a tool incorrectly (e.g., due to malformed syntax or an error response), yet still generates a correct and well-structured final answer. In this case, the agent receives partial or full outcome rewards despite earning no intermediate rewards.
+
+ • 
+
+ Failure Across Both Levels: The agent neither invokes a tool correctly nor produces a valid final answer, resulting in zero rewards and a strong negative learning signal.
+
+ C.3 Experiment Setup (GRPO)
+
+ In our experiments, we build our codebase upon the open-source project verifiers ( Brown, 2025 ) , which trains LLM agents for multi-turn tool-use tasks, including math calculators, code interpreters, and search engines.
+
+ Training Details. 
+Experiments are conducted on a node equipped with 8 NVIDIA H100 GPUs: one GPU is dedicated to rollout generation, while the remaining seven GPUs are used for model training. Rollout generation is handled by vLLM ( Kwon et al., 2023 ) . Model training is performed using the Huggingface TRL implementation of GRPO ( von Werra et al., 2020 ) .
+
+ Hyperparameters. 
+For all methods, the number of rollout generations is set to 21 21 . The maximum completion length during generation is set to 1024 tokens. The KL divergence penalty is disabled by setting β = 0 \beta=0 . The learning rate is fixed at 1 × 10 − 6 1\times 10^{-6} . We use a per-device batch size of 12 12 and set gradient accumulation steps to 4 4 . Each batch undergoes two training iterations. The total number of training steps is set to 300 300 .
+
+ Figure 11 : Curves for different training reward components during training with various algorithms (MT-GRPO, GRPO-OR, and GRPO-MR). Each plot shows the training reward score over training steps for intermediate rewards (Tool Execution, Search Result Answer Presence) and outcome rewards (XML Tag Usage, XML Format, Final Answer Presence, Exact Match). Dotted lines represent the average reward across 10 runs, while solid lines show trends smoothed using the Exponential Moving Average (EMA).
+
+ C.4 System Prompt (GRPO)
+
+ System Prompt 
+
+ You have access to the following tools to help solve problems: {tool_descriptions}
+
+ Follow these steps exactly once: 
+
+ 1. 
+
+ Think through your reasoning inside <reasoning> tags 
+
+ 2. 
+
+ Use a tool by writing a JSON command inside <tool> tags with: 
+
+ • 
+
+ "name" : the tool to use 
+
+ • 
+
+ "args" : the arguments for the tool 
+
+ 3. 
+
+ You will see the tool’s output inside <result> tags 
+
+ 4. 
+
+ Think through the tool’s output inside <reasoning> tags 
+
+ 5. 
+
+ Based on your reasoning, provide your final answer inside <answer> tags 
+
+ Important: 
+
+ • 
+
+ Use the tool exactly once – DO NOT attempt to call the tool again even if the first search isn’t helpful 
+
+ • 
+
+ Work with both your prior knowledge and the single tool call 
+
+ • 
+
+ If the tool result is unhelpful, rely on your prior knowledge 
+
+ • 
+
+ Tools expect valid JSON – follow the examples carefully 
+
+ • 
+
+ Do not invent tools or arguments that aren’t listed 
+
+ • 
+
+ Analyze the result in a reasoning step before giving your answer 
+
+ • 
+
+ Your answer should match the expected ground-truth 
+
+ Wiki Search Tool Descriptions 
+ wiki_search: Searches Wikipedia and returns the top matching article
+content.
+
+Arguments:
+ - query
+
+ C.5 Rollout Examples (GRPO)
+
+ Table 7 : A rollout example of successfully calling the search tool during training. 
+
+ Question: What serial killer, who buried the remains of 26 of his victims in his Chicago crawl space, was known as the “Killer Clown”? 
+ | 
+
+ <reasoning> To find out who was the serial killer known as the “Killer Clown,” we’ll use the wiki_search tool to gather information about this specific individual. </reasoning> 
+
+ | 
+
+ <tool> 
+ { 
+ "name": "wiki_search", 
+ "args": { 
+ "query": "Killer Clown serial killer buried remains in Chicago crawl space" 
+ } 
+ } 
+ </tool> 
+
+ <result> John Wayne Gacy. John Wayne Gacy (March 17, 1942 – May 10, 1994) was an American serial killer who raped, tortured, and murdered at least 33 teenage boys and young men between 1972 and 1978 in Cook County, Illinois (a part of metropolitan Chicago). All of Gacy’s known murders were committed inside his Norwood Park ranch house… </result> 
+
+ | 
+
+ <reasoning> From the information provided, John Wayne Gacy, referred to as the “Killer Clown,” was a serial killer known for burying the remains of at least 26 of his victims in his Chicago crawl space. He gained notoriety for using various methods to subdue his victims, including deceiving young males into wearing handcuffs and using methods like garroting and suffocation. His final confirmed victim was identified through DNA testing in 2011. Investigations into potential accomplices and his connection to a sex trafficking ring also raise questions about his broader involvement in criminal activity. </reasoning> 
+
+ | 
+
+ <answer> John Wayne Gacy </answer> 
+
+ | 
+
+ Table 8 : A rollout example of failing to call the search tool and producing a wrong answer. 
+
+ Question: In the horror film Them, what type of creatures were Them? 
+ | 
+
+ <reasoning> In the horror film “Them!”, the main creatures were giant ants. I know this because I remember from my general knowledge that “Them!” is a 1954 science fiction horror film about giant ants and the damage they cause in a coastal town. So, to answer the question, the creatures in “Them!” were giant ants.
+ </reasoning> 
+
+ | 
+
+ <answer> Giant </answer> 
+
+ | 
+
+ Table 9 : A rollout example of generating a response with an incorrect format. 
+
+ Question: Who was the Canadian jazz pianist (1925-2007), winner of eight Grammy Awards who released over 200 recordings? 
+ | 
+
+ <reasoning> I need to identify the Canadian jazz pianist, born in 1925 and died in 2007, who won eight Grammy Awards and released over 200 recordings. This person’s name should be easy to find with a Wikipedia search since the question specifies Grammy Awards and a long recording history. Once I find the Wikipedia article, I can read about the pianist’s career to confirm the details mentioned in the question.
+ </reasoning> 
+
+ | 
+
+ Error: Tool command not found or invalid XML format. Please ensure correct formatting. 
+
+ | 
+
+ <answer><tool>< reasoning> From the Wikipedia search I found that Oscar Peterson, born in 1925 and deceased in 2007, was a Canadian jazz pianist who won eight Grammy Awards and released over 200 recordings. </reasoning><answer>Oscar Peterson<answer><result><answer>Oscar Peterson</answer> 
+
+ | 
+
+ C.6 Additional Experimental Results (GRPO)
+
+ Figure 12 : Curves for different training reward components during training using GRPO-OR, where shaded regions represent the range between the maximum and minimum values across 10 runs. 
+
+ Figure 13 : Curves for different training reward components during training using GRPO-MR, where shaded regions represent the range between the maximum and minimum values across 10 runs. 
+
+ Figure 14 : Curves for different training reward components during training using MT-GRPO, where shaded regions represent the range between the maximum and minimum values across 10 runs. 
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

@@ -1,0 +1,1078 @@
+SOURCE: https://arxiv.org/html/2503.11094
+
+Open3D-VQA: A Benchmark for Embodied Spatial Reasoning with Multimodal Large Language Model in Open Space 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract. 
+ 1 Introduction 
+ 2 Related Works 
+ 2.1 Benchmark for Spatial Reasoning 
+ 2.2 Spatial Reasoning via MLLMs 
+ 3 Benchmark Design and Construction 
+ 3.1 Task Set Definition 
+ 3.2 Benchmark Construction Pipeline 
+ 3.2.1 Data Curation 
+ 3.2.2 QA Generation Pipeline 
+ 3.3 Data Analysis 
+ 4 Experiments 
+ 4.1 Experimental Setups 
+ 4.1.1 Evaluation metrics 
+ 4.1.2 Implementation Details 
+ 4.1.3 Baselines 
+ 4.2 Overall Performance of Baselines 
+ 4.3 Sim-to-real Analysis 
+ 4.4 Failure Analysis 
+ 5 Conclusion 
+ References 
+ A Appendices 
+ A.1 Details of the Data Curation Pipeline 
+ A.1.1 Image Caption 
+ A.1.2 Curation Pipeline 
+ A.2 QA templates of Open3D VQA construction 
+ A.3 Prompt Design for MLLMs 
+ A.3.1 Prompt for Finetuning 
+ A.3.2 Prompt for Evaluation 
+ A.4 Qualitative Results of MLLMs 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2503.11094v4 [cs.CV] 30 Oct 2025
+ Open3D-VQA: A Benchmark for Embodied Spatial Reasoning with Multimodal Large Language Model in Open Space
+ Weichen Zhang 1,2 * ,
+ Zile Zhou 1 * ,
+ Xin Zeng 3 * ,
+ Xuchen Liu 2 ,
+ Jianjie Fang 1 ,
+ Chen Gao 1 \ddagger ,
+ Yong Li 1 ,
+ Jinqiang Cui 2 ,
+ Xinlei Chen 1 \ddagger ,
+ Xiao-Ping Zhang 1 
+ 1 Tsinghua University,
+ 2 Pengcheng Laboratory,
+ 3 Sun Yat-sen University
+ *Equal Contribution,
+ \ddagger Corresponding Author
+ Abstract. 
+ Spatial reasoning is a fundamental capability of multimodal large language models (MLLMs), yet their performance in open aerial environments remains underexplored. In this work, we present Open3D-VQA, a novel benchmark for evaluating MLLMs’ ability to reason about complex spatial relationships from an aerial perspective. The benchmark comprises 73k QA pairs spanning 7 general spatial reasoning tasks—multiple-choice, true/false, and short-answer formats—and supports both visual and point cloud modalities. The questions are automatically generated from spatial relations extracted from both real-world and simulated aerial scenes. Evaluation on 13 popular MLLMs reveals that: 1) Models are generally better at answering questions about relative spatial relations than absolute distances, 2) 3D LLMs fail to demonstrate significant advantages over 2D LLMs, and 3) Fine-tuning solely on the simulated dataset can significantly improve the model’s spatial reasoning performance in real-world scenarios. We release our benchmark, data generation pipeline, and evaluation toolkit to support further research: https://github.com/EmbodiedCity/Open3D-VQA.code .
+ 1. Introduction
+ Figure 1. The overview of Open3D-VQA. This work includes integration of real-world and simulated data collection platforms, an automatic toolchain for QA generation, and a large-scale aerial spatial reasoning benchmark.
+ A fundamental objective within the field of AI research is to equip intelligent agents with the ability to understand spatial information in complex three-dimensional environments, which is essential for various embodied tasks, including vision-and-language navigation ( Gadre et al., 2023 ; Majumdar et al., 2022 ; Liu et al., 2023b ) , robotic manipulation ( Huang et al., 2024 ; Driess et al., 2022 ) , situation reasoning ( Linghu et al., 2024 ; Man et al., 2024a ) , and more.
+However, existing question-answering (QA) benchmarks used to evaluate these capabilities are often limited to object-object spatial relationships, lacking the spatial relationship between the object and the agent ( Liu et al., 2023a ; Cheng et al., 2024 ; Chen et al., 2024d ) . Situated QA benchmarks ( Ma et al., 2022 ; Shiri et al., 2024 ) have considered spatial relationships from the egocentric perspective. However, they focus solely on relative spatial relations and overlook the agent’s ability to perceive precise measurements such as distance. Moreover, these benchmarks are constructed from ground-level perspectives within constrained indoor environments. Thus, the 3D spatial reasoning abilities for urban open-ended spaces have not been well-defined or evaluated. Spatial reasoning in urban spaces possesses the following characteristics:
+ • 
+ Complex Urban Semantics : Urban scenes encompass complex city layouts, multi-level structures, and open-vocabulary object distributions, posing the challenges for spatial comprehension and reasoning.
+ • 
+ Large-scale Spatial Perception : Unlike indoor environments where agents typically perceive objects within a 10-meter range ( Yang et al., 2024 ) , urban environments span vast, open areas requiring agents to perceive and reason over much larger distances.
+ • 
+ Diverse 3D Viewpoints : Spatial reasoning in urban spaces involves not only ground-level but also aerial perspectives, introducing unique reasoning logic. For example, in an oblique aerial view, buildings situated lower in the field of view may appear closer to the drone.
+ These characteristics introduce new challenges to spatial reasoning in 3D urban environments, and we believe that evaluating this capability offers insights for spatial intelligence ( Zhao et al., 2025 ) and urban applications ( Chen et al., 2024a ; Chen et al., 2024c ) .
+ However, constructing such a benchmark is far from trivial. The difficulties lie in three folds: 1) Designing a comprehensive spatial QA benchmark: The questions must cover a wide spectrum of diverse urban spatial relationships while aligning with natural human language usage. 2) Diverse-perspective aerial data collection: Unlike existing aerial-view datasets such as VisDrone ( Cao et al., 2021 ) , our goal is to capture UAV observations from varying altitudes and camera tilt angles. It requires drones to navigate through dense urban environments, facing risks such as signal loss and potential collisions, making the data collection process risky and costly. 3) Extracting accurate 3D spatial relationships: Generating spatial QA pairs requires a precise understanding of object-level 3D relationships in the scene. Extracting such information requires depth maps, camera intrinsics/extrinsics, and UAV trajectories. However, obtaining these modalities typically demands additional onboard sensors such as depth cameras or RTK, leading to increased costs and extra labor.
+ In this work, we introduce Open3D-VQA , a novel benchmark for spatial reasoning in 3D urban environments. First, we systematically define three primary types of spatial reasoning tasks and four distinct spatial perspectives. By analyzing the characteristics of each reasoning type under different perspectives, we identify seven distinct spatial reasoning tasks that capture key features of urban spatial understanding. For each task, we design corresponding multiple-choice, true/false, and open-ended question formats, as illustrated in Figure 1 .
+Second, to collect data from diverse viewpoints, we collaborate with experienced UAV pilots to fly drones across both real-world urban areas and high-fidelity digital twin environments, such as EmbodiedCity ( Gao et al., 2024 ) and UrbanScene3D ( Lin et al., 2022 ) . We further augment our dataset by incorporating open-source outdoor UAV datasets like WildUAV ( Florea et al., 2021 ) , enhancing both the scene and viewpoint diversity.
+Third, we develop a fully automated QA generation pipeline that leverages off-the-shelf models to infer 3D spatial relationships from single RGB images and generates linguistically coherent questions through carefully designed templates. Besides, we introduce a multi-modal correction flow that incorporates ground-truth data from multiple modalities (e.g., depth, camera pose) to reduce the prediction error accumulation through the pipeline.
+Finally, we conduct both qualitative and quantitative evaluations of popular MLLMs, including visual and point cloud modalities. We further apply supervised fine-tuning (SFT) on classic models, Qwen ( Wang et al., 2024 ) and LLaVA ( Liu et al., 2024 ) , to validate the effectiveness and applicability of our proposed Open3D-VQA benchmark.
+ Our main contributions are:
+ • 
+ We propose Open3D-VQA , a novel question-answering benchmark designed for spatial reasoning in 3D urban environments. The benchmark encompasses four distinct spatial perspectives and seven task types, providing a comprehensive evaluation of an embodied agent’s 3D spatial reasoning capabilities.
+ • 
+ We introduce a scalable QA generation pipeline that extracts 3D spatial relationships and generates diverse QA formats from a single RGB image. We design a plug-and-play multi-modal correction flow that leverages available ground-truth information across modalities to reduce error accumulation and ensure high-quality QAs.
+ • 
+ We evaluate mainstream MLLMs on Open3D-VQA, revealing their current limitations in spatial reasoning and analyzing their sim-to-real capacities.
+ 2. Related Works
+ 2.1. Benchmark for Spatial Reasoning
+ Recent advancements in large language models have demonstrated impressive common-sense reasoning abilities across a wide range of tasks, such as task planning ( Shridhar et al., 2020 ; Wang et al., 2022 ) , navigation ( Liu et al., 2023b ; Anderson et al., 2018 ; Krantz et al., 2020 ) , and manipulation. With the integration of multimodal inputs (e.g., images, point clouds), there has been an increasing focus on evaluating the spatial reasoning capabilities of these models. Prior benchmarks focus on four main reasoning categories: (1) relative spatial reasoning (e.g., CLEVR ( Johnson et al., 2017 ) , VSR ( Liu et al., 2023a ) ), (2) absolute spatial reasoning (e.g., SpatialVLM ( Chen et al., 2024d ) , SpatialRGPT ( Cheng et al., 2024 ) ), (3) situational reasoning involving agent-object relations (e.g., Spatial-MM ( Shiri et al., 2024 ) , DriveMLLM ( Guo et al., 2024 ) ), and (4) object-centric reasoning (e.g., GPT4Point ( Qi et al., 2024 ) , PointLLM ( Xu et al., 2025 ) ). However, existing efforts typically cover only a subset of these categories.
+ To address this, we propose Open3D-VQA, a unified benchmark for 3D spatial reasoning in aerial space that integrates all four VQA types and supports both RGB and point cloud data. This enables a comprehensive evaluation of MLLMs’ spatial reasoning abilities. A comparison with prior benchmarks is provided in Table 1 .
+ 2.2. Spatial Reasoning via MLLMs
+ Predicting the spatial relationships between objects in environments is a fundamental spatial cognition ability of humans. Tons of vision-language models (VLMs) ( Lu et al., 2024 ; Lv et al., 2023 ; Team et al., 2023 ; Yao et al., 2024 ; Wang et al., 2024 ; Wang et al., 2023 ; Hurst et al., 2024 ) integrate visual and textual inputs to directly infer spatial relationships. However, due to the absence of spatial measurements, VLMs struggle to predict spatial relations such as distance and length. Other works ( Hong et al., 2023 ; Zhu et al., 2023 ; Man et al., 2024b ; Jia et al., 2025 ; Xu et al., 2025 ) have incorporated depth maps or point clouds to provide spatial measurement information, enabling more accurate spatial reasoning.
+ However, previous works have only covered a subset of spatial VQA tasks in their benchmarks, which has led to an incomplete evaluation of the spatial reasoning capacities of MLLMs.
+ Table 1. Comparisons of our Open3D-VQA with other spatial reasoning benchmarks. Qual. , Quan. , Situ. , and Obj. denote qualitative, quantitative, situational, and object-centric QA, respectively.
+ | 
+ Source | 
+ Environment | 
+ Modality | 
+ Perspective | 
+ Qual. | 
+ Quan. | 
+ Situ. | 
+ Obj. | 
+ # of QA | 
+ ScanQA ( Azuma et al., 2022 ) | 
+ Real. | 
+ Indoor | 
+ RGB+Point Cloud | 
+ Ground | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ ✔ | 
+ 41.3k | 
+ SQA3D ( Ma et al., 2022 ) | 
+ Real. | 
+ Indoor | 
+ RGB+Point Cloud | 
+ Ground | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ ✔ | 
+ 33.4k | 
+ CLEVR ( Johnson et al., 2017 ) | 
+ Sim. | 
+ Indoor | 
+ RGB | 
+ Ground | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ ✔ | 
+ 720k | 
+ VSR ( Liu et al., 2023a ) | 
+ Real. | 
+ Indoor/Outdoor | 
+ RGB | 
+ Ground | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ ✔ | 
+ 10.9k | 
+ Spatial-MM ( Shiri et al., 2024 ) | 
+ Real. | 
+ Indoor/Outdoor | 
+ RGB | 
+ Ground | 
+ ✔ | 
+ ✘ | 
+ ✔ | 
+ ✘ | 
+ 2.3k | 
+ SpatialVLM ( Chen et al., 2024d ) | 
+ Real. | 
+ Indoor/Outdoor | 
+ RGBD | 
+ Ground | 
+ ✘ | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ N/A | 
+ SpatialRGPT-Bench ( Cheng et al., 2024 ) | 
+ Real. | 
+ Indoor/Outdoor | 
+ RGBD | 
+ Ground | 
+ ✔ | 
+ ✔ | 
+ ✘ | 
+ ✘ | 
+ 1.5k | 
+ DriveMLLM ( Guo et al., 2024 ) | 
+ Real. | 
+ Outdoor | 
+ RGBD | 
+ Ground | 
+ ✔ | 
+ ✔ | 
+ ✔ | 
+ ✘ | 
+ 4.6k | 
+ EmboidiedCity ( Gao et al., 2024 ) | 
+ Sim. | 
+ Outdoor | 
+ RGBD | 
+ Aerial | 
+ ✔ | 
+ ✔ | 
+ ✔ | 
+ ✘ | 
+ 50.4k | 
+ O3DVQA(Ours) | 
+ Real. & Sim. | 
+ Outdoor | 
+ RGBD | 
+ Aerial | 
+ ✔ | 
+ ✔ | 
+ ✔ | 
+ ✔ | 
+ 73.3k | 
+ Figure 2. The data curation pipeline and dataset statistics. 
+ 3. Benchmark Design and Construction
+ 3.1. Task Set Definition
+ To comprehensively evaluate the spatial reasoning capacities of the embodied agent in open space, we categorize spatial reasoning into four distinct types: allocentric spatial reasoning ( Shiri et al., 2024 ) , egocentric spatial reasoning ( Chen et al., 2024d ) , allocentric-egocentric transformation spatial reasoning ( Yang et al., 2024 ) , and object-centric reasoning ( Johnson et al., 2017 ) . These categories encompass a diverse range of spatial concepts, including quantitative and qualitative reasoning over distances, orientations, and sizes. We outline the overall task splits in Table 2 , and detailed tasks are listed in Appendix A.2 .
+ Allocentric Spatial Reasoning evaluates the spatial reasoning capability on object-object relationships from an allocentric perspective, where spatial relationships are independent of the agent’s viewpoint or position. Specifically, it includes two types of reasoning tasks: size reasoning and distance reasoning . The size reasoning task requires the agent to infer the relative dimensions, such as comparative length, width, height, and overall size, between pairs of objects. The distance reasoning task assesses the agent’s ability to reason about the spatial distances between objects, considering the direct distance as well as the horizontal/vertical distance.
+ Egocentric Spatial Reasoning focuses on spatial relationships between the agent and objects from the agent’s perspective, where the relationship depends on the agent’s position and orientation. This category includes two specific tasks: orientation reasoning and distance reasoning . Orientation reasoning requires the agent to determine the spatial orientation of an object relative to itself, such as left-right positioning, vertical placement, and angular direction. Distance reasoning evaluates the agent’s capability to estimate distances between itself and surrounding objects, encompassing direct distance as well as horizontal/vertical distances.
+ Allocentric-egocentric Transformation evaluates the agent’s ability to comprehend spatial relationships across different viewpoints and coordinate systems ( Yang et al., 2024 ) . Specifically, it assesses the agent’s capability to transform spatial information from an allocentric viewpoint into various egocentric perspectives. This transformation involves reasoning about how the orientation relationships between the agent and objects change as the agent moves through the environment. For example, the agent needs to predict how the relative orientation of objects shifts when observing from different viewpoints. Besides, the agent reasons about how the observed distance between objects varies due to the viewpoint change, as distances projected onto different viewpoints can differ significantly.
+ Object-centric Reasoning focuses on assessing the aerial agent’s capability to reason about spatial attributes of urban objects. These attributes, including length, width, height, and overall size, are essential for accurate spatial cognition and effective path planning. Specifically, this reasoning category requires the agent to accurately interpret and quantify these attributes.
+ Table 2. Mapping between reasoning capacities and tasks. 
+ Reasoning Capacity 
+ | 
+ Reasoning Tasks 
+ | 
+ Allocentric 
+ | 
+ Size reasoning : Infers relative size relationships be- 
+ tween two objects in space, such as longer/shorter, 
+ wider/narrower, taller/shorter, larger/smaller. 
+ Distance reasoning : Infers straight-line, vertical, or 
+ horizontal distances between objects. 
+ | 
+ Egocentric 
+ | 
+ Direction reasoning : Infers the direction of an object 
+ relative to the agent, such as left, right, up, and down. 
+ Distance reasoning : Infers the straight-line distance 
+ of an object from the agent. 
+ | 
+ Allocentric-egocentric Transformation 
+ | 
+ Direction reasoning : The agent infers the direction 
+ of objects relative to itself based on its movement. 
+ Distance reasoning : The agent infers object distance 
+ in the horizontal or vertical direction relative to itself. 
+ | 
+ Object-centric 
+ | 
+ Size reasoning : Infers the absolute size of a single 
+ object, such as its length, width, or height. 
+ | 
+ 3.2. Benchmark Construction Pipeline
+ Our dataset construction pipeline is illustrated in Fig 2 . The dataset is built upon aerial RGB images captured from diverse UAV platforms across both real-world and synthetic urban environments. We introduce a scalable QA generation pipeline that generates multi-type QAs from a single RGB image without any annotation. Given that multi-source data collected from different platforms and scenes inherently includes additional information such as depth maps and camera poses, we further propose a plug-and-play multi-modal correction flow . This method propagates the available multi-modal ground truth in the QA generation pipeline, effectively reducing accumulated errors and enhancing the QA quality.
+ 3.2.1. Data Curation
+ We have three considerations for our data curation phase. 1) Scene Diversity : To prevent the benchmark from being biased toward specific environments, we collect drone flight images and videos from multiple open-source datasets and simulators, including Urbanscene3D, EmbodiedCity, and WildUAV. Urbanscene3D provides reconstructed urban scenes in the UE4 simulator along with real-world aerial images from six distintive areas in Shenzhen. EmbodiedCity offers high-fidelity digital twin cities of Beijing and Wuhan. WildUAV provides real-world overhead imagery from Romania. In addition, we self-collect real-world drone flight videos in Shenzhen. As a result, our dataset covers 4 distinctive real-world areas and 3 synthetic scenes, totaling 4,675 images. 2) Hardware Platform Diversity : The data are gathered using various UAV platforms to avoid bias toward any particular UAV visual sensor or flight system. Specifically, our benchmark includes data collected using four different UAV platforms, including a DJI M300RTK, a DJI Matrice 210, a self-made UAV, and an AirSim simulator-based drone. 3) Viewpoint Diversity : Images in our benchmark are captured from diverse aerial viewpoints, covering a comprehensive range of UAV poses within open 3D space. WildUAV and UrbanScene3D primarily include nadir (top-down) and oblique views from low altitudes. EmbodiedCity provides front-view images in the simulators. To further enrich viewpoint diversity, we manually control UAVs in simulators to traverse various altitudes from low to high and capture multi-view images.
+ 3.2.2. QA Generation Pipeline
+ The key information required for generating QA is the spatial relationships between objects within the scene, which depend on accurate object captions and their corresponding 3D locations. To achieve this, we propose a spatial relationship extraction (SRE) pipeline that explicitly grounds objects within the 3D scene, allowing precise extraction of their spatial relationships. Furthermore, we introduce a multi-modal correction flow (MCF) designed to leverage multi-modal ground-truth data to propagate ground truth information throughout the SRE pipeline, mitigating error accumulation and enhancing the accuracy of the generated spatial relationships.
+ Table 3. Performance of MLLMs across Spatial Reasoning Tasks. The gray cell indicates the best performance among all models.
+ | 
+ | 
+ | 
+ Total | 
+ Real World | 
+ Simulator | 
+ | 
+ | 
+ | 
+ Allo. | 
+ Ego. | 
+ Trans. | 
+ Obj. | 
+ Allo. | 
+ Ego. | 
+ Trans. | 
+ Obj. | 
+ Allo. | 
+ Ego. | 
+ Trans. | 
+ Obj. | 
+ Method | 
+ Rank | 
+ Avg. | 
+ Size 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Size 
+ | 
+ Size 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Size 
+ | 
+ Size 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Direction 
+ | 
+ Distance 
+ | 
+ Size 
+ | 
+ Proprietary 2D LLMs | 
+ GPT-4o-mini | 
+ 5 | 
+ 39.8 | 
+ 39.2 | 
+ 2.5 | 
+ 47.5 | 
+ 1.7 | 
+ 8.9 | 
+ 0.9 | 
+ 0.6 | 
+ 41.8 | 
+ 2.9 | 
+ 48.1 | 
+ 0.0 | 
+ 10.0 | 
+ 0.0 | 
+ 0.0 | 
+ 37.8 | 
+ 2.5 | 
+ 47.1 | 
+ 1.8 | 
+ 8.8 | 
+ 0.9 | 
+ 0.6 | 
+ GPT-4o | 
+ 4 | 
+ 47.1 | 
+ 62.0 | 
+ 4.9 | 
+ 51.2 | 
+ 2.4 | 
+ 5.7 | 
+ 1.2 | 
+ 2.6 | 
+ 68.9 | 
+ 5.7 | 
+ 52.2 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 58.4 | 
+ 4.8 | 
+ 50.5 | 
+ 2.6 | 
+ 6.1 | 
+ 1.3 | 
+ 2.8 | 
+ Gemini-2.0-Flash | 
+ 2 | 
+ 48.6 | 
+ 61.3 | 
+ 1.2 | 
+ 53.9 | 
+ 0.6 | 
+ 7.3 | 
+ 0.0 | 
+ 0.3 | 
+ 67.1 | 
+ 5.7 | 
+ 55.6 | 
+ 0.0 | 
+ 8.3 | 
+ 0.0 | 
+ 0.0 | 
+ 58.2 | 
+ 0.8 | 
+ 52.8 | 
+ 0.6 | 
+ 7.3 | 
+ 0.0 | 
+ 0.3 | 
+ Gemini-2.5-Flash | 
+ 1 | 
+ 51.6 | 
+ 59.5 | 
+ 2.1 | 
+ 58.7 | 
+ 0.6 | 
+ 32.7 | 
+ 1.7 | 
+ 0.6 | 
+ 65.5 | 
+ 3.1 | 
+ 59.6 | 
+ 0.0 | 
+ 25.0 | 
+ 8.3 | 
+ 0.0 | 
+ 56.3 | 
+ 2.0 | 
+ 58.0 | 
+ 0.6 | 
+ 33.3 | 
+ 1.2 | 
+ 0.6 | 
+ Qwen-VL-Max-latest | 
+ 3 | 
+ 47.3 | 
+ 56.5 | 
+ 1.8 | 
+ 53.5 | 
+ 0.6 | 
+ 9.3 | 
+ 0.3 | 
+ 1.8 | 
+ 61.8 | 
+ 0.0 | 
+ 53.3 | 
+ 0.0 | 
+ 8.3 | 
+ 0.0 | 
+ 0.0 | 
+ 53.7 | 
+ 1.9 | 
+ 53.6 | 
+ 0.6 | 
+ 9.4 | 
+ 0.3 | 
+ 1.9 | 
+ Open-source 2D LLMs | 
+ InternVL-4B | 
+ 5 | 
+ 42.6 | 
+ 50.9 | 
+ 1.4 | 
+ 46.9 | 
+ 1.3 | 
+ 19.1 | 
+ 2.4 | 
+ 1.3 | 
+ 56.5 | 
+ 4.4 | 
+ 48.0 | 
+ 0.0 | 
+ 11.1 | 
+ 0.0 | 
+ 5.3 | 
+ 47.9 | 
+ 1.2 | 
+ 46.2 | 
+ 1.4 | 
+ 19.7 | 
+ 2.6 | 
+ 1.0 | 
+ InternVL-8B | 
+ 3 | 
+ 45.1 | 
+ 52.1 | 
+ 1.7 | 
+ 50.1 | 
+ 2.0 | 
+ 13.1 | 
+ 2.7 | 
+ 0.7 | 
+ 55.2 | 
+ 3.7 | 
+ 51.7 | 
+ 0.0 | 
+ 33.3 | 
+ 5.0 | 
+ 0.0 | 
+ 50.5 | 
+ 1.5 | 
+ 49.0 | 
+ 2.1 | 
+ 12.1 | 
+ 2.5 | 
+ 0.7 | 
+ LLaVA-1.5-7B | 
+ 6 | 
+ 37.9 | 
+ 36.9 | 
+ 0.0 | 
+ 45.2 | 
+ 0.0 | 
+ 1.4 | 
+ 0.0 | 
+ 0.6 | 
+ 37.1 | 
+ 0.0 | 
+ 45.3 | 
+ 0.0 | 
+ 12.5 | 
+ 0.0 | 
+ 0.0 | 
+ 36.8 | 
+ 0.0 | 
+ 45.2 | 
+ 0.0 | 
+ 0.7 | 
+ 0.0 | 
+ 0.6 | 
+ LLaVA-1.5-7B (finetuned) | 
+ 4 | 
+ 43.0 | 
+ 52.3 | 
+ 1.3 | 
+ 48.3 | 
+ 0.0 | 
+ 8.1 | 
+ 0.3 | 
+ 0.0 | 
+ 54.3 | 
+ 2.9 | 
+ 49.1 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 51.2 | 
+ 1.2 | 
+ 47.9 | 
+ 0.0 | 
+ 8.6 | 
+ 0.3 | 
+ 0.0 | 
+ Qwen2-VL-7B | 
+ 2 | 
+ 49.4 | 
+ 57.9 | 
+ 1.3 | 
+ 56.3 | 
+ 1.1 | 
+ 4.8 | 
+ 0.0 | 
+ 0.9 | 
+ 63.1 | 
+ 0.0 | 
+ 57.2 | 
+ 0.0 | 
+ 9.1 | 
+ 0.0 | 
+ 4.2 | 
+ 55.1 | 
+ 1.4 | 
+ 55.7 | 
+ 1.2 | 
+ 4.5 | 
+ 0.0 | 
+ 0.6 | 
+ Qwen2-VL-7B (finetuned) | 
+ 1 | 
+ 64.0 | 
+ 70.0 | 
+ 0.8 | 
+ 74.3 | 
+ 0.0 | 
+ 25.4 | 
+ 0.3 | 
+ 0.0 | 
+ 74.0 | 
+ 0.0 | 
+ 75.6 | 
+ 0.0 | 
+ 16.7 | 
+ 0.0 | 
+ 0.0 | 
+ 67.8 | 
+ 0.8 | 
+ 73.4 | 
+ 0.0 | 
+ 26.1 | 
+ 0.3 | 
+ 0.0 | 
+ Open-source 3D LLMs | 
+ 3D-LLM | 
+ 1 | 
+ 43.8 | 
+ 36.0 | 
+ 22.4 | 
+ 49.3 | 
+ 42.3 | 
+ 22.9 | 
+ 43.6 | 
+ 20.5 | 
+ 48.5 | 
+ 41.7 | 
+ 50.2 | 
+ 75.0 | 
+ 66.7 | 
+ 58.3 | 
+ 0.0 | 
+ 28.8 | 
+ 20.9 | 
+ 48.6 | 
+ 39.9 | 
+ 19.6 | 
+ 42.5 | 
+ 21.8 | 
+ LEO | 
+ 2 | 
+ 43.4 | 
+ 49.2 | 
+ 3.4 | 
+ 49.3 | 
+ 0.0 | 
+ 11.2 | 
+ 1.2 | 
+ 1.2 | 
+ 49.1 | 
+ 2.9 | 
+ 51.5 | 
+ 0.0 | 
+ 12.5 | 
+ 0.0 | 
+ 0.0 | 
+ 49.3 | 
+ 3.4 | 
+ 47.9 | 
+ 0.0 | 
+ 11.1 | 
+ 1.3 | 
+ 1.2 | 
+ Spatial Relationship Extraction As illustrated in Figure 2 , the spatial relationship extraction (SRE) pipeline comprises object captioning, image grounding, depth estimation, and 3D projection modules, following a similar approach to ( RemyXAI, 2023 ) . In the object captioning module, we prompt GPT-4o to describe distinctive objects within the provided image. We limit the output to at most three objects to exclude ambiguous or trivial objects, such as multiple cars with the same color. In the image grounding module, we utilize SegCLIP ( Luo et al., 2023 ) and SAM ( Ravi et al., 2024 ) to generate bounding boxes and precise masks for the captioned objects. SegCLIP, which is an open-vocabulary segmentation model, produces initial coarse masks by aligning object captions with semantically relevant regions in the image. We subsequently prompt SAM using pixels from these coarse regions to refine these coarse masks into fine-grained counterparts. For the depth estimation module, we employ VGGT ( Wang et al., 2025 ) , an outdoor monocular depth estimation method, to generate accurate depth maps along with corresponding camera parameters. Leveraging the depth maps, refined object masks, and camera parameters, we project the objects into 3D space to compute their locations and 3D bounding boxes. Finally, based on these 3D representations, we extract detailed spatial relationships among the objects, such as distances, directions, and other spatial attributes.
+ Multi-modal Correction Flow Each module in the SRE pipeline inevitably introduces estimation errors that accumulate throughout the entire process, resulting in ambiguous object captions and inaccurate spatial localization. To mitigate this issue, we propose a multi-modal correction flow (MCF) that propagates the multi-modal ground truth in the SRE pipeline. MCF supports various forms of multi-modal ground truth, including object captions, bounding boxes, segmentation masks, depth maps, and accurate 3D scans.
+ MCF has two flow directions: downstream propagation and upstream propagation. In downstream propagation, module outputs are directly replaced by their corresponding ground-truth data, thereby effectively preventing errors from propagating downstream and impacting the accuracy of the final 3D location predictions. For upstream propagation, MCF aims to enhance the quality and distinctiveness of object captions by utilizing precise bounding box information or accurate 3D scans. Specifically, given a ground-truth object bounding box, MCF crops the corresponding region from the image and feeds it to GPT-4o, generating more precise and descriptive captions. When an accurate 3D scan of an object is available, MCF projects the object’s 3D bounding box into the 2D image plane using camera parameters, thereby deriving the object’s 2D bounding box.
+ Within our benchmark, real-world scenes like WildUAV provide depth maps and camera parameters. Simulated scenes like EmbodiedCity provide depth maps, camera parameters, and 3D scans. All these multi-modal ground truths are used in MCF.
+ Multi-type QA generation 
+Our benchmark includes multiple-choice questions (MCQ) ( Du et al., 2024 ; Zhao et al., 2025 ) , true-or-false question (TFQ) ( Wang et al., 2019 ) , and short-answer questions (SAQ) ( Chen et al., 2024d ; Cheng et al., 2024 ) , allowing for diverse evaluation formats. The QA pairs are primarily auto-generated based on extracted spatial relationships and well-designed question templates. During generation, a template is randomly selected from the corresponding task-specific pool. More details can be found in Appendix A.2 .
+To ensure the benchmark’s quality, all generated QA pairs are manually refined. Thanks to the MCF and the multi-modal ground-truth metadata, the 3D projection process is noise-free. Therefore, human annotators only need to verify the image grounding results, significantly reducing the manual effort. We discard images containing ambiguous object descriptions or imprecise segmentations.
+ 3.3. Data Analysis
+ The dataset comprises multiple modalities, poses, and target masks, with image resolutions set to 640x480, commonly used by current UAV platforms. To ensure diversity and realism in the dataset, we collected a total of 4,675 images from four real-world scenes and three virtual scenes. After manual refinement, 1,168 high-quality images were retained.
+ To guarantee the diversity of QA types, we designed 34, 12, and 12 templates to generate SAQs, MCQs, and TFQs, respectively, resulting in 73,324 QA pairs in total. We adopt 80% of QAs from simulators for training, 10% for validation, and the remaining 10% combined with QAs from the real world for sim-to-real testing. We further depict the ratio of QAs in different scenes, the number of QAs of different reasoning tasks, and the ratio of different QA types in Figure 2 c-e. Finally, we generate a word cloud shown in Figure 2 f to illustrate the contextual richness of our benchmark.
+ 4. Experiments
+ For the proposed outdoor spatial reasoning tasks, we evaluated the performance of 13 popular MLLMs, including visual and 3D LLMs. We further fine-tuned two widely used open-source models to validate the effectiveness of our benchmark. Additionally, we compared the performance of various large models across different spatial reasoning tasks and analyze their failure reasons.
+ 4.1. Experimental Setups
+ 4.1.1. Evaluation metrics
+ For MCQs and TFQs, we directly calculate the accuracy of each reasoning task. For SAQs, we follow the evaluation strategies from SpatialVLM ( Chen et al., 2024d ) . For questions about relative relationships, such as relative size or orientation, we use GPT-4o to assess the consistency between the model’s responses and the ground truth on a binary scale (0 or 1). For questions about absolute measurements, such as object distance or size estimations, GPT-4o extracts numerical values from both the model’s response and the ground truth. A response is considered correct if the extracted value falls within the range of
+ [0.75,1.25] relative to the ground truth.
+ 4.1.2. Implementation Details
+ For 3D MLLMs inference, scene point clouds are obtained via the pipeline in Figure 2 and object point clouds are segmented by the 2D object masks. We also align point clouds with their pretrained coordinate systems.
+2D MLLMs are fine-tuned with LoRA ( Hu et al., 2021 ) using four NVIDIA H100. As described in Section 3.3 , all models are fine-tuned on simulated QA samples and evaluated on both simulated and real-world QA samples.
+ Figure 3. The average accuracy of LLaVA-1.5 and Qwen2-VL in real-world and simulated scenes. 
+ 4.1.3. Baselines
+ We evaluate both 2D and 3D MLLMs. For 2D MLLMs we test both proprietary and open-source models. Proprietary 2D MLLMs include GPT-4o ( Achiam et al., 2023 ) , Qwen-VL-Max ( Cloud, 2025 ) , Gemini-2.0 Flash, and Gemini-2.5 Flash ( Google, 2025 ) . Open-source 2D MLLMS include InternVL-4B, InterVL-8B ( Chen et al., 2024b ) , Qwen2-VL ( Wang et al., 2024 ) , and LLaVA-1.5-7B ( Liu et al., 2024 ) . For 3D MLLMs, we evaluate 3D-LLM ( Hong et al., 2023 ) and LEO ( Huang et al., 2023 ) .
+ 4.2. Overall Performance of Baselines
+ We present the accuracy of all evaluated models across different spatial reasoning tasks in Table 3 . From these results, we make the following observations and conclusions.
+ Most models lack allocentric-egocentric transformation reasoning ability. Compared to other spatial reasoning tasks, all models perform notably worse on reasoning tasks related to allocentric-egocentric transformation. Only Gemini-2.5-Flash, fine-tuned Qwen2-VL, and 3D-LLM achieve accuracy above 20%, while most models remain below 10%. The results indicate that current multimodal large language models struggle to shift spatial relationships from an environment-centered view to a self-centered one.
+ Incorporating point cloud information significantly enhances direction and distance reasoning. All 2D MLLMs perform worse on distance reasoning tasks compared to direction and size reasoning. The average accuracy for distance reasoning across 2D models is only 4.1%, whereas direction and size reasoning reach 33.2% and 40.7%, respectively. The results highlight the challenge current models face in inferring absolute distances. On the other hand, 3D-LLMs achieve comparable performance on distance and direction reasoning, suggesting that point cloud inputs provide models with distance information between objects, thereby strengthening their overall spatial reasoning capability. It is worth noting that although LEO also receives point cloud inputs, its accuracy remains low due to its inability to produce well-formatted responses aligned with the question type, as discussed in Section 4.4 .
+ Fine-tuning effectively improves model performance on direction and size reasoning tasks. After fine-tuning, both LLaVA-1.5-7B and Qwen2-VL-7B achieve over 10% improvements in size reasoning tasks and more than 5% improvements in direction reasoning tasks, while their performance improvements on distance reasoning remain marginal. This suggests that 2D MLLMs are better suited for qualitative spatial reasoning tasks and require additional spatial information, such as point clouds, for quantitative spatial reasoning.
+ Figure 4. Three common errors of MLLMs on Open3D-VQA. 
+ 4.3. Sim-to-real Analysis
+ We present the accuracy of the LLaVA-1.5 and Qwen2-VL models under zero-shot and fine-tuning settings across different environments, as shown in Figure 3 . First, the zero-shot performance on the real-world dataset is comparable to that in simulated environments, indicating that the models possess a certain level of generalization in spatial reasoning. Furthermore, after fine-tuning solely on simulated datasets, the models demonstrate a significant improvement in spatial reasoning performance in real-world scenarios. Specifically, compared to their zero-shot counterparts, LLaVA-1.5 and Qwen2-VL achieve accuracy gains of 6.5% and 22.3%, respectively, on the UrbanUAV dataset. This suggests that 2D MLLMs can learn generalizable spatial reasoning capabilities from simulated data and successfully transfer them to real-world environments. These results also validate the effectiveness of our dataset.
+ 4.4. Failure Analysis
+ We further analyze the failure cases of MLLMs on spatial reasoning tasks. As illustrated in Figure 4 , there are three primary failure reasons. The most common failure is reasoning errors, where the model is unable to derive the correct answer to a spatial reasoning question despite understanding the input. The second reason for failure is question misinterpretation, where the model fails to comprehend the question and generates an irrelevant response. This issue is especially severe in LEO, which is the major cause of its low accuracy on distance reasoning tasks. The last failure is that models refuse to answer the question. As shown in the figure 4 , 2D MLLMs such as LLaVA tend to adopt conservative responses to distance reasoning tasks due to the lack of depth information.
+ 5. Conclusion
+ In this work, we propose Open3D-VQA to comprehensively evaluate the spatial reasoning capacities of both 2D and 3D MLLMs in aerial spaces. We define seven spatial reasoning tasks and design more than 40 QA templates to automatically generate large-scale QAs. 13 popular MLLMs are tested on the benchmark. The results indicate the limited spatial reasoning of MLLMs and the validity of the proposed benchmark.
+ References
+ Achiam et al . (2023) 
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al . 2023.
+ Gpt-4 technical report.
+ arXiv preprint arXiv:2303.08774 (2023).
+ Anderson et al . (2018) 
+Peter Anderson, Qi Wu, Damien Teney, Jake Bruce, Mark Johnson, Niko Sünderhauf, Ian Reid, Stephen Gould, and Anton Van Den Hengel. 2018.
+ Vision-and-language navigation: Interpreting visually-grounded navigation instructions in real environments. In Proceedings of the IEEE conference on computer vision and pattern recognition . 3674–3683.
+ Azuma et al . (2022) 
+Daichi Azuma, Taiki Miyanishi, Shuhei Kurita, and Motoaki Kawanabe. 2022.
+ Scanqa: 3d question answering for spatial scene understanding. In proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 19129–19139.
+ Cao et al . (2021) 
+Yaru Cao, Zhijian He, Lujia Wang, Wenguan Wang, Yixuan Yuan, Dingwen Zhang, Jinglin Zhang, Pengfei Zhu, Luc Van Gool, Junwei Han, et al . 2021.
+ VisDrone-DET2021: The vision meets drone object detection challenge results. In Proceedings of the IEEE/CVF International conference on computer vision . 2847–2854.
+ Chen et al . (2024d) 
+Boyuan Chen, Zhuo Xu, Sean Kirmani, Brain Ichter, Dorsa Sadigh, Leonidas Guibas, and Fei Xia. 2024d.
+ Spatialvlm: Endowing vision-language models with spatial reasoning capabilities. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 14455–14465.
+ Chen et al . (2024a) 
+Xuecheng Chen, Haoyang Wang, Yuhan Cheng, Haohao Fu, Yuxuan Liu, Fan Dang, Yunhao Liu, Jinqiang Cui, and Xinlei Chen. 2024a.
+ Ddl: Empowering delivery drones with large-scale urban sensing capability.
+ IEEE Journal of Selected Topics in Signal Processing (2024).
+ Chen et al . (2024c) 
+Xuecheng Chen, Zijian Xiao, Yuhan Cheng, Chen-Chun Hsia, Haoyang Wang, Jingao Xu, Susu Xu, Fan Dang, Xiao-Ping Zhang, Yunhao Liu, et al . 2024c.
+ Soscheduler: Toward proactive and adaptive wildfire suppression via multi-uav collaborative scheduling.
+ IEEE Internet of Things Journal 11, 14 (2024), 24858–24871.
+ Chen et al . (2024b) 
+Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al . 2024b.
+ Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 24185–24198.
+ Cheng et al . (2024) 
+An-Chieh Cheng, Hongxu Yin, Yang Fu, Qiushan Guo, Ruihan Yang, Jan Kautz, Xiaolong Wang, and Sifei Liu. 2024.
+ SpatialRGPT: Grounded Spatial Reasoning in Vision Language Model.
+ arXiv preprint arXiv:2406.01584 (2024).
+ Cloud (2025) 
+Alibaba Cloud. 2025.
+ Qwen Documentation.
+ https://tongyi.aliyun.com/ .
+ Accessed: 2025-01-24.
+ Driess et al . (2022) 
+Danny Driess, Jung-Su Ha, Marc Toussaint, and Russ Tedrake. 2022.
+ Learning models as functionals of signed-distance fields for manipulation planning. In Conference on robot learning . PMLR, 245–255.
+ Du et al . (2024) 
+Mengfei Du, Binhao Wu, Zejun Li, Xuanjing Huang, and Zhongyu Wei. 2024.
+ Embspatial-bench: Benchmarking spatial understanding for embodied tasks with large vision-language models.
+ arXiv preprint arXiv:2406.05756 (2024).
+ Florea et al . (2021) 
+Horatiu Florea, Vlad-Cristian Miclea, and Sergiu Nedevschi. 2021.
+ WildUAV: Monocular UAV Dataset for Depth Estimation Tasks.
+ 2021 IEEE 17th International Conference on Intelligent Computer Communication and Processing (ICCP) (2021).
+ Gadre et al . (2023) 
+Samir Yitzhak Gadre, Mitchell Wortsman, Gabriel Ilharco, Ludwig Schmidt, and Shuran Song. 2023.
+ Cows on pasture: Baselines and benchmarks for language-driven zero-shot object navigation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 23171–23181.
+ Gao et al . (2024) 
+Chen Gao, Baining Zhao, Weichen Zhang, Jinzhu Mao, Jun Zhang, Zhiheng Zheng, Fanhang Man, Jianjie Fang, Zile Zhou, Jinqiang Cui, et al . 2024.
+ EmbodiedCity: A Benchmark Platform for Embodied Agent in Real-world City Environment.
+ arXiv preprint arXiv:2410.09604 (2024).
+ Google (2025) 
+Google. 2025.
+ Gemini API Documentation.
+ https://ai.google.dev/gemini-api/docs .
+ Accessed: 2025-01-24.
+ Guo et al . (2024) 
+Xianda Guo, Ruijun Zhang, Yiqun Duan, Yuhang He, Chenming Zhang, Shuai Liu, and Long Chen. 2024.
+ DriveMLLM: A Benchmark for Spatial Understanding with Multimodal Large Language Models in Autonomous Driving.
+ arXiv preprint arXiv:2411.13112 (2024).
+ Hong et al . (2023) 
+Yining Hong, Haoyu Zhen, Peihao Chen, Shuhong Zheng, Yilun Du, Zhenfang Chen, and Chuang Gan. 2023.
+ 3d-llm: Injecting the 3d world into large language models.
+ Advances in Neural Information Processing Systems 36 (2023), 20482–20494.
+ Hu et al . (2021) 
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2021.
+ Lora: Low-rank adaptation of large language models.
+ arXiv preprint arXiv:2106.09685 (2021).
+ Huang et al . (2023) 
+Jiangyong Huang, Silong Yong, Xiaojian Ma, Xiongkun Linghu, Puhao Li, Yan Wang, Qing Li, Song-Chun Zhu, Baoxiong Jia, and Siyuan Huang. 2023.
+ An embodied generalist agent in 3d world.
+ arXiv preprint arXiv:2311.12871 (2023).
+ Huang et al . (2024) 
+Wenlong Huang, Chen Wang, Yunzhu Li, Ruohan Zhang, and Li Fei-Fei. 2024.
+ Rekep: Spatio-temporal reasoning of relational keypoint constraints for robotic manipulation.
+ arXiv preprint arXiv:2409.01652 (2024).
+ Hurst et al . (2024) 
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al . 2024.
+ Gpt-4o system card.
+ arXiv preprint arXiv:2410.21276 (2024).
+ Jia et al . (2025) 
+Baoxiong Jia, Yixin Chen, Huangyue Yu, Yan Wang, Xuesong Niu, Tengyu Liu, Qing Li, and Siyuan Huang. 2025.
+ Sceneverse: Scaling 3d vision-language learning for grounded scene understanding. In European Conference on Computer Vision . Springer, 289–310.
+ Johnson et al . (2017) 
+Justin Johnson, Bharath Hariharan, Laurens Van Der Maaten, Li Fei-Fei, C Lawrence Zitnick, and Ross Girshick. 2017.
+ Clevr: A diagnostic dataset for compositional language and elementary visual reasoning. In Proceedings of the IEEE conference on computer vision and pattern recognition . 2901–2910.
+ Krantz et al . (2020) 
+Jacob Krantz, Erik Wijmans, Arjun Majumdar, Dhruv Batra, and Stefan Lee. 2020.
+ Beyond the nav-graph: Vision-and-language navigation in continuous environments. In Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part XXVIII 16 . Springer, 104–120.
+ Lin et al . (2022) 
+Liqiang Lin, Yilin Liu, Yue Hu, Xingguang Yan, Ke Xie, and Hui Huang. 2022.
+ Capturing, reconstructing, and simulating: the urbanscene3d dataset. In European Conference on Computer Vision . Springer, 93–109.
+ Linghu et al . (2024) 
+Xiongkun Linghu, Jiangyong Huang, Xuesong Niu, Xiaojian Ma, Baoxiong Jia, and Siyuan Huang. 2024.
+ Multi-modal situated reasoning in 3d scenes.
+ arXiv preprint arXiv:2409.02389 (2024).
+ Liu et al . (2023a) 
+Fangyu Liu, Guy Emerson, and Nigel Collier. 2023a.
+ Visual spatial reasoning.
+ Transactions of the Association for Computational Linguistics 11 (2023), 635–651.
+ Liu et al . (2024) 
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2024.
+ Visual instruction tuning.
+ Advances in neural information processing systems 36 (2024).
+ Liu et al . (2023b) 
+Shubo Liu, Hongsheng Zhang, Yuankai Qi, Peng Wang, Yanning Zhang, and Qi Wu. 2023b.
+ Aerialvln: Vision-and-language navigation for uavs. In Proceedings of the IEEE/CVF International Conference on Computer Vision . 15384–15394.
+ Lu et al . (2024) 
+Haoyu Lu, Wen Liu, Bo Zhang, Bingxuan Wang, Kai Dong, Bo Liu, Jingxiang Sun, Tongzheng Ren, Zhuoshu Li, Hao Yang, et al . 2024.
+ Deepseek-vl: towards real-world vision-language understanding.
+ arXiv preprint arXiv:2403.05525 (2024).
+ Luo et al . (2023) 
+Huaishao Luo, Junwei Bao, Youzheng Wu, Xiaodong He, and Tianrui Li. 2023.
+ Segclip: Patch aggregation with learnable centers for open-vocabulary semantic segmentation. In International Conference on Machine Learning . PMLR, 23033–23044.
+ Lv et al . (2023) 
+Tengchao Lv, Yupan Huang, Jingye Chen, Yuzhong Zhao, Yilin Jia, Lei Cui, Shuming Ma, Yaoyao Chang, Shaohan Huang, Wenhui Wang, et al . 2023.
+ Kosmos-2.5: A multimodal literate model.
+ arXiv preprint arXiv:2309.11419 (2023).
+ Ma et al . (2022) 
+Xiaojian Ma, Silong Yong, Zilong Zheng, Qing Li, Yitao Liang, Song-Chun Zhu, and Siyuan Huang. 2022.
+ Sqa3d: Situated question answering in 3d scenes.
+ arXiv preprint arXiv:2210.07474 (2022).
+ Majumdar et al . (2022) 
+Arjun Majumdar, Gunjan Aggarwal, Bhavika Devnani, Judy Hoffman, and Dhruv Batra. 2022.
+ Zson: Zero-shot object-goal navigation using multimodal goal embeddings.
+ Advances in Neural Information Processing Systems 35 (2022), 32340–32352.
+ Man et al . (2024a) 
+Yunze Man, Liang-Yan Gui, and Yu-Xiong Wang. 2024a.
+ Situational Awareness Matters in 3D Vision Language Reasoning. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 13678–13688.
+ Man et al . (2024b) 
+Yunze Man, Shuhong Zheng, Zhipeng Bao, Martial Hebert, Liang-Yan Gui, and Yu-Xiong Wang. 2024b.
+ Lexicon3d: Probing visual foundation models for complex 3d scene understanding.
+ arXiv preprint arXiv:2409.03757 (2024).
+ Qi et al . (2024) 
+Zhangyang Qi, Ye Fang, Zeyi Sun, Xiaoyang Wu, Tong Wu, Jiaqi Wang, Dahua Lin, and Hengshuang Zhao. 2024.
+ Gpt4point: A unified framework for point-language understanding and generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition . 26417–26427.
+ Ravi et al . (2024) 
+Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Ronghang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, Roman Rädle, Chloe Rolland, Laura Gustafson, et al . 2024.
+ Sam 2: Segment anything in images and videos.
+ arXiv preprint arXiv:2408.00714 (2024).
+ RemyXAI (2023) 
+RemyXAI. 2023.
+ VQASynth: A Framework for Synthetic Visual Question Answering Dataset Generation.
+ https://github.com/remyxai/VQASynth 
+ Accessed: 2024-05-21.
+ Shiri et al . (2024) 
+Fatemeh Shiri, Xiao-Yu Guo, Mona Golestan Far, Xin Yu, Gholamreza Haffari, and Yuan-Fang Li. 2024.
+ An Empirical Analysis on Spatial Reasoning Capabilities of Large Multimodal Models.
+ arXiv preprint arXiv:2411.06048 (2024).
+ Shridhar et al . (2020) 
+Mohit Shridhar, Jesse Thomason, Daniel Gordon, Yonatan Bisk, Winson Han, Roozbeh Mottaghi, Luke Zettlemoyer, and Dieter Fox. 2020.
+ Alfred: A benchmark for interpreting grounded instructions for everyday tasks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition . 10740–10749.
+ Team et al . (2023) 
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al . 2023.
+ Gemini: a family of highly capable multimodal models.
+ arXiv preprint arXiv:2312.11805 (2023).
+ Wang et al . (2019) 
+Alex Wang, Yada Pruksachatkun, Nikita Nangia, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel Bowman. 2019.
+ Superglue: A stickier benchmark for general-purpose language understanding systems.
+ Advances in neural information processing systems 32 (2019).
+ Wang et al . (2025) 
+Jianyuan Wang, Minghao Chen, Nikita Karaev, Andrea Vedaldi, Christian Rupprecht, and David Novotny. 2025.
+ Vggt: Visual geometry grounded transformer.
+ arXiv preprint arXiv:2503.11651 (2025).
+ Wang et al . (2024) 
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al . 2024.
+ Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.
+ arXiv preprint arXiv:2409.12191 (2024).
+ Wang et al . (2023) 
+Weihan Wang, Qingsong Lv, Wenmeng Yu, Wenyi Hong, Ji Qi, Yan Wang, Junhui Ji, Zhuoyi Yang, Lei Zhao, Xixuan Song, et al . 2023.
+ Cogvlm: Visual expert for pretrained language models.
+ arXiv preprint arXiv:2311.03079 (2023).
+ Wang et al . (2022) 
+Yizhong Wang, Yeganeh Kordi, Swaroop Mishra, Alisa Liu, Noah A Smith, Daniel Khashabi, and Hannaneh Hajishirzi. 2022.
+ Self-instruct: Aligning language models with self-generated instructions.
+ arXiv preprint arXiv:2212.10560 (2022).
+ Xu et al . (2025) 
+Runsen Xu, Xiaolong Wang, Tai Wang, Yilun Chen, Jiangmiao Pang, and Dahua Lin. 2025.
+ Pointllm: Empowering large language models to understand point clouds. In European Conference on Computer Vision . Springer, 131–147.
+ Yang et al . (2024) 
+Jihan Yang, Shusheng Yang, Anjali W Gupta, Rilyn Han, Li Fei-Fei, and Saining Xie. 2024.
+ Thinking in space: How multimodal large language models see, remember, and recall spaces.
+ arXiv preprint arXiv:2412.14171 (2024).
+ Yao et al . (2024) 
+Yuan Yao, Tianyu Yu, Ao Zhang, Chongyi Wang, Junbo Cui, Hongji Zhu, Tianchi Cai, Haoyu Li, Weilin Zhao, Zhihui He, et al . 2024.
+ Minicpm-v: A gpt-4v level mllm on your phone.
+ arXiv preprint arXiv:2408.01800 (2024).
+ Zhao et al . (2025) 
+Baining Zhao, Jianjie Fang, Zichao Dai, Ziyou Wang, Jirong Zha, Weichen Zhang, Chen Gao, Yue Wang, Jinqiang Cui, Xinlei Chen, et al . 2025.
+ UrbanVideo-Bench: benchmarking vision-language models on embodied intelligence with video data in urban spaces.
+ arXiv preprint arXiv:2503.06157 (2025).
+ Zhu et al . (2023) 
+Ziyu Zhu, Xiaojian Ma, Yixin Chen, Zhidong Deng, Siyuan Huang, and Qing Li. 2023.
+ 3d-vista: Pre-trained transformer for 3d vision and text alignment. In Proceedings of the IEEE/CVF International Conference on Computer Vision . 2911–2921.
+ Appendix A Appendices
+ A.1. Details of the Data Curation Pipeline
+ A.1.1. Image Caption
+ To generate initial captions for the dataset, we utilize GPT-4o by providing it with the RGB image as input. The prompt instructs the model to concisely describe up to three of the most salient objects depicted in the scene. The response is expected in JSON format, where each object is summarized in a short, descriptive phrase. This step serves as the foundation for constructing semantically meaningful scene annotations (see Figure 5 for an example).
+ Figure 5. The caption prompt with GPT-4o 
+ A.1.2. Curation Pipeline
+ Given the RGB image and the corresponding object captions produced by GPT-4o, we construct a multi-stage pipeline to generate high-quality visual question-answering (VQA) samples. First, we leverage CLIPSeg to obtain rough semantic segmentations based on the caption keywords, followed by refinement using Segment Anything Model (SAM) to generate precise object masks and bounding boxes. These masks are then projected into 3D space using the aligned depth data, enabling the reconstruction of object-level point clouds for up to three salient objects in the scene.
+ Subsequently, these segmented objects and their spatial relationships provide the basis for generating diverse types of QA pairs. We design a set of templated question generation strategies that cover spatial reasoning, object attributes, and egocentric perspectives. These QA templates are automatically instantiated based on the 3D scene understanding derived from the segmentation and captioning results. See Figure 6 for an overview of the entire curation pipeline.
+ A chat between a curious human and an artificial intelligence assistant. 
+ The assistant gives helpful, detailed, and polite answers to the human’s questions. 
+ USER: <image>Is the white carport with pink bolts around to the left of the translucent, modern bus shelter advertisement panel, white frame from the viewer’s perspective? 
+ ASSISTANT: Incorrect, the white carport with pink bolts around is not on the left side of the translucent, modern bus shelter advertisement panel, white frame. 
+ Table 4. Fine-tuning prompts for LLaVA-1.5
+ SYSTEM: You are a helpful assistant. 
+ USER: 
+ <|image_pad|><|image_pad|>…<|image_pad|>
+Is the white carport with pink bolts around to the left of the translucent, modern bus shelter advertisement panel, white frame from the viewer’s perspective? 
+ ASSISTANT: 
+ Incorrect, the white carport with pink bolts around is not on the left side of the translucent, modern bus shelter advertisement panel, white frame. 
+ Table 5. Fine-tuning prompts for Qwen2-VL
+ Figure 6. Overview of the data curation pipeline. Starting from RGB and caption inputs, the system performs segmentation, point cloud reconstruction, and QA generation.
+ You are a helpful assistant designed to output JSON.
+You should help me to evaluate the response given the question and the correct answer. 
+ To mark a response, you should output a single integer between 0 and 1.
+1 means that the response perfectly matches the answer.
+0 means that the response is completely different from the answer. 
+ Table 6. GPT-4o prompts for qualitative evaluation.
+ You are a helpful assistant designed to output JSON.
+You should help me to evaluate the response given the question and the correct answer. 
+ You need to convert the distance of the correct answer and response to meters. The conversion factors are as follows: 1 inch = 0.0254 meters. 1 foot = 0.3048 meters. 1 centimeter (cm) = 0.01 meters.
+You should output two floats in meters, one for the answer, and one for the response.
+The output should be in JSON format. 
+ Table 7. GPT-4o prompts for quantitative evaluation.
+ You are a helpful assistant designed to output JSON.
+You should help me to evaluate the response given the question and the correct answer. 
+ You need to extract the direction of the correct answer and response.
+You should output two integers in clock directions, one for the answer, and one for the response. 
+ Table 8. GPT-4o prompts for direction evaluation.
+ A.2. QA templates of Open3D VQA construction
+ In this section, we present several representative QA templates from each category used to construct our Open3D VQA dataset. Owing to space constraints, we are unable to include the complete set. Code and dataset will be released to public upon publication. The examples are listed in Table 9 , Table 10 , Table 11 and Table 12 .
+ Table 9. Allocentric QA templates
+ Templates Name | 
+ Example | 
+ Size reasoning : Relative size relationships between two objects in space, such as length, width, height, or overall size. | 
+ tall_predicate | 
+ Can you confirm if the [A] is taller than the [B]? | 
+ short_predicate | 
+ Can you confirm if the [A] is shorter than the [B]? | 
+ width_predicate | 
+ Does the [A] have a greater width compared to the [B]? | 
+ thin_predicate | 
+ Is the [A] thinner than the [B]? | 
+ tall_multichoice | 
+ Who is taller, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ short_multichoice | 
+ Between the [A] and the [B], which one has less height? A:[A] B:[B] C:Same D:Unknown | 
+ wide_multichoice | 
+ Which of these two, the [A] or the [B], appears wider? A:[A] B:[B] C:Same D:Unknown | 
+ thin_multichoice | 
+ Who is thinner, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ big_tfqa | 
+ Does the [A] have a larger size compared to the [B]? A.Yes. B.No. | 
+ small_tfqa | 
+ Does the [A] have a larger size compared to the [B]? A.Yes. B.No. | 
+ wide_tfqa | 
+ Is the [A] wider than the [B]? A.Yes. B.No. | 
+ thin_tfqa | 
+ Can you confirm if the [A] is thinner than the [B]? A.Yes. B.No. | 
+ tall_tfqa | 
+ Is the [A] taller than the [B]? A.Yes. B.No. | 
+ short_tfqa | 
+ Does the [A] have a lesser height compared to the [B]? A.Yes. B.No. | 
+ Distance reasoning : The distance between objects along different spatial axes, such as straight-line or axis-aligned distances. | 
+ distance_data | 
+ Could you measure the distance between the [A] and the [B]? | 
+ vertical_distance_data | 
+ What is the vertical distance between the [A] and the [B]? | 
+ horizontal_distance_data | 
+ Can you give me an estimation of the horizontal distance between the [A] and the [B]? | 
+ Table 10. Egocentric QA templates
+ Templates Name | 
+ Example | 
+ Direction reasoning : The object’s position relative to the agent , such as left/right, above/below, or angle. | 
+ left_predicate | 
+ Is the [A] to the left of the [B] from the viewer’s perspective? | 
+ right_predicate | 
+ Does the [A] appear on the right side of the [B]? | 
+ above_predicate | 
+ Can you confirm if the [A] is positioned above the [B]? | 
+ below_predicate | 
+ Can you confirm if the [A] is positioned below the [B]? | 
+ front_predicate | 
+ Is the [A] in front of the [B]? | 
+ behind_predicate | 
+ Is the [A] positioned behind the [B]? | 
+ left_multichoice | 
+ Which is more to the left, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ right_multichoice | 
+ Between the [A] and the [B], which one appears on the right side from the viewer’s perspective? 
+ A:[A] B:[B] C:Same D:Unknown 
+ | 
+ above_multichoice | 
+ Who is higher up, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ below_multichoice | 
+ Which is below, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ front_multichoice | 
+ Between the [A] and the [B], which one appears on closer from the viewer’s perspective? 
+ A:[A] B:[B] C:Same D:Unknown 
+ | 
+ behind_multichoice | 
+ Who is positioned further to viewer, the [A] or the [B]? A:[A] B:[B] C:Same D:Unknown | 
+ left_tfqa | 
+ Is the [A] to the left of the [B] from the viewer’s perspective? A.Yes. B.No. | 
+ right_tfqa | 
+ Does the [A] appear on the right side of the [B]? A.Yes. B.No. | 
+ above_tfqa | 
+ Can you confirm if the [A] is positioned above the [B]? A.Yes. B.No. | 
+ below_tfqa | 
+ Is the [A] below the [B]? A.Yes. B.No. | 
+ front_tfqa | 
+ Does the [A] come in front of the [B]? A.Yes. B.No. | 
+ behind_tfqa | 
+ Does the [A] lie behind the [B]? A.Yes. B.No | 
+ left_relation2agent | 
+ Is the [A] to the left of you from the viewer’s perspective? | 
+ right_relation2agent | 
+ Does the [A] appear on the right side of you? | 
+ above_relation2agent | 
+ Can you confirm if the [A] is positioned above you? | 
+ below_relation2agent | 
+ Does the [A] appear under? | 
+ direction2agent | 
+ Estimate the direction of [A]. | 
+ Distance reasoning : The distance from the object to the agent . | 
+ distance2agent | 
+ Could you provide the distance between the [A] and you? | 
+ Table 11. Allocentric-egocentric Transformation QA templates
+ Templates Name | 
+ Example | 
+ Direction reasoning : The angular relation between objects from the agent’s perspective. | 
+ direction_data | 
+ If you are at [A], where will you find [B]? | 
+ Distance reasoning : The horizontal or vertical distance between objects from the agent’s perspective along different coordinate axes. | 
+ vertical_distance2agent | 
+ How far is the [A] from you vertically? | 
+ horizontal_distance2agent | 
+ Measure the horizontal distance from the [A] to you. | 
+ Table 12. Objcentric QA templates
+ Templates Name | 
+ Example | 
+ Distance reasoning : The distance between objects along different spatial axes, such as straight-line or axis-aligned distances. | 
+ width_data | 
+ What is the width of the [A]? | 
+ height_data | 
+ What is the approximate height of the [A]? | 
+ A.3. Prompt Design for MLLMs
+ In this part, we provide a few examples about the prompt we use during our fine-tuning.
+ A.3.1. Prompt for Finetuning
+ For LLaVA-1.5 and Qwen2-VL, we use the prompt shown in Table 4 and 5 , respectively. Note that the <|image_pad|><|image_pad|>…<|image_pad|> part of Qwen2-VL means the 336 image token created by the processor.
+ A.3.2. Prompt for Evaluation
+ Evaluating our benchmark presents a unique challenge due to the existence of multiple valid answers expressed in varying units. Although human evaluation is capable of addressing such variability, it is often impractical due to its high cost and time requirements. To enable scalable evaluation, we adopt the approach proposed by ( Cheng et al., 2024 ) , utilizing GPT-4 to assess the correctness of model outputs.
+ For qualitative questions, GPT-4 determines whether the model’s response is semantically consistent with the reference answer, assigning a binary score (0 or 1). For quantitative distance questions and direction questions, GPT-4 extracts numerical values from both the ground-truth and the predicted responses. For distance or object attribute questions, GPT-4 is also asked to standardize them to meters. Then we calculate accuracy and error metrics based on the normalized representation. The detailed prompts are listed in Table 6 , 7 and 8 .
+ A.4. Qualitative Results of MLLMs
+ In this part, we present qualitative examples of outputs generated by different models during the evaluation phase of our benchmark. Such results serves as a critical complement to former experiment, offering direct evidence of models’ strengths, limitations, and cognitive biases in spatial reasoning tasks. The examples are depicted in Figure 7 , Figure 8 , Figure 9 and Figure 10 . The names of different models are denoted in blue font. Ground - truth answers and correct responses are presented in green font. Incorrect answers and sections where there is a refusal to answer are indicated in red font.
+ Figure 7. Representative Examples of representative model outputs on our benchmark (part I) 
+ Figure 8. Representative Examples of representative model outputs on our benchmark (part II) 
+ Figure 9. Representative Examples of representative model outputs on our benchmark (part III)
+ Figure 10. Representative Examples of representative model outputs on our benchmark (part IV) 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

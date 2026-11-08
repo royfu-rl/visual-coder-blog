@@ -1,0 +1,1055 @@
+1Introduction 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Related Work 
+
+ 3 Method 
+
+ Multi-Turn Verifier Setting 
+
+ Reference-Aware Credit Decomposition 
+
+ 3.0.1 Retrospective Credit 
+
+ Hindsight Estimation 
+
+ Counterfactual Estimation and Budgeted Refinement 
+
+ Turn-Level Advantage and Token Optimization 
+
+ 4 Experiments 
+
+ 4.1 Experimental Setup 
+
+ Tasks and evaluation. 
+
+ Models and training data. 
+
+ Rollout settings. 
+
+ Baselines. 
+
+ Metrics. 
+
+ Performance across model scales and task domains. 
+
+ Where Do the Gains Come From? 
+
+ Efficiency of Counterfactual Estimation 
+
+ 4.2 Credit Dynamics and Training Horizon 
+
+ 5 Conclusion 
+
+ References 
+
+ License: CC BY 4.0
+
+arXiv:2608.01667v1 [cs.AI] 03 Aug 2026
+
+ TCPO: Turn-Level Credit Policy Optimization 
+
+ Sicong Liao,  Zhi Chen,  Yaohua Tang
+
+ Moore Threads AI
+
+ tangyaohua28@gmail.com 
+
+ Abstract 
+
+ Verifier-guided reinforcement learning has become a powerful paradigm for improving LLM reasoning. In multi-turn settings, models receive a verifier score after each turn and iteratively refine their outputs. Although such scores provide dense feedback, they do not directly provide dense credit: a score measures the quality of the current output, while credit should measure how the current turn changes the refinement trajectory. We propose TCPO, a turn-level credit assignment method for verifier-guided multi-turn RL. TCPO casts credit assignment as score-to-credit conversion and constructs turn-level advantages through reference-based comparisons: retrospective credit captures immediate progress and regression relative to the best prior state; hindsight delayed credit identifies non-improving turns with later payoff; and selective fixed-history counterfactual estimation refines high-surprisal turns under the same history. Experiments on math reasoning, code generation, and AppWorld agent tasks show that TCPO improves or matches the strongest baselines across model scales, task domains, and verifier types. TCPO achieves the best or tied-best best-turn Pass@8 on Qwen3-4B and DeepSeek-R1-Distill-Llama-8B, reduces turns to success, and improves multi-turn agent performance. These results highlight score-to-credit conversion as a central ingredient for verifier-guided multi-turn policy optimization.
+
+ 1 Introduction
+
+ Reinforcement learning with verifiable rewards (RLVR) has become a central paradigm for improving the mathematical reasoning, code generation, and tool-use abilities of large language models. As LLM agents move from single-turn generation to code execution, tool invocation, search, and interactive refinement, optimization increasingly takes the form of verifier-guided multi-turn RL: at each turn, the policy generates a candidate output, receives a verifier score, and revises its response until success or a turn limit is reached. Compared with outcome-only supervision, this setting provides richer process feedback.
+
+ Yet denser verifier scores do not automatically yield better credit assignment. A verifier score measures the quality of the current output, whereas turn-level credit should measure the contribution of the current turn to the overall refinement process. A high-scoring turn may simply preserve an already repaired state; a non-improving turn may enable later success; and a post-success modification may corrupt a correct answer. Thus, the central challenge is not merely obtaining per-turn signals, but converting existing verifier scores into optimizable turn-level credit. We call this problem score-to-credit conversion .
+
+ Existing approaches do not explicitly solve this conversion problem. Trajectory-level methods broadcast final or best-turn success to all tokens, mixing failed attempts, useful repairs, and post-success regressions. Raw turn score rewards state quality rather than marginal contribution. Adjacent score difference captures local change, but cannot tell whether a turn improves upon the best-so-far state or whether a non-improving turn later proves useful. Although recent turn-level reward design and agentic RL methods highlight the mismatch between multi-turn decisions and trajectory-level supervision, how to assign already-observed verifier scores to individual turns remains underexplored.
+
+ We propose TCPO ( Turn-Level Credit Policy Optimization ), a credit-assignment method for verifier-guided multi-turn RL. TCPO leaves the base multi-turn rollout unchanged and requires no additional human labels or learned critic. After base rollouts are completed, it converts verifier traces into turn-level advantages through three reference comparisons. Retrospective credit compares each turn with the best score achieved before it, capturing immediate progress, success preservation, and regression. For eligible pre-success non-improving turns, hindsight delayed credit compares their realized future-best score against same-prompt, same-turn eligible trajectories. For high-surprisal eligible turns, fixed-history counterfactual estimation samples alternative outputs under the same history and compares them with the original output using the verifier. The resulting turn-level advantages are broadcast to the corresponding response tokens and can be used with GRPO-style objectives.
+
+ Empirically, TCPO is effective across model scales, task domains, and verifier types. On math and code benchmarks, TCPO achieves the best or tied-best best-turn Pass@8 on both Qwen3-4B and DeepSeek-R1-Distill-Llama-8B, while usually reducing turns to success. Compared with MT-GRPO, TCPO improves Qwen3-4B by + 4.4 +4.4 , + 2.2 +2.2 , + 1.6 +1.6 , and + 0.6 +0.6 points on MATH-500, AIME, LiveCodeBench, and HumanEval, respectively, with even larger gains on DeepSeek-R1-Distill-Llama-8B. TCPO also outperforms or matches GVPO. On AppWorld, TCPO improves Dev and Test-N on both TGC and SGC and improves Test-C on TGC, demonstrating transfer to multi-turn tool-using agents.
+
+ Our contributions are:
+
+ • 
+
+ We formulate score-to-credit conversion : in verifier-guided multi-turn RL, the key challenge is not reward density but assigning per-turn verifier scores as marginal turn-level credit.
+
+ • 
+
+ We introduce TCPO, which constructs turn-level advantages using retrospective, hindsight, and fixed-history counterfactual references to address immediate progress, delayed contribution, and high-surprisal credit ambiguity.
+
+ • 
+
+ We validate TCPO on math, code, and AppWorld agent tasks, showing improvements over or parity with strong baselines at modest additional training cost.
+
+ 2 Related Work
+
+ Reinforcement learning has increasingly been used to train LLM agents across a wide range of interactive settings, including code execution and computational tool use ( Feng et al., 2025 ; Li et al., 2025 ) , general tool use and API-based environments ( Wang et al., 2025a ; Zhang et al., 2025 ; Singh et al., 2025 ; Chen et al., 2025a ) , reasoning with search engines ( Chen et al., 2026 ; Jin et al., 2025b ; Jin et al., 2025a ) , web navigation and graphical-interface control ( Yao et al., 2022 ; Bai et al., 2024 ) , and games, embodied tasks, and other interactive environments ( Yao et al., 2020 ; Carta et al., 2023 ; Zhai et al., 2024 ; Wang et al., 2025b ) .
+Unlike single-turn reasoning, these settings require the model to make a sequence of decisions, including generating intermediate solutions, interpreting feedback, revising previous outputs, invoking tools, and deciding when to stop.
+However, many agent RL pipelines still reduce the interaction to a trajectory-level return.
+This creates a granularity mismatch between decision and supervision: the agent acts turn by turn, but the reward does not identify which turn repaired the solution, preserved a solved state, introduced redundant changes, or caused a regression.
+Recent work therefore argues that multi-turn optimization should preserve this sequential, turn-level decision structure rather than collapsing the entire interaction into a single trajectory-level optimization problem ( Zeng et al., 2025 ; Li et al., 2026 ; Tao et al., 2026 ; Zong et al., 2026 ) .
+
+ Prior work addresses this mismatch through finer-grained supervision or advantage estimation.
+PPO provides token-level credit through a learned value model, but critic training adds complexity and can be brittle on long reasoning chains ( Zhou et al., 2025 ; Chen et al., 2025b ; Tao et al., 2026 ) .
+Critic-free methods such as GRPO avoid value modeling by using group-relative sequence rewards, but their sequence-level advantages remain coarse for long or multi-turn trajectories ( Shao et al., 2024 ) .
+Tree- or prefix-based methods exploit branching structures among sampled responses to derive denser token- or prefix-level credit without training a separate critic ( Tran et al., 2026 ; Zong et al., 2026 ) .
+In parallel, process-supervision and step-level reward methods use intermediate labels, process reward models, learned evaluators, or process-verifiable feedback to provide denser supervision ( Uesato et al., 2022 ; Lightman et al., 2024 ; Wang et al., 2024 ; Dai et al., 2026 ) .
+These approaches establish the importance of fine-grained supervision, but they mainly address how to obtain denser signals, propagate sparse outcome rewards, or align optimization with turn-level decisions.
+TCPO addresses a complementary problem: when verifier scores are already available at every turn, how should these scores be converted into turn-level credit?
+It separates immediate score changes from delayed contributions to subsequent repair and selectively refines ambiguous turns through fixed-history counterfactual comparisons.
+Thus, TCPO is a credit-assignment method for verifier-guided multi-turn RL, rather than an additional source of intermediate rewards.
+
+ Figure 1: Overview of TCPO. Given a prompt, the policy samples multiple verifier-guided multi-turn trajectories. TCPO converts per-turn verifier scores into structured turn-level credit by combining progress-to-go rewards, keep rewards, regression penalties, budgeted fixed-history counterfactual credit, and early-turn weighting. The resulting turn-level advantages are broadcast to response tokens and optimized with a GRPO-style objective.
+
+ 3 Method
+
+ Figure 1 summarizes the TCPO pipeline. For each prompt, we first sample a group of multi-turn trajectories and record verifier scores at every turn. TCPO then converts these score traces into turn-level credit through three reference comparisons: retrospective credit against the best previous state, hindsight delayed credit from the future-best quality in the completed rollout, and budgeted fixed-history counterfactual refinement for high-surprisal pre-success non-improving turns. The resulting turn credit is normalized within prompt-turn groups, reweighted by an early-turn prior, broadcast to the tokens of the corresponding response, and optimized with a GRPO-style clipped objective.
+
+ Multi-Turn Verifier Setting 
+
+ Given a prompt x x , the policy interacts with a verifier over multiple turns.
+At each turn, the model generates a candidate output, receives verifier feedback, and revises its solution for a bounded number of turns.
+For the k k -th turn of the i i -th trajectory, let the interaction state be
+
+ | 
+ s i , k = ( x , T i , < k , F i , < k , E i , k ) , s_{i,k}=(x,T_{i,<k},F_{i,<k},E_{i,k}), | 
+ | 
+
+ where T i , < k T_{i,<k} is the transcript of previous model outputs, tool calls, and observations, F i , < k F_{i,<k} contains verifier scores and textual feedback, and E i , k E_{i,k} is the external environment state before turn k k when the task is stateful. For math and code tasks, E i , k E_{i,k} is empty; for AppWorld, it is the simulator state snapshot before the next action. We write h i , k h_{i,k} as a shorthand for this full state in the equations below.
+The rollout policy samples the current output, and the verifier returns a score:
+
+ | 
+ y i , k ∼ π old ( ⋅ ∣ h i , k ) , r i , k = 𝒱 ( x , h i , k , y i , k ) . y_{i,k}\sim\pi_{\mathrm{old}}(\cdot\mid h_{i,k}),\qquad r_{i,k}=\mathcal{V}(x,h_{i,k},y_{i,k}). | 
+ | 
+
+ Here, 𝒱 \mathcal{V} is a non-differentiable verifier such as an answer checker or a code test suite, and all verifier scores are normalized so that r i , k ∈ [ 0 , 1 ] r_{i,k}\in[0,1] .
+During training, rollouts are generated for a fixed maximum budget K K even if a trajectory first reaches the success threshold before turn K K ; the first-success turn is recorded but later turns are still scored. This fixed-budget training protocol makes preservation and regression after a solved state observable. During evaluation, success and average turns are computed from the first successful turn. For math tasks, success means producing the correct answer, and for code tasks, success means passing all test cases.
+Let 𝒜 x , k \mathcal{A}_{x,k} denote the set of trajectories for prompt x x that contain a response at turn k k .
+
+ Reference-Aware Credit Decomposition 
+
+ Verifier scores provide turn-by-turn observations of output quality, but they are not themselves turn-level credit.
+TCPO decomposes credit according to three references: the best score achieved before the turn, the realized future after the turn, and alternative outputs under the same history.
+The next three subsubsections instantiate these references as retrospective credit, hindsight estimation, and fixed-history counterfactual estimation.
+
+ 3.0.1 Retrospective Credit
+
+ Let
+
+ | 
+ m i , k = max t < k ⁡ r i , t , Δ i , k = [ r i , k − m i , k ] + , m_{i,k}=\max_{t<k}r_{i,t},\qquad\Delta_{i,k}=[r_{i,k}-m_{i,k}]_{+}, | 
+ | 
+
+ where m i , 1 = 0 m_{i,1}=0 .
+The retrospective credit is defined as
+
+ | 
+ c i , k ret \displaystyle c^{\mathrm{ret}}_{i,k} | 
+ = α + ​ Δ i , k + α 0 ​ I i , k keep − α − ​ I i , k succ ​ [ m i , k − r i , k ] + , \displaystyle=\alpha_{+}\Delta_{i,k}+\alpha_{0}I^{\mathrm{keep}}_{i,k}-\alpha_{-}I^{\mathrm{succ}}_{i,k}[m_{i,k}-r_{i,k}]_{+}, | 
+ | 
+
+ | 
+ I i , k succ \displaystyle I^{\mathrm{succ}}_{i,k} | 
+ = 𝟏 [ m i , k ≥ τ ] , \displaystyle=\mathbf{1}[m_{i,k}\geq\tau], | 
+ | 
+
+ | 
+ I i , k keep \displaystyle I^{\mathrm{keep}}_{i,k} | 
+ = I succ i , k 𝟏 [ Δ i , k = 0 ] 𝟏 [ r i , k ≥ m i , k ] . \displaystyle=I^{\mathrm{succ}}_{i,k}\mathbf{1}[\Delta_{i,k}=0]\mathbf{1}[r_{i,k}\geq m_{i,k}]. | 
+ | 
+
+ The first term rewards a turn that improves upon the best score achieved before the turn. The second term rewards preservation: once the trajectory has already reached a successful state, the current turn receives credit if it keeps the solution at the best-so-far score without further improvement. The third term penalizes regression after success, i.e., cases where the trajectory has previously reached the success threshold but the current turn lowers the verifier score. The preservation term is active only when Δ i , k = 0 \Delta_{i,k}=0 , making it mutually exclusive with progress. This signal is defined for all turns, but for turns with m i , k < τ m_{i,k}<\tau and Δ i , k = 0 \Delta_{i,k}=0 , it is identically zero. Such turns cannot be distinguished from immediate score changes alone and require a future-based reference.
+
+ Hindsight Estimation 
+
+ We call a turn non-improving if it does not exceed the best-so-far verifier score, i.e., Δ i , k = 0 \Delta_{i,k}=0 . Delayed credit is assigned only to pre-success non-improving turns, because post-success preservation and regression are already handled by retrospective credit. We define the eligibility gate
+
+ | 
+ b i , k = 𝟏 [ m i , k < τ ] 𝟏 [ Δ i , k = 0 ] . b_{i,k}=\mathbf{1}[m_{i,k}<\tau]\mathbf{1}[\Delta_{i,k}=0]. | 
+ | 
+
+ Define the future-best score after turn k k as
+
+ | 
+ u i , k = max t ≥ k ⁡ r i , t . u_{i,k}=\max_{t\geq k}r_{i,t}. | 
+ | 
+
+ The reference set consists of trajectories under the same prompt and turn index that satisfy the same eligibility gate.
+We use a leave-one-out baseline:
+
+ | 
+ u ¯ x , k − i = Avg j ∈ 𝒜 x , k , j ≠ i b j , k = 1 ⁡ u j , k , \bar{u}^{-i}_{x,k}=\operatorname{Avg}_{\begin{subarray}{c}j\in\mathcal{A}_{x,k},\,j\neq i\\
+b_{j,k}=1\end{subarray}}u_{j,k}, | 
+ | 
+
+ with a fallback of zero hindsight credit if the set is empty.
+The hindsight estimate is
+
+ | 
+ c i , k hin = b i , k ⋅ ( u i , k − u ¯ x , k − i ) . c^{\mathrm{hin}}_{i,k}=b_{i,k}\cdot\big(u_{i,k}-\bar{u}^{-i}_{x,k}\big). | 
+ | 
+
+ The gate prevents overlap with retrospective progress, keep, and regression terms.
+The sign indicates whether an eligible non-improving turn led to better or worse future-best quality than comparable eligible turns.
+This estimate uses only existing rollout information and requires no additional verifier calls.
+
+ Counterfactual Estimation and Budgeted Refinement 
+
+ The hindsight estimate compares realized futures across different trajectories, rather than alternative choices under the same history.
+It may therefore attribute later corrections to the current turn.
+To refine the most ambiguous cases, TCPO performs fixed-history counterfactual estimation for high-surprisal eligible non-improving turns.
+
+ We use average surprisal of the sampled response as a proxy for credit uncertainty:
+
+ | 
+ ξ i , k = − 1 | y i , k | ∑ t log π old ( a i , k , t ∣ h i , k , a i , k , < t ) , \xi_{i,k}=-\frac{1}{|y_{i,k}|}\sum_{t}\log\pi_{\mathrm{old}}(a_{i,k,t}\mid h_{i,k},a_{i,k,<t}), | 
+ | 
+
+ and select up to L L eligible non-improving turns for each prompt:
+
+ | 
+ ℬ x \displaystyle\mathcal{B}_{x} | 
+ = { ( i , k ) : i ∈ 𝒜 x , k , b i , k = 1 } , \displaystyle=\{(i,k):i\in\mathcal{A}_{x,k},\,b_{i,k}=1\}, | 
+ | 
+
+ | 
+ ℐ x \displaystyle\mathcal{I}_{x} | 
+ = TopL ( i , k ) ∈ ℬ x ⁡ ( ξ i , k ) . \displaystyle=\operatorname{TopL}_{(i,k)\in\mathcal{B}_{x}}(\xi_{i,k}). | 
+ | 
+
+ where early-turn weighting is applied later through the turn advantage.
+
+ For each selected turn ( i , k ) ∈ ℐ x (i,k)\in\mathcal{I}_{x} , we fix h i , k h_{i,k} and sample M M alternative outputs from the rollout policy:
+
+ | 
+ y ~ i , k ( m ) ∼ π old ( ⋅ ∣ h i , k ) , m = 1 , … , M , y ~ i , k ( 0 ) = y i , k . \tilde{y}^{(m)}_{i,k}\sim\pi_{\mathrm{old}}(\cdot\mid h_{i,k}),\quad m=1,\ldots,M,\qquad\tilde{y}^{(0)}_{i,k}=y_{i,k}. | 
+ | 
+
+ For stateful environments, all alternatives are evaluated from the same pre-turn environment snapshot E i , k E_{i,k} and the simulator is restored after each alternative, so the transcript, feedback, and environment state are fixed across the comparison.
+Each candidate is scored by the verifier:
+
+ | 
+ q m = 𝒱 ⁡ ( x , h i , k , y ~ i , k ( m ) ) . q_{m}=\mathcal{V}(x,h_{i,k},\tilde{y}^{(m)}_{i,k}). | 
+ | 
+
+ The counterfactual estimate is
+
+ | 
+ c i , k cf = q 0 − 1 M ​ ∑ m = 1 M q m . c^{\mathrm{cf}}_{i,k}=q_{0}-\frac{1}{M}\sum_{m=1}^{M}q_{m}. | 
+ | 
+
+ We use one-step verifier comparison rather than full counterfactual rollouts to isolate the effect of the current output and avoid mixing in later revisions. This choice is conservative for binary exact-match verifiers: if the original output and all alternatives fail, the counterfactual signal is zero, and if an alternative succeeds while the original fails, the original receives negative local credit. Positive credit for latent useful repairs in such cases is therefore supplied by the hindsight term, while the counterfactual term acts as a budgeted local refinement rather than a standalone delayed-credit oracle.
+
+ The delayed credit is assigned by a non-degeneracy-gated refinement of the low-cost hindsight estimate. Let
+
+ | 
+ g i , k = 𝟏 [ ( i , k ) ∈ ℐ x ] , η i , k = 𝟏 [ Var ( q 0 , … , q M ) > 0 ] , g_{i,k}=\mathbf{1}[(i,k)\in\mathcal{I}_{x}],\qquad\eta_{i,k}=\mathbf{1}[\operatorname{Var}(q_{0},\ldots,q_{M})>0], | 
+ | 
+
+ where η i , k \eta_{i,k} indicates whether the fixed-history alternatives produce a non-degenerate verifier comparison. We define
+
+ | 
+ c i , k del \displaystyle c^{\mathrm{del}}_{i,k} | 
+ = c i , k hin + g i , k ​ η i , k ​ ( c i , k cf − c i , k hin ) . \displaystyle=c^{\mathrm{hin}}_{i,k}+g_{i,k}\eta_{i,k}\left(c^{\mathrm{cf}}_{i,k}-c^{\mathrm{hin}}_{i,k}\right). | 
+ | 
+
+ Thus, selected turns use the fixed-history comparison only when the alternatives reveal score variation; otherwise TCPO falls back to hindsight credit. This avoids deleting positive hindsight credit for latent useful repairs when binary alternatives all receive the same verifier score, while still allowing informative counterfactual comparisons to override noisier cross-trajectory hindsight estimates.
+
+ Turn-Level Advantage and Token Optimization 
+
+ TCPO combines retrospective and delayed credit into a raw turn signal:
+
+ | 
+ ϕ i , k = c i , k ret + μ ​ c i , k del . \phi_{i,k}=c^{\mathrm{ret}}_{i,k}+\mu c^{\mathrm{del}}_{i,k}. | 
+ | 
+
+ Since both hindsight estimation and counterfactual selection are restricted to b i , k = 1 b_{i,k}=1 , delayed credit is zero for turns with immediate improvement and for post-success keep or regression turns. These cases are handled by retrospective credit.
+
+ We normalize the raw signal within the same prompt and turn, then apply an early-turn prior:
+
+ | 
+ ϕ ~ i , k \displaystyle\tilde{\phi}_{i,k} | 
+ = Norm j ∈ 𝒜 x , k ⁡ [ ϕ j , k ] i , \displaystyle=\operatorname{Norm}_{j\in\mathcal{A}_{x,k}}\left[\phi_{j,k}\right]_{i}, | 
+ | 
+
+ | 
+ A i , k TCPO \displaystyle A^{\mathrm{TCPO}}_{i,k} | 
+ = γ k − 1 ​ ϕ ~ i , k . \displaystyle=\gamma^{k-1}\tilde{\phi}_{i,k}. | 
+ | 
+
+ Here [ ⋅ ] i [\cdot]_{i} denotes the normalized value corresponding to trajectory i i . When | 𝒜 x , k | < 2 |\mathcal{A}_{x,k}|<2 , normalization is skipped and γ k − 1 ​ ϕ i , k \gamma^{k-1}\phi_{i,k} is used directly.
+
+ The turn-level advantage is broadcast to all assistant tokens in the corresponding turn:
+
+ | 
+ A i , k , t = A i , k TCPO , a i , k , t ∈ y i , k . A_{i,k,t}=A^{\mathrm{TCPO}}_{i,k},\qquad a_{i,k,t}\in y_{i,k}. | 
+ | 
+
+ TCPO replaces only the advantage estimator in a GRPO-style clipped objective:
+
+ | 
+ ℒ TCPO ​ ( θ ) \displaystyle\mathcal{L}_{\mathrm{TCPO}}(\theta) | 
+ = − 𝔼 i , k , t ​ [ min ⁡ ( ℓ i , k , t , ℓ ¯ i , k , t ) ] , \displaystyle=-\mathbb{E}_{i,k,t}\left[\min(\ell_{i,k,t},\bar{\ell}_{i,k,t})\right], | 
+ | 
+
+ | 
+ ℓ i , k , t \displaystyle\ell_{i,k,t} | 
+ = ρ i , k , t ​ ( θ ) ​ A i , k , t , \displaystyle=\rho_{i,k,t}(\theta)A_{i,k,t}, | 
+ | 
+
+ | 
+ ℓ ¯ i , k , t \displaystyle\bar{\ell}_{i,k,t} | 
+ = ρ ¯ i , k , t ​ ( θ ) ​ A i , k , t , \displaystyle=\bar{\rho}_{i,k,t}(\theta)A_{i,k,t}, | 
+ | 
+
+ | 
+ ρ ¯ i , k , t ​ ( θ ) \displaystyle\bar{\rho}_{i,k,t}(\theta) | 
+ = clip ⁡ ( ρ i , k , t ​ ( θ ) , 1 − ϵ , 1 + ϵ ) . \displaystyle=\operatorname{clip}(\rho_{i,k,t}(\theta),1-\epsilon,1+\epsilon). | 
+ | 
+
+ The likelihood ratio is
+
+ | 
+ ρ i , k , t ​ ( θ ) = π θ ​ ( a i , k , t ∣ h i , k , a i , k , < t ) π old ​ ( a i , k , t ∣ h i , k , a i , k , < t ) . \rho_{i,k,t}(\theta)=\frac{\pi_{\theta}(a_{i,k,t}\mid h_{i,k},a_{i,k,<t})}{\pi_{\mathrm{old}}(a_{i,k,t}\mid h_{i,k},a_{i,k,<t})}. | 
+ | 
+
+ Table 1: Main results on math and code tasks. Baselines include GRPO ( Shao et al., 2024 ) , MT-GRPO ( Zeng et al., 2025 ) , and GVPO ( Dai et al., 2026 ) . Pass@8 is best-turn Pass@8, and Avg. Turns is computed over successful trajectories.
+
+ Method | 
+ Math | 
+ Code | 
+
+ | 
+ MATH-500 | 
+ AIME | 
+ LiveCodeBench | 
+ HumanEval | 
+
+ | 
+ Pass@8 | 
+ Avg. Turns | 
+ Pass@8 | 
+ Avg. Turns | 
+ Pass@8 | 
+ Avg. Turns | 
+ Pass@8 | 
+ Avg. Turns | 
+
+ Qwen3-4B | 
+
+ Base Model | 
+ 79.6% | 
+ 1.42 | 
+ 47.8% | 
+ 1.53 | 
+ 38.7% | 
+ 1.96 | 
+ 84.1% | 
+ 1.35 | 
+
+ GRPO | 
+ 80.8% | 
+ 1.26 | 
+ 50.0% | 
+ 1.49 | 
+ 42.2% | 
+ 1.61 | 
+ 85.9% | 
+ 1.31 | 
+
+ MT-GRPO | 
+ 82.4% | 
+ 1.21 | 
+ 48.9% | 
+ 1.37 | 
+ 43.5% | 
+ 1.42 | 
+ 86.6% | 
+ 1.23 | 
+
+ GVPO | 
+ 85.2% | 
+ 1.22 | 
+ 51.1% | 
+ 1.36 | 
+ 44.3% | 
+ 1.39 | 
+ 86.6% | 
+ 1.18 | 
+
+ TCPO | 
+ 86.8% | 
+ 1.19 | 
+ 51.1% | 
+ 1.33 | 
+ 45.1% | 
+ 1.27 | 
+ 87.2% | 
+ 1.12 | 
+
+ DeepSeek-R1-Distill-Llama-8B | 
+
+ Base Model | 
+ 29.8% | 
+ 2.25 | 
+ 21.1% | 
+ 2.67 | 
+ 12.6% | 
+ 2.83 | 
+ 84.8% | 
+ 1.33 | 
+
+ GRPO | 
+ 56.6% | 
+ 1.84 | 
+ 35.6% | 
+ 2.08 | 
+ 27.9% | 
+ 2.45 | 
+ 87.2% | 
+ 1.24 | 
+
+ MT-GRPO | 
+ 59.0% | 
+ 1.71 | 
+ 35.6% | 
+ 1.92 | 
+ 30.3% | 
+ 2.21 | 
+ 87.2% | 
+ 1.19 | 
+
+ GVPO | 
+ 62.8% | 
+ 1.62 | 
+ 36.7% | 
+ 1.87 | 
+ 31.8% | 
+ 2.13 | 
+ 87.8% | 
+ 1.19 | 
+
+ TCPO | 
+ 65.2% | 
+ 1.59 | 
+ 38.9% | 
+ 1.86 | 
+ 32.2% | 
+ 2.13 | 
+ 88.4% | 
+ 1.15 | 
+
+ Method | 
+ Dev | 
+ Test-N | 
+ Test-C | 
+
+ | 
+ TGC | 
+ SGC | 
+ TGC | 
+ SGC | 
+ TGC | 
+ SGC | 
+
+ Qwen2.5-32B-Instruct | 
+
+ GVPO | 
+ 84.2 | 
+ 73.7 | 
+ 72.6 | 
+ 55.4 | 
+ 49.4 | 
+ 28.8 | 
+
+ TCPO | 
+ 88.3 | 
+ 75.0 | 
+ 74.4 | 
+ 57.1 | 
+ 49.9 | 
+ 28.8 | 
+
+ Table 2: Comparison on the AppWorld benchmark with GVPO ( Dai et al., 2026 ) , following the original GVPO AppWorld setup with Qwen2.5-32B-Instruct. TGC and SGC denote task-level and scenario-level goal completion on the AppWorld ( Trivedi et al., 2024 ) Dev, Test-N, and Test-C splits.
+
+ Variant | 
+ MATH-500 | 
+ LiveCodeBench | 
+
+ Traj. reward | 
+ 56.6% | 
+ 27.9% | 
+
+ Turn reward | 
+ 59.0% | 
+ 30.3% | 
+
+ Δ \Delta reward | 
+ 59.8% | 
+ 30.4% | 
+
+ Retro | 
+ 62.2% | 
+ 31.5% | 
+
+ Retro + Hin. | 
+ 63.4% | 
+ 31.7% | 
+
+ TCPO | 
+ 65.2% | 
+ 32.2% | 
+
+ Table 3: Credit-signal ablation with DeepSeek-R1-Distill-Llama-8B. Δ \Delta reward uses adjacent verifier-score differences. Retro combines improvement, keep, and regression terms. Hin. denotes hindsight delayed credit.
+
+ 4 Experiments
+
+ This section organizes the experiments around three questions: (i) does TCPO improve or match strong baselines across model scales, task domains, and verifier types; (ii) do the gains come from more informative reference-aware credit construction rather than denser supervision alone; and (iii) can selective fixed-history counterfactual estimation improve performance with modest training overhead?
+
+ 4.1 Experimental Setup
+
+ Tasks and evaluation. 
+
+ We evaluate TCPO on mathematical reasoning, code generation, and interactive agent tasks. For mathematics, we use MATH-500 ( Hendrycks et al., 2021 ) and AIME 2024–2026 ( Dekoninck et al., 2026 ) ; for code, we use LiveCodeBench v6 ( Jain et al., 2024 ) and HumanEval ( Chen et al., 2021 ) ; for agents, we use AppWorld ( Trivedi et al., 2024 ) . In the math and code settings, the model generates a candidate answer at each turn, and a verifier returns a turn-level score. During training, trajectories always run for the fixed K K -turn budget, including turns after the first success, so that preservation and regression remain observable. During evaluation, success is recorded at the first correct turn, and generation may terminate immediately thereafter. For math tasks, success means producing the correct final answer; for code tasks, success means passing all test cases. AppWorld uses its native state-based verifier and task-completion metrics, which makes it a representative interactive agent setting.
+
+ Table 4: Counterfactual budgeting with DeepSeek-R1-Distill-Llama-8B. TCPO is the default budgeted setting used in the main experiments. Rand.- L L matches the per-prompt Top- L L budget with random eligible turns; Top- L L selects high-surprisal eligible turns per prompt. CF-Aug. additionally trains on selected counterfactual samples. Train overhead is end-to-end wall-clock time relative to No-CF under identical hardware and training steps.
+
+ Variant | 
+ CF Selection | 
+ CF Usage | 
+ MATH-500 | 
+ LiveCodeBench | 
+
+ | 
+ | 
+ | 
+ Pass@8 | 
+ Train Overhead | 
+ Pass@8 | 
+ Train Overhead | 
+
+ No-CF | 
+ – | 
+ – | 
+ 63.4% | 
+ 1.00 × \times | 
+ 31.7% | 
+ 1.00 × \times | 
+
+ Random CF | 
+ Rand.- L L | 
+ Credit | 
+ 63.4% | 
+ 1.03 × \times | 
+ 31.8% | 
+ 1.05 × \times | 
+
+ TCPO | 
+ Top- L L | 
+ Credit | 
+ 65.2% | 
+ 1.03 × \times | 
+ 32.2% | 
+ 1.05 × \times | 
+
+ All CF | 
+ All | 
+ Credit | 
+ 66.8% | 
+ 1.11 × \times | 
+ 33.1% | 
+ 1.16 × \times | 
+
+ CF-Aug. | 
+ Top- L L | 
+ Credit+Train | 
+ 69.2% | 
+ 1.25 × \times | 
+ 34.5% | 
+ 1.33 × \times | 
+
+ Models and training data. 
+
+ For math and code, we train on DAPO-Math-17K ( Yu et al., 2025 ) and TACO-Verified ( Li, 2024 ) , respectively. HumanEval is used only for evaluation. We conduct the main experiments on Qwen3-4B and DeepSeek-R1-Distill-Llama-8B. Training for these tasks is implemented in verl ( Sheng et al., 2024 ) with vLLM-based asynchronous rollouts and FSDP2 for the actor and reference models, and runs on 4 4 NVIDIA H200 GPUs. We use global batch sizes of 64 for math and 32 for code, a learning rate of 1 × 10 − 6 1\times 10^{-6} , and train for one epoch. For AppWorld, we use Qwen2.5-32B-Instruct and follow the original GVPO AppWorld setup ( Dai et al., 2026 ) , including the same training split, rollout budget, decoding settings, and evaluation protocol. This allows us to test whether TCPO is effective across model scales, task domains, and verifier types, rather than being tied to a particular benchmark or architecture.
+
+ Rollout settings. 
+
+ For math and code, we sample G = 8 G=8 multi-turn trajectories per prompt. We set the maximum number of turns to K = 3 K=3 for math and K = 5 K=5 for code. The maximum response length is 8,192 tokens for math and 16,384 tokens for code. AppWorld follows the original GVPO rollout budget. For a given initial model, all methods use the same prompts, verifier, base rollout configuration, generation settings, and token-level objective. TCPO additionally applies budgeted branching to selected high-surprisal turns. For each prompt, TCPO selects up to L = 5 L=5 eligible turns for math and L = 10 L=10 for code and AppWorld, and samples M = 8 M=8 fixed-history alternatives for each selected turn. Full optimization and sampling settings are provided in the supplementary material.
+
+ Baselines. 
+
+ We compare against Base, GRPO, MT-GRPO, GVPO, and several credit-assignment ablations. Base is the initial model before multi-turn RL. Base-model results use the same multi-turn repair prompt, generation limits, verifier, and best-turn protocol as the RL methods, and are therefore in-protocol baselines rather than official single-turn benchmark results. GRPO optimizes with trajectory-level outcome reward under a group-relative objective. MT-GRPO introduces turn-level reward allocation in multi-turn trajectories to alleviate the coarse granularity of trajectory-level reward. GVPO uses process-verifiable signals to build a finer-grained optimization target. For math and code, we adapt GVPO by applying its process-verifiable success/failure functions at the turn level. In the ablation study, raw turn score uses the current verifier score as the credit for that turn; adjacent score difference uses the difference between the current score and the previous score, i.e., r i , k − r i , k − 1 r_{i,k}-r_{i,k-1} , as the current turn credit; the remaining variants progressively add retrospective credit, hindsight delayed credit, and selective counterfactual estimation. Unless otherwise specified, the variants in Tables 3 and 4 use the same turn-level normalization and early-turn weighting. All methods share the same base rollout protocol and verifier feedback. TCPO differs by converting these base traces into reference-aware turn credit and by adding budgeted post-rollout counterfactual branches for selected turns.
+
+ Metrics. 
+
+ For math and code tasks, we report best-turn Pass@8: a prompt is counted as successful if any of the 8 8 sampled trajectories reaches a correct turn. This metric matches the verifier-guided multi-turn inference setting, where the model may revise its answer multiple times and stop as soon as one turn becomes correct. We also report Avg. Turns to Success, computed over successful trajectories only, to measure how quickly the model reaches a correct state. For AppWorld, we report TGC and SGC, which measure task-level and scenario-level goal completion, respectively.
+
+ Performance across model scales and task domains. 
+
+ Table 1 summarizes the main results on math and code tasks. Across both Qwen3-4B and DeepSeek-R1-Distill-Llama-8B, TCPO achieves the best or tied-best best-turn Pass@8 on every benchmark and generally reduces the average turns needed to reach success. On Qwen3-4B, it improves over MT-GRPO by + 4.4 +4.4 , + 2.2 +2.2 , + 1.6 +1.6 , and + 0.6 +0.6 points on MATH-500, AIME, LiveCodeBench, and HumanEval, respectively. It also improves over GVPO on MATH-500, LiveCodeBench, and HumanEval, while matching it on AIME. These results suggest that even when turn-level verifier feedback is available, the reference used to convert scores into credit remains important.
+
+ The gains are larger on DeepSeek-R1-Distill-Llama-8B, where TCPO improves over MT-GRPO by + 6.2 +6.2 , + 3.3 +3.3 , + 1.9 +1.9 , and + 1.2 +1.2 points and outperforms GVPO on all four tasks. This weaker initialization produces more incorrect attempts, partial repairs, and post-success regressions during multi-turn rollouts, making the raw score trace harder to interpret. The stronger gains in this setting are consistent with TCPO’s design: retrospective, hindsight, and counterfactual references help distinguish useful repair behavior from redundant or harmful turns, rather than assigning credit only from the final trajectory outcome or adjacent score changes.
+
+ Table 3 evaluates TCPO on AppWorld under the same setting as the original GVPO study. TCPO improves both TGC and SGC on Dev and Test-N, and improves TGC on Test-C while matching SGC. Unlike the math and code environments, AppWorld requires longer stateful interactions, so later success depends on preserving and updating task state across many tool-use steps. The AppWorld results therefore indicate that the score-to-credit conversion problem is not specific to symbolic reasoning or program repair, and that TCPO can transfer to interactive agent tasks with different verifier structure.
+
+ (a) Credit by turn type
+
+ (b) Credit by turn index
+
+ (c) Number of training turns
+
+ Figure 2: Analysis diagnostics. (a) Average normalized credit assigned to different turn types, where Imp. denotes improvement and Reg. denotes regression. (b) Average normalized credit by turn index on successful repairs. (c) Sensitivity to the number of training turns; performance is normalized by the saturated score of each dataset, using Pass@8 for MATH-500 and LiveCodeBench and TGC for AppWorld.
+
+ Where Do the Gains Come From? 
+
+ Table 3 isolates the effect of each credit reference. Trajectory-level reward is the coarsest signal because it assigns the same supervision to failed attempts, effective repairs, and post-success regressions. Raw turn score is denser, but it evaluates the current output rather than the turn’s marginal contribution. Adjacent score difference captures local change, but only relative to the immediately preceding score. Retrospective credit improves over these local baselines, increasing DeepSeek MATH-500 from 59.8 to 62.2 and LiveCodeBench from 30.4 to 31.5 over adjacent score difference, supporting the best-so-far score as a more informative reference.
+
+ Retrospective credit still cannot resolve pre-success non-improving turns whose value appears only later. Adding hindsight delayed credit raises performance to 63.4 on MATH-500 and 31.7 on LiveCodeBench, suggesting that realized future-best traces provide useful delayed signals beyond local score differences. Full TCPO further reaches 65.2 and 32.2 by applying selective fixed-history counterfactual estimation to high-surprisal turns. Since these comparisons fix the same history and sample alternative outputs, they provide a more context-matched estimate than hindsight alone. Overall, the ablation supports the central claim that multi-turn verifier scores become useful when converted through appropriate references, not merely when made denser.
+
+ Efficiency of Counterfactual Estimation 
+
+ Table 4 studies the trade-off between counterfactual gain and training overhead. The retrospective+hindsight variant already improves over the baseline without counterfactual estimation, but it still depends on indirect references from existing rollouts. Randomly selecting turns for counterfactual estimation brings almost no additional gain, which indicates that extra counterfactual computation alone is not sufficient; the key is to spend it on the turns where credit is most uncertain.
+
+ TCPO selects high-surprisal eligible turns and applies fixed-history counterfactual estimation only to them. With only about 1.03 × 1.03\times to 1.05 × 1.05\times training overhead, TCPO improves MATH-500 from 63.4 to 65.2 and LiveCodeBench from 31.7 to 32.2. By contrast, applying counterfactual estimation to all candidate turns yields somewhat higher performance, but the training overhead increases to 1.11 × 1.11\times to 1.16 × 1.16\times . Extending the branch candidates into the training batch achieves the strongest numbers, but the cost rises to 1.25 × 1.25\times to 1.33 × 1.33\times , which is beyond the default setting of this paper.
+
+ These results show that TCPO’s counterfactual module is not designed to maximize raw sampling volume. Instead, it allocates a small counterfactual budget to high-surprisal turns, which serve as a proxy for credit ambiguity. The matched-budget comparison shows that this targeted selection is more effective than random branching. Top- L L selection offers a favorable accuracy–cost trade-off while keeping the cost close to that of the original rollout procedure. In this sense, TCPO improves over pure hindsight estimation while avoiding the higher cost of full branching or branch augmentation.
+
+ 4.2 Credit Dynamics and Training Horizon
+
+ Figure 2 shows that TCPO assigns positive credit to improvement, preservation, and delayed repair, while penalizing post-success regression. This pattern matches the intended repair dynamics: an update should be rewarded when it improves or preserves a verified state, penalized when it breaks a solved state, and still be creditable when it enables later repair. Earlier turns also receive larger normalized credit, consistent with the early-turn prior and the goal of encouraging useful repairs earlier in the trajectory.
+
+ The number-of-training-turns analysis shows that useful turn credit differs across tasks. Relative performance denotes the score achieved by a model trained with a given number of turns, normalized by the best score attained for that task across the tested turn budgets. Under this view, MATH-500 approaches saturation by three turns, LiveCodeBench reaches its plateau around five turns, and AppWorld rises from about 84% at one turn to 100% at twenty turns. As trajectories grow longer, trajectory-level reward increasingly mixes early failures, mid-course repairs, and late redundant actions. Together with the ablations and counterfactual budget study, these results indicate that TCPO’s gains come from reference-aware credit construction under the same base rollout budget, with selective counterfactual refinement adding only modest training overhead.
+
+ 5 Conclusion
+
+ This paper presents TCPO, a turn-level policy optimization method for verifier-guided multi-turn reinforcement learning. TCPO reframes per-turn verifier scores as observations that must be converted into credit through suitable retrospective, hindsight, and fixed-history counterfactual references. These reference-aware signals target turns that repair, preserve, or degrade a solution. Experiments across mathematical reasoning, code generation, and long-horizon agentic tasks show that this reference-aware credit improves final success rates and often reaches verified solutions in fewer turns, while the counterfactual component remains computationally controlled through high-surprisal selection.
+
+ References
+
+ Bai et al. (2024) 
+ H. Bai, Y. Zhou, J. Pan, M. Cemri, A. Suhr, S. Levine, and A. Kumar 
+
+ Digirl: training in-the-wild device-control agents with autonomous reinforcement learning .
+
+ Advances in Neural Information Processing Systems 37 , pp. 12461–12495 .
+
+ Cited by: §2 .
+
+ Carta et al. (2023) 
+ T. Carta, C. Romac, T. Wolf, S. Lamprier, O. Sigaud, and P. Oudeyer 
+
+ Grounding large language models in interactive environments with online reinforcement learning .
+
+ In International conference on machine learning ,
+
+ pp. 3676–3713 .
+
+ Cited by: §2 .
+
+ Chen et al. (2025a) 
+ K. Chen, M. Cusumano-Towner, B. Huval, A. Petrenko, J. Hamburger, V. Koltun, and P. Krähenbühl 
+
+ Reinforcement learning for long-horizon interactive llm agents .
+
+ arXiv preprint arXiv:2502.01600 .
+
+ Cited by: §2 .
+
+ Chen et al. (2021) 
+ M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. d. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba 
+
+ Evaluating large language models trained on code .
+
+ External Links: 2107.03374 
+
+ Cited by: §4.1 .
+
+ Chen et al. (2026) 
+ M. Chen, L. Sun, T. Li, H. Sun, C. Zhu, H. Wang, J. Pan, W. Zhang, H. Chen, F. Yang, et al. 
+
+ Learning to reason with search for llms via reinforcement learning .
+
+ Advances in Neural Information Processing Systems 38 , pp. 85287–85307 .
+
+ Cited by: §2 .
+
+ Chen et al. (2025b) 
+ W. Chen, J. Chen, H. Zhu, and J. Schneider 
+
+ Context-lite multi-turn reinforcement learning for llm agents .
+
+ In ES-FoMo III: 3rd Workshop on Efficient Systems for Foundation Models ,
+
+ Cited by: §2 .
+
+ Dai et al. (2026) 
+ S. Dai, C. Sun, H. Wu, H. Zheng, T. Ji, J. Yan, Y. Wu, D. Zhang, X. Wang, and X. Li 
+
+ Group verification-based policy optimization for interactive coding agents .
+
+ In The Fourteenth International Conference on Learning Representations ,
+
+ Cited by: §2 ,
+ Table 1 ,
+ Table 3 ,
+ §4.1 .
+
+ Dekoninck et al. (2026) 
+ J. Dekoninck, N. Jovanović, T. Gehrunger, K. Rögnvaldsson, I. Petrov, C. Sun, and M. Vechev 
+
+ Beyond benchmarks: matharena as an evaluation platform for mathematics with llms .
+
+ External Links: 2605.00674 ,
+ Link 
+
+ Cited by: §4.1 .
+
+ Feng et al. (2025) 
+ J. Feng, S. Huang, X. Qu, G. Zhang, Y. Qin, B. Zhong, C. Jiang, J. Chi, and W. Zhong 
+
+ Retool: reinforcement learning for strategic tool use in llms .
+
+ arXiv preprint arXiv:2504.11536 .
+
+ Cited by: §2 .
+
+ Hendrycks et al. (2021) 
+ D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt 
+
+ Measuring mathematical problem solving with the MATH dataset .
+
+ External Links: 2103.03874 
+
+ Cited by: §4.1 .
+
+ Jain et al. (2024) 
+ N. Jain, K. Han, A. Gu, W. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica 
+
+ LiveCodeBench: holistic and contamination free evaluation of large language models for code .
+
+ External Links: 2403.07974 
+
+ Cited by: §4.1 .
+
+ Jin et al. (2025a) 
+ B. Jin, J. Yoon, P. Kargupta, S. O. Arik, and J. Han 
+
+ An empirical study on reinforcement learning for reasoning-search interleaved llm agents .
+
+ arXiv preprint arXiv:2505.15117 .
+
+ Cited by: §2 .
+
+ Jin et al. (2025b) 
+ B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han 
+
+ Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+
+ arXiv preprint arXiv:2503.09516 .
+
+ Cited by: §2 .
+
+ Li et al. (2026) 
+ J. Li, P. Zhou, R. Meng, M. P. Vadera, L. Li, and Y. Li 
+
+ Turn-ppo: turn-level advantage estimation with ppo for improved multi-turn rl in agentic llms .
+
+ In Findings of the Association for Computational Linguistics: EACL 2026 ,
+
+ pp. 6227–6243 .
+
+ Cited by: §2 .
+
+ Li (2024) 
+ K. Li 
+
+ Verified taco problems .
+
+ Note: https://huggingface.co/datasets/likaixin/TACO-verified 
+
+ External Links: Link 
+
+ Cited by: §4.1 .
+
+ Li et al. (2025) 
+ X. Li, H. Zou, and P. Liu 
+
+ Torl: scaling tool-integrated rl .
+
+ arXiv preprint arXiv:2503.23383 .
+
+ Cited by: §2 .
+
+ Lightman et al. (2024) 
+ H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe 
+
+ Let’s verify step by step .
+
+ In International Conference on Learning Representations ,
+
+ Vol. 2024 , pp. 39578–39601 .
+
+ Cited by: §2 .
+
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo 
+
+ DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+
+ External Links: 2402.03300 
+
+ Cited by: §2 ,
+ Table 1 .
+
+ Sheng et al. (2024) 
+ G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu 
+
+ HybridFlow: a flexible and efficient rlhf framework .
+
+ arXiv preprint arXiv:2409.19256 .
+
+ Cited by: §4.1 .
+
+ Singh et al. (2025) 
+ J. Singh, R. Magazine, Y. Pandya, and A. Nambi 
+
+ Agentic reasoning and tool integration for llms via reinforcement learning .
+
+ arXiv preprint arXiv:2505.01441 .
+
+ Cited by: §2 .
+
+ Tao et al. (2026) 
+ L. Tao, B. Peng, W. Yao, T. Ge, H. Cheng, M. H. Wang, J. Gao, and S. Li 
+
+ TRACE: turn-level reward assignment via credit estimation for long-horizon agents .
+
+ arXiv preprint arXiv:2607.13988 .
+
+ Cited by: §2 ,
+ §2 .
+
+ Tran et al. (2026) 
+ H. Tran, Z. Yao, and H. Yu 
+
+ Exploiting tree structure for credit assignment in reinforcement learning with large language models .
+
+ In Findings of the Association for Computational Linguistics: ACL 2026 ,
+
+ pp. 10795–10810 .
+
+ Cited by: §2 .
+
+ Trivedi et al. (2024) 
+ H. Trivedi, T. Khot, M. Hartmann, R. Manku, V. Dong, E. Li, S. Gupta, A. Sabharwal, and N. Balasubramanian 
+
+ Appworld: a controllable world of apps and people for benchmarking interactive coding agents .
+
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+
+ pp. 16022–16076 .
+
+ Cited by: Table 3 ,
+ §4.1 .
+
+ Uesato et al. (2022) 
+ J. Uesato, N. Kushman, R. Kumar, F. Song, N. Siegel, L. Wang, A. Creswell, G. Irving, and I. Higgins 
+
+ Solving math word problems with process-and outcome-based feedback .
+
+ arXiv preprint arXiv:2211.14275 .
+
+ Cited by: §2 .
+
+ Wang et al. (2025a) 
+ H. Wang, C. Qian, W. Zhong, X. Chen, J. Qiu, S. Huang, B. Jin, M. Wang, K. Wong, and H. Ji 
+
+ Otc: optimal tool calls via reinforcement learning .
+
+ arXiv e-prints , pp. arXiv–2504 .
+
+ Cited by: §2 .
+
+ Wang et al. (2024) 
+ P. Wang, L. Li, Z. Shao, R. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui 
+
+ Math-shepherd: verify and reinforce llms step-by-step without human annotations .
+
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+
+ pp. 9426–9439 .
+
+ Cited by: §2 .
+
+ Wang et al. (2025b) 
+ Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, X. Jin, K. Yu, M. N. Nguyen, L. Liu, et al. 
+
+ Ragen: understanding self-evolution in llm agents via multi-turn reinforcement learning .
+
+ arXiv preprint arXiv:2504.20073 .
+
+ Cited by: §2 .
+
+ Yao et al. (2022) 
+ S. Yao, H. Chen, J. Yang, and K. Narasimhan 
+
+ Webshop: towards scalable real-world web interaction with grounded language agents .
+
+ Advances in Neural Information Processing Systems 35 , pp. 20744–20757 .
+
+ Cited by: §2 .
+
+ Yao et al. (2020) 
+ S. Yao, R. Rao, M. Hausknecht, and K. Narasimhan 
+
+ Keep calm and explore: language models for action generation in text-based games .
+
+ In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,
+
+ pp. 8736–8754 .
+
+ Cited by: §2 .
+
+ Yu et al. (2025) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang 
+
+ DAPO: an open-source LLM reinforcement learning system at scale .
+
+ External Links: 2503.14476 
+
+ Cited by: §4.1 .
+
+ Zeng et al. (2025) 
+ S. Zeng, Q. Wei, W. Brown, O. Frunza, Y. Nevmyvaka, Y. K. Zhao, and M. Hong 
+
+ Reinforcing multi-turn reasoning in llm agents via turn-level credit assignment .
+
+ In ICML 2025 Workshop on Computer Use Agents ,
+
+ Cited by: §2 ,
+ Table 1 .
+
+ Zhai et al. (2024) 
+ Y. Zhai, H. Bai, Z. Lin, J. Pan, S. Tong, Y. Zhou, A. Suhr, S. Xie, Y. LeCun, Y. Ma, et al. 
+
+ Fine-tuning large vision-language models as decision-making agents via reinforcement learning .
+
+ Advances in neural information processing systems 37 , pp. 110935–110971 .
+
+ Cited by: §2 .
+
+ Zhang et al. (2025) 
+ S. Zhang, Y. Dong, J. Zhang, J. Kautz, B. Catanzaro, A. Tao, Q. Wu, Z. Yu, and G. Liu 
+
+ Nemotron-research-tool-n1: exploring tool-using language models with reinforced reasoning .
+
+ arXiv preprint arXiv:2505.00024 .
+
+ Cited by: §2 .
+
+ Zhou et al. (2025) 
+ Y. Zhou, S. Jiang, Y. Tian, J. Weston, S. Levine, S. Sukhbaatar, and X. Li 
+
+ Sweet-rl: training multi-turn llm agents on collaborative reasoning tasks .
+
+ arXiv preprint arXiv:2503.15478 .
+
+ Cited by: §2 .
+
+ Zong et al. (2026) 
+ Z. Zong, D. Chen, Y. Li, Q. Yi, B. Zhou, C. Li, B. Qian, P. Chen, and J. Jiang 
+
+ A T 2 T^{2} po: agentic turn-based policy optimization via tree search .
+
+ arXiv preprint arXiv:2601.04767 .
+
+ Cited by: §2 ,
+ §2 .
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

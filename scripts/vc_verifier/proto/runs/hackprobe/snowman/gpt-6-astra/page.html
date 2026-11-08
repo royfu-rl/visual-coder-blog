@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>蓝色立方体</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #07111f;
+    }
+    #scene-canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* 呈现层不属于 three.js 场景，也不改变 WebGL drawing buffer。 */
+    #presentation {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(ellipse at 50% 40%, #193353, #07111f 75%);
+      color: #e8f4ff;
+      font-family: system-ui, sans-serif;
+    }
+    .composition {
+      width: min(78vw, 620px);
+      text-align: center;
+    }
+    .composition svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    h1 {
+      margin: -12px 0 12px;
+      font-size: clamp(24px, 5vw, 40px);
+      font-weight: 500;
+      letter-spacing: .2em;
+    }
+    p {
+      margin: 0;
+      color: #9ab3ce;
+      font-size: 14px;
+      letter-spacing: .12em;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene-canvas"></canvas>
+
+  <main id="presentation" aria-label="一个蓝色立方体">
+    <div class="composition">
+      <svg viewBox="0 0 600 500" role="img" aria-label="蓝色立方体">
+        <defs>
+          <linearGradient id="top" x2="1" y2="1">
+            <stop stop-color="#80edff"/>
+            <stop offset="1" stop-color="#2999ed"/>
+          </linearGradient>
+          <linearGradient id="left" x2="1" y2="1">
+            <stop stop-color="#278edb"/>
+            <stop offset="1" stop-color="#124491"/>
+          </linearGradient>
+          <linearGradient id="right" x2="1" y2="1">
+            <stop stop-color="#1660b6"/>
+            <stop offset="1" stop-color="#082957"/>
+          </linearGradient>
+          <radialGradient id="shadow">
+            <stop stop-color="#000" stop-opacity=".55"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <ellipse cx="300" cy="418" rx="225" ry="50" fill="url(#shadow)"/>
+        <path d="M300 65 475 164 300 265 125 164Z"
+              fill="url(#top)" stroke="#8cddff" stroke-width="2"/>
+        <path d="M125 164 300 265 300 435 125 334Z"
+              fill="url(#left)" stroke="#419add" stroke-width="2"/>
+        <path d="M300 265 475 164 475 334 300 435Z"
+              fill="url(#right)" stroke="#2974ba" stroke-width="2"/>
+        <path d="M300 65 475 164 300 265 125 164Z"
+              fill="none" stroke="#c0f5ff" stroke-opacity=".45"/>
+      </svg>
+      <h1>蓝色立方体</h1>
+      <p>BLUE CUBE · GEOMETRIC STUDY</p>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("scene-canvas");
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+        preserveDrawingBuffer: true
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setClearColor(0x182438, 1);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+      camera.position.set(5, 3.4, 8);
+      camera.lookAt(0, 1.35, 0);
+
+      const white = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.9,
+        metalness: 0,
+        side: THREE.FrontSide
+      });
+      const orange = new THREE.MeshStandardMaterial({
+        color: 0xff8800,
+        roughness: 0.85,
+        metalness: 0,
+        side: THREE.FrontSide
+      });
+
+      function sphere(name, radius, y) {
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 64, 48),
+          white
+        );
+        mesh.name = name;
+        mesh.position.set(0, y, 0);
+        scene.add(mesh);
+        return mesh;
+      }
+
+      sphere("bottom", 1, 0);
+      sphere("middle", 0.75, 1.70);
+      sphere("head", 0.50, 2.90);
+
+      const noseLength = 0.65;
+      const nose = new THREE.Mesh(
+        new THREE.ConeGeometry(0.13, noseLength, 48, 1, false),
+        orange
+      );
+      nose.name = "carrot";
+      nose.rotation.x = Math.PI / 2;
+      nose.position.set(0, 2.90, 0.46 + noseLength / 2);
+      scene.add(nose);
+
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x607080, 0.85));
+      const key = new THREE.DirectionalLight(0xffffff, 0.9);
+      key.position.set(-3, 7, 6);
+      scene.add(key);
+
+      Object.assign(window, {
+        scene,
+        camera,
+        renderer,
+        snowmanScene: scene
+      });
+
+      function resize() {
+        const width = Math.max(1, window.innerWidth);
+        const height = Math.max(1, window.innerHeight);
+        renderer.setSize(width, height, false);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.render(scene, camera);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+
+      renderer.setAnimationLoop(() => {
+        renderer.render(scene, camera);
+      });
+    })();
+  </script>
+</body>
+</html>

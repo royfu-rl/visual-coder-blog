@@ -1,0 +1,1539 @@
+SOURCE: https://arxiv.org/html/2501.09695
+
+Mitigating Hallucinations in Large Vision-Language Models via DPO: On-Policy Data Hold the Key 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Preliminary 
+ Large Vision-Language Models. 
+ Direct Preference Optimization. 
+ Supervised Fine Tuning. 
+ On-Policy Data. 
+ 3 Problem Analysis 
+ Question 1 
+ Question 2 
+ Question 3 
+ 4 On-Policy Alignment DPO 
+ 4.1 Data Collection and On-Policy Alignment 
+ 4.2 OPA-DPO Training 
+ Language Corrections. 
+ Image Focus Mechanism. 
+ Anchored Preference. 
+ 5 Experiments 
+ 5.1 Experimental Setup 
+ Models and Datasets. 
+ Evaluation Metrics. 
+ Baseline Algorithms. 
+ Implementation Details. 
+ 5.2 Policy Distribution over Revised Responses 
+ 5.3 Benchmark Evaluation Results 
+ 5.4 Ablation Studies 
+ 5.5 Case Study 
+ 6 Related Works 
+ RLHF. 
+ Hallucination for LVLMs. 
+ 7 Conclusions 
+ References 
+ A Implementation Details 
+ A.1 Training Details. 
+ A.2 Prompts for GPT-4V 
+ B Additional Experiments 
+ B.1 Helpfulness Benchmark Evaluations. 
+ B.2 Additional Ablation Studies. 
+ C Additional Qualitative Examples 
+ Image Descriptions. 
+ False Premise Queries. 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2501.09695v2 [cs.CV] 03 Mar 2025
+ Mitigating Hallucinations in Large Vision-Language Models via DPO: 
+On-Policy Data Hold the Key
+ Zhihe Yang
+ † † thanks: The work was conducted during the internship of Zhihe Yang (zhyang@link.cuhk.edu.hk) at Microsoft Research Asia. 
+ Affiliation: The Chinese University of Hong Kong, Hong Kong SAR, China
+ Affiliation: The Chinese University of Hong Kong, Shenzhen Research Institute (SZRI), Guangdong, China https://opa-dpo.github.io 
+ Xufang Luo
+ † † thanks: Corresponding author (xufang.luo@microsoft.com) 
+ Affiliation: Microsoft Research Asia, Shanghai, China
+ Dongqi Han
+ Affiliation: Microsoft Research Asia, Shanghai, China
+ Yunjian Xu
+ † † thanks: Corresponding author (yjxu@mae.cuhk.edu.hk) 
+ Affiliation: The Chinese University of Hong Kong, Hong Kong SAR, China
+ Affiliation: The Chinese University of Hong Kong, Shenzhen Research Institute (SZRI), Guangdong, China https://opa-dpo.github.io 
+ Dongsheng Li
+ Affiliation: Microsoft Research Asia, Shanghai, China
+ Abstract 
+ Hallucination remains a major challenge for Large Vision-Language Models (LVLMs).
+Direct Preference Optimization (DPO) has gained increasing attention as a simple solution to hallucination issues. It directly learns from constructed preference pairs that reflect the severity of hallucinations in responses to the same prompt and image.
+Nonetheless, different data construction methods in existing works bring notable performance variations.
+We identify a crucial factor here: outcomes are largely contingent on whether the constructed data aligns on-policy w.r.t the initial (reference) policy of DPO.
+Theoretical analysis suggests that learning from off-policy data is impeded by the presence of KL-divergence between the updated policy and the reference policy.
+From the perspective of dataset distribution, we systematically summarize the inherent flaws in existing algorithms that employ DPO to address hallucination issues.
+To alleviate the problems, we propose On-Policy Alignment (OPA)-DPO framework, which uniquely leverages expert feedback to correct hallucinated responses and aligns both the original and expert-revised responses in an on-policy manner.
+Notably, with only 4.8k data, OPA-DPO achieves an additional reduction in the hallucination rate of LLaVA-1.5-7B: 13.26% on the AMBER benchmark and 5.39% on the Object-Hal benchmark, compared to the previous SOTA algorithm trained with 16k samples. Our implementation is available at https://github.com/zhyang2226/OPA-DPO .
+ 1 Introduction
+ Figure 1 : (a) OPA-DPO motivation: Naive adoption of DPO struggles to learn off-policy preferred responses due to the substantial reverse KL-divergence constraint (induced by unmatched supports). Our OPA operation aligns these responses on-policy, enabling effective learning with subsequent DPO. (b) Data scale vs. performance: We present the AMBER hallucination rates for various DPO-based algorithms and their training data volume. OPA-DPO (star markers) achieves SOTA performance with minimal amount of data. (c) Impact of OPA: Using LLaVA-1.5-13B with 4.8k data, we evaluate performance of DPO with/without OPA operations. The inclusion of OPA significantly enhances performance compared to DPO alone. 
+ Recent advancements in instruction-following Large Vision-Language Models (LVLMs) have achieved significant milestones [ 1 , 2 , 3 , 4 ] . By integrating pre-trained vision encoders with Large Language Models (LLMs) and fine-tuning them on instruction-based datasets, the combined models demonstrate remarkable image understanding capabilities [ 5 , 6 , 7 ] . This technology shows considerable potential across various fields, including image captioning [ 6 ] , pathology recognition [ 8 , 9 ] , and medical imaging diagnostic [ 10 , 11 ] .
+Nevertheless, a significant barrier hinders their practical application: hallucinations [ 12 , 13 , 14 ] ,
+which refer to discrepancies between the image’s actual content and the model-generated text.
+Such issue is pronounced in LVLMs.
+Even the most advanced GPT-4V [ 4 ] exhibits hallucinations in 45.9% of responses for certain tasks [ 15 ] .
+ Figure 2 : We categorize existing DPO-based algorithms for addressing hallucination issues in LVLMs into 3 classes: (1) Hallucination Injection (POVID [ 16 ] and HALVA [ 17 ] ). The ground-truth response is preferred, while the rejected response contains injected hallucinations. Since the errors do not originate from the model itself, the policy is unlikely to benefit from training. (2) Hallucination Recognition (RLHF-V [ 15 ] , HA-DPO [ 18 ] and HSA-DPO [ 19 ] ).
+The model generates responses, after which experts (AI or human) identify errors and make revisions. The off-policy nature of the revised responses makes them challenging to learn effectively.
+(3) Self Evolution (RLAIF-V [ 20 ] ). Both preferred and rejected responses are generated by the initial policy. A superior model assesses hallucinations, preferring the response with fewer errors. However, hallucinations may exist in both responses, thereby affecting the learning efficiency. 
+ Among numerous studies aimed at reducing hallucinations in LVLMs, a remarkable approach is further fine-tuning the models using Reinforcement Learning from Human Feedback (RLHF) [ 15 , 21 ] or AI Feedback (RLAIF) [ 19 , 18 , 20 ] .
+RLH(AI)F aligns the model to the correct direction by fine-tuning it with constructed preference pairs, where the win response has less hallucination to the identical image and prompt than the loss one.
+RLH(AI)F algorithms can be broadly categorized into two classes: Proximal Policy Optimization (PPO) [ 22 ] and Direct Preference Optimization (DPO) [ 23 ] . DPO is generally simpler than PPO in practice because it streamlines the operational framework by eliminating the need for reward model training and the online rollout process in dataset generation, but relying solely on pre-collected offline data.
+ Indeed, PPO [ 22 ] and DPO [ 23 ] share the same learning objective: to maximize the reward derived from the Bradley-Terry model [ 24 ] while constraining the Kullback-Leibler (KL) divergence [ 25 ] between the updated policy and the initial (reference) policy.
+However, a key distinction arises during the training process: PPO, an online and on-policy algorithm, requires the use of online rollout data, whereas DPO relies entirely on offline datasets, which may be collected by any policy in practice [ 26 , 27 ] .
+Therefore, owing to the constraint of reverse KL-divergence, the data used in PPO training process is predominantly
+on-policy 1 1 
+ 1 
+ In this paper, on-policy denotes data with high sampling probability under the initial policy, while off-policy indicates low or near-zero. 
+in relation to the initial (reference) policy.
+In contrast, for DPO, where policy is trained completely offline, the alignment of training data with the reference policy is rarely considered, especially for LVLM works.
+ In this paper, we reveal a key insight: the on-policy property of training data, which was neglected by DPO-based algorithms used to train LVLMs, plays a crucial role in enabling effective DPO training .
+As illustrated in Figure 1 a left, strictly off-policy preferred responses cannot be learned by naive DPO. The limitation stems from the fact that assigning even a small positive probability to such off-policy data leads to substantially large KL-divergence between updated policy and reference policy, due to the mismatches in their support (see detailed analysis in Chapter 3 ).
+ Based on the on-policy property, we classify existing algorithms that employ DPO to tackle the hallucination issues for LVLMs into three distinct categories, as shown in Figure 2 .
+Despite minor differences in datasets and training parameters, Method 3 significantly outperforms the other two methods. This can be attributed to Method 3’s exclusive use of on-policy preference pairs, whereas the other two methods involve either preferred or rejected responses off-policy.
+Notably, Method 3 has an inherent limitation: persistent hallucinations may exist in both preferred and rejected responses, since all responses are generated by the policy to be updated.
+This shortcoming results in inefficient learning and the requirement on a large volume of data to achieve satisfying performance.
+ Converting these insights into solutions, we propose a novel framework: On-Policy Alignment (OPA)-DPO (cf. Figure 1 a right), which ensures that data remains on-policy while simultaneously leveraging expert guidance to improve learning efficiency of LVLMs.
+We first utilize GPT-4V [ 4 ] to recognize hallucination and deliver fine-grained revisions to the model-generated responses.
+Then we align these off-policy adjustments on-policy through fine-tuning the initial policy.
+The operation allows the subsequent DPO training to circumvent the constraints imposed by KL-divergence and effectively incorporate these changes.
+ Our contributions are threefold: (1) We identify an intrinsic property of DPO: its high reliance on on-policy data. (2) We summarize the inherent flaws of existing algorithms that employ DPO to address the hallucination problem. (3) Building upon the identified shortcomings of existing methods, we propose OPA-DPO, a novel framework that utilizes 4.8k data to achieve state-of-the-art (SOTA) performance on hallucination benchmarks, surpassing previous methods relying on larger datasets (Figure 1 b,c).
+ 2 Preliminary
+ Large Vision-Language Models.
+ LVLMs represent a class of multimodal models that integrate visual and linguistic information to generate outputs in natural language [ 14 ] .
+Typically, LVLMs comprise three components [ 5 ] : a visual encoder, a modality connection module, and an LLM. The visual encoder transforms input images ( \mathbf{m} ) into visual tokens. The connection module aligns these visual tokens with the LLM’s word embedding space. Combined with a user-provided linguistic prompt ( \mathbf{x} ), the LLM generates response ( \mathbf{y} ) in an auto-regressive manner.
+ Direct Preference Optimization.
+ To further enhance the performance of LVLMs, RLHF/RLAIF necessitates a reward model r(\mathbf{x},\mathbf{y},\mathbf{m}) , which evaluates human preferences for the response \mathbf{y} given the prompt \mathbf{x} and the image \mathbf{m} . The fundamental learning objective is expressed as
+ | 
+ \max\nolimits_{\pi_{\theta}}\mathbb{E}_{\mathcal{D}}[r(\mathbf{x},\mathbf{y},\mathbf{m})]-\\
+\beta\mathbb{D}_{\mathrm{KL}}[\pi_{\theta}(\cdot|\mathbf{x},\mathbf{m})||\pi_{\mathrm{ref}}(\cdot|\mathbf{x},\mathbf{m})], | 
+ | 
+ (1) | 
+ where \mathcal{D} represents the datasets where the prompts and images are sampled from. \mathbb{D}_{\mathrm{KL}} stands for the KL-divergence,
+and \beta controls the degree of regularization.
+DPO [ 23 ] derives the closed-form optimal solution for Eq. ( 1 ) and identify the reward function can be analytically expressed via
+ | 
+ r(\mathbf{x},\mathbf{y},\mathbf{m})=\beta\log\frac{\pi_{\theta}(\mathbf{y}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{ref}}(\mathbf{y}|\mathbf{x},\mathbf{m})}+\beta\log Z(\mathbf{x},\mathbf{m}), | 
+ | 
+ (2) | 
+ where Z(\mathbf{x},\mathbf{m}) is a partition function that only depends on prompt \mathbf{x} and image \mathbf{m} . Incorporating with Bradley-Terry model [ 24 ] , and the dataset comprising preference pairs ( \mathbf{y}_{w} over \mathbf{y}_{l} ) towards the same prompt \mathbf{x} and image \mathbf{m} , the model can be directly optimized through
+ | 
+ | 
+ \displaystyle\mathcal{L}_{\mathrm{DPO}}=-\mathbb{E}_{\mathcal{D}}[\log\sigma(r(\mathbf{x},\mathbf{y}_{w},\mathbf{m})-r(\mathbf{x},\mathbf{y}_{l},\mathbf{m}))] | 
+ | 
+ (3) | 
+ | 
+ | 
+ \displaystyle=-\mathbb{E}_{\mathcal{D}}[\log\sigma(\scalebox{1.05}{$\beta\log\frac{\pi_{\theta}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{ref}}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m})}\!-\!\beta\log\frac{\pi_{\theta}(\mathbf{y}_{l}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{ref}}(\mathbf{y}_{l}|\mathbf{x},\mathbf{m})}$})], | 
+ | 
+ where \sigma(\cdot) denotes the sigmoid function.
+ Supervised Fine Tuning.
+ As the most commonly used technique for LLMs and multimodal LLMs, Supervised Fine Tuning (SFT) is a simple and efficient method to align pre-trained models with downstream tasks.
+Given a dataset \mathcal{D} including prompts \mathbf{x} , images \mathbf{m} , and the corresponding standard responses \mathbf{y} , the training loss for SFT is
+ | 
+ \mathcal{L}_{\mathrm{SFT}}=-\mathbb{E}_{\mathcal{D}}\left[\sum^{L}_{i}\sum^{C}_{c}\mathbb{I}(y_{i}^{c})\log\pi_{\theta}(y_{i}^{c}|\mathbf{x},\mathbf{m},\mathbf{y}_{ | 
+ (4) | 
+ where L is the length of the response, C is the number of possible classes or tokens, \mathbb{I}(y_{i}^{c}) is an indicator function that equals 1 if the i -th token is of class c and 0 otherwise, and \pi_{\theta}(y_{i}^{c}|\mathbf{x},\mathbf{m},\mathbf{y}_{ 
+ On-Policy Data.
+ In the realm of reinforcement learning (RL), on-policy data is sampled from the current policy and becomes off-policy after the policy is updated [ 28 ] . As a fine-tuning process, policy updates for LLMs do not significantly change its sampling probabilities.
+In this paper, we define a response \mathbf{y} to a prompt \mathbf{x} and image \mathbf{m} as on-policy if \pi_{\mathrm{ref}}(\mathbf{y}|\mathbf{x},\mathbf{m})>\epsilon , where \epsilon is a small positive threshold.
+ 3 Problem Analysis
+ Three questions reflect our thinking path in this work:
+ \bullet 
+ Q1 : How does the dataset distribution relative to the initial/reference policy affect the performance of DPO?
+ \bullet 
+ Q2 : What are the inherent flaws of other algorithms that employ DPO to tackle hallucination problems?
+ \bullet 
+ Q3 : What adjustments can be made to current frameworks to rectify their intrinsic deficiencies?
+ Question 1
+ Note that the minimizer of Eq. ( 3 ) corresponds to the optimal solution for Eq. ( 1 ). Nevertheless, by reconsidering the definition of the KL-divergence
+ | 
+ \mathbb{D}_{\mathrm{KL}}[P\|Q]:=\sum\nolimits_{y\in\mathcal{Y}}P(y)log\scalebox{1.05}{$\frac{P(y)}{Q(y)}$}, | 
+ | 
+ (5) | 
+ where P and Q represent two distinct probability distributions. We can deduce the following fact
+ Fact 1 . 
+ Given a prompt \mathbf{x} and an image \mathbf{m} , suppose there exists one response \mathbf{y} such that \pi_{\theta}(\mathbf{y}|\mathbf{x},\mathbf{m})>0 , whereas \pi_{\mathrm{ref}}(\mathbf{y}|\mathbf{x},\mathbf{m})\rightarrow 0 , the KL-divergence between the two policy has \mathbb{D}_{\mathrm{KL}}[\pi_{\theta}(\cdot|\mathbf{x},\mathbf{m})||\pi_{\mathrm{ref}}(\cdot|\mathbf{x},\mathbf{m})]\rightarrow\infty . 
+ Fact 1 illustrates that if the preferred response has a near-zero probability with respect to the initial/reference policy, i.e., it is strictly off-policy data, then it can never be learned by any policy that begins from the learning objective outlined in Eq. ( 1 ).
+In other words, denoting the support for the updated policy as \mathcal{Y}_{\theta} , the support for the initial policy as \mathcal{Y}_{\mathrm{ref}} , and the global sampling space as \mathcal{Y}_{\mathrm{global}} , we always have the relationship \mathcal{Y}_{\theta}\subseteq\mathcal{Y}_{\mathrm{ref}}\subseteq\mathcal{Y}_{\mathrm{global}} . Any responses falling into the set \mathcal{Y}_{\mathrm{global}}\setminus\mathcal{Y}_{\mathrm{ref}} cannot be learned by \pi_{\theta} . It should be noted that this issue arises only with DPO, as PPO samples responses on-line from \mathcal{Y}_{\theta} .
+ A natural question arises: how does DPO deal with these off-policy preferred responses? By taking the partial derivative of Eq. ( 3 ), the gradient with respect to the policy parameters \theta can be expressed as
+ | 
+ \displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{DPO}} | 
+ \displaystyle=-\mathbb{E}_{(\mathbf{y}_{w},\mathbf{y}_{l},\mathbf{x},\mathbf{m})\sim\mathcal{D}} | 
+ | 
+ (6) | 
+ | 
+ \displaystyle\bigg[\beta\cdot\sigma | 
+ \displaystyle\bigg(-\underbrace{\beta\log\frac{\pi_{\theta}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{ref}}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m})}}_{r_{w}}+\underbrace{\beta\log\frac{\pi_{\theta}(\mathbf{y}_{l}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{ref}}(\mathbf{y}_{l}|\mathbf{x},\mathbf{m})}}_{r_{l}}\bigg)\cdot | 
+ | 
+ | 
+ | 
+ \displaystyle\big(\underbrace{\nabla_{\theta}\log\pi_{\theta}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m})-\nabla_{\theta}\log\pi_{\theta}(\mathbf{y}_{l}|\mathbf{x},\mathbf{m})}_{\mathrm{log-likelihood}}\big)\bigg], | 
+ | 
+ where \sigma(r_{w}-r_{l})=0.5 prior to the policy update. Assuming that the preferred response \mathbf{y}_{w} is off-policy, \pi_{\theta}(\mathbf{y}_{w}|\mathbf{x},\mathbf{m}) undergoes a single step of log-likelihood maximization with a coefficient of 0.5\beta . Following this update, r_{w} inclined to become substantially large, thereby causing \sigma(r_{w}-r_{l})\rightarrow 0 . Nonetheless, the increment in probability induced by this single-step update proves insufficient for the preferred response to be sampled during the auto-regressive generation process.
+In summary, the low likelihood of off-policy preferred responses (relative to reference policy) drives the DPO updating weight toward zero, thereby rendering effective learning nearly impossible.
+ Question 2
+ For algorithms adopting Method 1 (Hallucination Injection) outlined in Figure 2 , a ground-truth (GT) response is deemed on-policy if it has been incorporated into fine-tuning SFT dataset. The shortcoming is evident: hallucinations do not originate from the model itself. While the probability associated with the GT response is augmented, the probability of model-intrinsic hallucinations is neither explicitly identified nor substantially diminished.
+ Method 2, Hallucination Recognition, is the most widely adopted approach, with the majority of studies opting to use GPT-4 with ground-truth image captions or GPT-4V as the recognizer.
+Nevertheless, a significant challenge persists: the preferred response often remains off-policy, as highlighted in our answers to Question 1.
+ Method 3, Self Evolution, is exclusively employed by RLAIF-V [ 20 ] , which significantly outperforms the previous two methods in hallucination benchmarks. However, it has a notable shortcoming: since the method relies on the model generating two responses to form a preference pair, it cannot effectively address intrinsic hallucinations present in both responses. As a result, this approach requires a substantial amount of data and multiple iterative updates.
+ Question 3
+ Method 2 employs domain experts to construct preferred responses, establishing a robust paradigm but encountering the off-policy issue. Although Method 3 addresses this challenge, the reliability of the preferred responses is compromised.
+To synergize the strengths of both approaches, namely aligning expert-revised preferred responses with the on-policy framework, it is essential to consider modifications to the model itself before commencing DPO training.
+A promising method that comes to mind is adapting Low Rank Adaptation (LoRA) SFT to the expert revision, which our experimental evidence demonstrates to be exceptionally effective.
+In conjunction with our adjusted DPO training loss, OPA-DPO is capable of achieving SOTA performance with a minimal data requirement.
+ 4 On-Policy Alignment DPO
+ Figure 3 : Our proposed OPA-DPO comprises four essential steps: ① Collect responses from the original policy based on the images and corresponding prompts. ② Utilize GPT-4V to correct any hallucinations in the generated responses with minimal modifications. ③ Conduct LoRA-SFT on the GT responses and revised responses. ④ Initiate OPA-DPO training from the policy obtained in step 3. 
+ As illustrated in Figure 3 , our proposed OPA-DPO framework encompasses four essential steps. The initial two steps, designated as data collection, along with the third step, on-policy alignment, are detailed in Chapter 4.1 . The final step, OPA-DPO training, is elaborated in Chapter 4.2 .
+ 4.1 Data Collection and On-Policy Alignment
+ Initially, we instruct the model (slated for training) to generate responses based on pre-collected images and prompts, using a combination of “top-k” and “top-p” sampling methods.
+Following this,
+we supply GPT-4V with the generated responses \mathbf{y}_{\mathrm{Gen}} , the original prompts \mathbf{x} , the images \mathbf{m} , and the GT responses \mathbf{y}_{\mathrm{GT}} .
+GPT-4V is tasked with identifying hallucinations by evaluating the generated responses at the sentence level.
+Each sentence within a response is assigned a score, S_{\mathrm{hal}} , which indicates the severity of the hallucination.
+Moreover, GPT-4V is required to categorize sentences with incorrect description as either image recognition errors or language comprehension errors , with the classification results represented by S_{\mathrm{img}} .
+Additionally, GPT-4V is also instructed to make minimal revisions to any erroneous sentences, and the aggregate of these revised sentences is denoted as \mathbf{y}_{\mathrm{Rev}} (refer to Appendix for further details).
+ Subsequently, we integrate the GT responses with the GPT-4V revised responses to construct an instruction-following dataset, which includes \mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},\mathbf{x},\mathbf{m} .
+We then perform LoRA-SFT on this dataset, utilizing the loss function in Eq. ( 4 ). We denote the resulting policy from this phase as \pi_{\mathrm{OPA}} . Note that this policy serves as the reference (initial) policy for the subsequent OPA-DPO training.
+ 4.2 OPA-DPO Training
+ Compared to classical DPO, which forms only a single language preference pair, our OPA-DPO loss comprises three distinct components, each containing two pairs:
+ Language Corrections.
+ As the most basic component of DPO, the language-level preference is naturally formed between the GT response and the generated response, as well as between the revised response and the generated response.
+Following the approach outlined in RLHF-V [ 15 ] , we aim to concentrate the policy update on the erroneous sections and their respective corrections.
+To achieve this, we construct a mapping from the GPT-4V marked hallucination scores to establish the update weight W_{\mathrm{hal}}(S_{\mathrm{hal}}) . Then the hallucination-weighted log-policy is defined as \log\pi^{\mathrm{hw}}(\mathbf{y}|\mathbf{x},\mathbf{m})=\sum_{i}^{L}W_{\mathrm{hal}}(S^{i}_{\mathrm{hal}})\log\pi(y_{i}|\mathbf{x},\mathbf{m},\mathbf{y}_{ 
+ | 
+ | 
+ \displaystyle\mathcal{L}_{\mathrm{LC}}=-\mathbb{E}_{(\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},\mathbf{y}_{\mathrm{Gen}},\mathbf{x},\mathbf{m})\sim\mathcal{D}} | 
+ | 
+ (7) | 
+ | 
+ | 
+ \displaystyle\bigg[\log\sigma\bigg(\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}-\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{Gen}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{Gen}}|\mathbf{x},\mathbf{m})}\bigg) | 
+ | 
+ | 
+ | 
+ \displaystyle+\log\sigma\bigg(\beta\log\tfrac{\pi_{\theta}^{\mathrm{hw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}^{\mathrm{hw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m})}-\beta\log\tfrac{\pi_{\theta}^{\mathrm{hw}}(\mathbf{y}_{\mathrm{Gen}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}^{\mathrm{hw}}(\mathbf{y}_{\mathrm{Gen}}|\mathbf{x},\mathbf{m})}\bigg)\bigg]. | 
+ | 
+ Image Focus Mechanism.
+ A critical obstacle in ensuring LVLMs properly engage with images is their innate tendency to ignore the visual modality during the optimization phase [ 27 , 16 ] .
+Intuitively, when the image data is compromised, the probability that the model produces the correct response diminishes.
+Building upon mDPO [ 27 ] , we form preference pairs between the original images \mathbf{m} and distorted images \mathbf{m^{\prime}} , using the same prompts and GT/revised responses.
+Furthermore, we expect this mechanism to be more effective for sentences where understanding of the image itself is biased.
+To accomplish this, we create another mapping from the GPT-4V marked categorization results S_{\mathrm{img}} to determine the update weight W_{\mathrm{img}}(S_{\mathrm{img}}) . We then describe the image-weighted log-policy as
+ \log\pi^{\mathrm{iw}}(\mathbf{y}|\mathbf{x},\mathbf{m})=\sum_{i}^{L}W_{\mathrm{img}}(S^{i}_{\mathrm{img}})\log\pi(y_{i}|\mathbf{x},\mathbf{m},\mathbf{y}_{ 
+ | 
+ | 
+ \displaystyle\mathcal{L}_{\mathrm{IF}}=-\mathbb{E}_{(\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},\mathbf{x},\mathbf{m},\mathbf{m^{\prime}})\sim\mathcal{D}} | 
+ | 
+ (8) | 
+ | 
+ | 
+ \displaystyle\bigg[\log\sigma\bigg(\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}-\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m^{\prime}})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m^{\prime}})}\bigg) | 
+ | 
+ | 
+ | 
+ \displaystyle+\log\sigma\bigg(\beta\log\tfrac{\pi_{\theta}^{\mathrm{iw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}^{\mathrm{iw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m})}-\beta\log\tfrac{\pi_{\theta}^{\mathrm{iw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m^{\prime}})}{\pi_{\mathrm{OPA}}^{\mathrm{iw}}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m^{\prime}})}\bigg)\bigg]. | 
+ | 
+ Anchored Preference.
+ Numerous studies [ 29 , 27 , 18 ] document a reduced likelihood of preferred response during the DPO training process. This trend may be attributed to the intrinsic characteristics of DPO, which concentrates on the relative preferences. Our findings align with these studies and we observe that the reduction
+adversely affects downstream performance. Following mDPO [ 27 ] , we employ two anchors to constrain the preferred
+ | 
+ \displaystyle\mathcal{L}_{\mathrm{Anc}}\!=\!-\mathbb{E}_{(\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rec}},\mathbf{x},\mathbf{m})\sim\mathcal{D}} | 
+ \displaystyle\bigg[\log\sigma\bigg(\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m})}\!-\!\delta\bigg) | 
+ | 
+ (9) | 
+ | 
+ \displaystyle+\log\sigma | 
+ \displaystyle\bigg(\beta\log\tfrac{\pi_{\theta}(\mathbf{y}_{\mathrm{Rec}}|\mathbf{x},\mathbf{m})}{\pi_{\mathrm{OPA}}(\mathbf{y}_{\mathrm{Rec}}|\mathbf{x},\mathbf{m})}-\delta\bigg)\bigg]. | 
+ | 
+ Combining Eqs. ( 7 )( 8 )( 9 ), we get the loss for OPA-DPO:
+ | 
+ \mathcal{L}_{\mathrm{OPA-DPO}}=\mathcal{L}_{\mathrm{LC}}+\gamma_{1}\mathcal{L}_{\mathrm{IF}}+\gamma_{2}\mathcal{L}_{\mathrm{Anc}}. | 
+ | 
+ (10) | 
+ It should be noted that each component is crucial and cannot be omitted. See Chapter 5.4 for ablation studies.
+ 5 Experiments
+ 5.1 Experimental Setup
+ Models and Datasets.
+ We apply OPA-DPO on two LVLMs with distinct parameter sizes: LLAVA-v1.5-7B and LLAVA-v1.5-13B, both using CLIP ViT-L-336px as the vision encoder. The 7B model is based on Vicuna-7B, and the 13B on Vicuna-13B. Each model underwent pretraining on 558K image-text pairs and was subsequently fine-tuned on 665K instruction-based samples. As for the datasets, we randomly selected 4.8K samples from the RLAIF-V [ 20 ] datasets, using their preferred response as the ground truth.
+ Evaluation Metrics.
+ We focuses on mitigating hallucinations in LVLMs, with experiments conducted on four benchmarks:
+ 1) AMBER [ 30 ] A benchmark with detailed object annotations, featuring 1004 images in a generative task. Using the official codebase, we evaluate CHAIR score, object coverage, hallucination rate, and alignment with human cognition.
+ 2) MMHalBench [ 21 ] : A question-answering benchmark with 96 images across 12 object categories. Following the official protocol, we use GPT-4 to rate responses from zero to six, calculating hallucination rate by the proportion of responses rated below three.
+ 3) Object HalBench [ 31 ] : A widely used benchmark for assessing object hallucination. We evaluate across 300 instances using the Yu et al. [ 15 ] codebase, reporting hallucination rates at both response (CHAIRs) and object levels (CHAIRi). 2 2 
+ 2 
+ It is noted that some studies report results based on 50 instances, we exclude these outcomes to prevent any potential confusion. 
+ 4) POPE [ 32 ] : A yes/no question-answering benchmark for object hallucination evaluation. We report accuracy and precision on its Adversarial set, consisting of 3000 cases.
+ Baseline Algorithms.
+ We mainly compare OPA-DPO with algorithms based on RLHF/RLAIF. As mentioned in Chapter 1 , most algorithms, such as HALVA [ 17 ] , POVID [ 16 ] , RLHF-V [ 15 ] , HA-DPO [ 18 ] , HSA-DPO [ 19 ] , RLAIF-V [ 20 ] , and mDPO [ 27 ] , prefer to use DPO,
+while LLaVA-RLHF [ 21 ] choose to use PPO.
+ Implementation Details.
+ For both the 7B and 13B models, we start with OPA training (LoRA-SFT) for 2 epochs, using a cosine learning rate schedule beginning at 2e-5. We set the batch size to 128, with a LoRA rank of 256 and alpha of 512. Following this, we perform OPA-DPO training on the SFT-tuned LoRA module for 4 more epochs, using a batch size of 32 and a cosine learning rate starting at 1e-6.
+In our equations, we set \beta=0.1 in Eqs. ( 7 )( 8 )( 9 ), and \gamma_{1}=0.2,\gamma_{2}=1.0 in Eq. ( 10 ). For the distorted images \mathbf{m^{\prime}} in Eq. ( 8 ), we randomly mask 30% of pixels.
+For the anchors in Eq. ( 9 ), we set \delta=0 .
+See Appendix for pseudo code and more detailed settings.
+ Figure 4 : Distribution of response-averaged log probabilities for 200 significantly revised responses across different models. 
+ 5.2 Policy Distribution over Revised Responses
+ To demonstrate that off-policy preferred responses are not effectively learned through DPO, we visualize the response-averaged log probabilities of tokens, denoted as \frac{1}{L}\sum_{i}^{L}\log\pi(\mathbf{y}_{i}|\mathbf{x},\mathbf{m},\mathbf{y}_{ 4 .
+The distribution shows negligible change after DPO training without OPA, whereas a significant increase is observed with our proposed OPA-DPO.
+ Figure 5 : Impact of data amount on hallucination-rate metrics. 
+ In order to emphasize the constraint arises from reverse KL-divergence, we measure the average KL-divergence \frac{1}{L}\sum_{i}^{L}\mathbb{D}_{\mathrm{KL}}[\pi_{P}(\cdot|\mathbf{x},\mathbf{m},\mathbf{y}_{ 1 .
+We observe that the reverse KL shows minor change after DPO ( \mathbb{D}_{\mathrm{KL}}[\pi_{\mathrm{DPO}}\|\pi_{base}] and \mathbb{D}_{\mathrm{KL}}[\pi^{\mathrm{OPA}}_{\mathrm{DPO}}\|\pi_{\mathrm{OPA}}] );
+however, the divergence gap between \pi^{\mathrm{OPA}}_{\mathrm{DPO}} and \pi_{base} is nearly an order of magnitude larger, indicating that naive DPO is insufficient to bridge this gap.
+ Table 1 : Comparison of average and maximum KL-divergence between different policies. Results are averaged over the same 200 significantly revised responses as in Figure 4 . 
+ \mathbb{D}_{\mathrm{KL}}[P\,\|\,Q]     | 
+ P | 
+ \pi_{\mathrm{DPO}} | 
+ \pi^{\mathrm{OPA}}_{\mathrm{DPO}} | 
+ \pi^{\mathrm{OPA}}_{\mathrm{DPO}} | 
+ \pi_{\mathrm{OPA}} | 
+ Q | 
+ \pi_{base} | 
+ \pi_{\mathrm{base}} | 
+ \pi_{\mathrm{OPA}} | 
+ \pi_{\mathrm{base}} | 
+ 7B | 
+ \mathrm{mean}-\mathrm{mean} | 
+ 0.039 | 
+ 0.371 | 
+ 0.025 | 
+ 0.276 | 
+ \mathrm{max}-\mathrm{mean} | 
+ 0.396 | 
+ 2.288 | 
+ 0.161 | 
+ 1.839 | 
+ 13B | 
+ \mathrm{mean}-\mathrm{mean} | 
+ 0.044 | 
+ 0.261 | 
+ 0.036 | 
+ 0.174 | 
+ \mathrm{max}-\mathrm{mean} | 
+ 0.421 | 
+ 1.944 | 
+ 0.349 | 
+ 1.364 | 
+ 5.3 Benchmark Evaluation Results
+ Table 2 : Comparison of RLAIF/RLHF-based algorithms for enhancing LVLMs across various benchmarks. For baseline algorithms with available official checkpoints, we retest the models, and these results are marked with \lx@sectionsign . For algorithms without official checkpoints, results are sourced from the respective papers: \dagger denotes results from [ 19 ] , \ddagger from [ 17 ] , and \star from [ 27 ] . To ensure a fair comparison, greedy sampling is used in all evaluations to avoid potential randomness. The best result for each metric within each group is highlighted in bold . 
+ | 
+ | 
+ | 
+ AMBER 
+ (1004) 
+ | 
+ MMHal-Bench 
+ (96) 
+ | 
+ Object Hal 
+ (300) 
+ | 
+ POPE Adversarial 
+ (3000) 
+ | 
+ Algorithm 
+ | 
+ Data Size 
+ | 
+ Feedback 
+ | 
+ CHAIR↓ | 
+ Cover↑ | 
+ HalRate↓ | 
+ Cog↓ | 
+ Score↑ | 
+ HalRate↓ | 
+ CHAIRs↓ | 
+ CHAIRi↓ | 
+ Acc.↑ | 
+ Pre.↑ | 
+ Qwen-VL-Chat -34B [ 7 ] † | 
+ 6.6 | 
+ 53.2 | 
+ 31.0 | 
+ 2.9 | 
+ 2.89 | 
+ 0.43 | 
+ 36 | 
+ 21.3 | 
+ - | 
+ - | 
+ +Silkie [ 26 ] † | 
+ 80k | 
+ GPT-4V | 
+ 5.4 | 
+ 55.8 | 
+ 29.0 | 
+ 2.0 | 
+ 3.01 | 
+ 0.41 | 
+ 25.3 | 
+ 13.9 | 
+ - | 
+ - | 
+ LLaVA-Instruct-1.5-7B [ 5 , 6 ] § | 
+ 7.7 | 
+ 51.6 | 
+ 34.7 | 
+ 4.2 | 
+ 2.01 | 
+ 0.61 | 
+ 55.67 | 
+ 15.96 | 
+ 84.93% | 
+ 89.10% | 
+ +LLaVA-RLHF [ 21 ] § | 
+ 122k | 
+ Self-Reward | 
+ 9.7 | 
+ 53.2 | 
+ 46.6 | 
+ 5.3 | 
+ 1.88 | 
+ 0.71 | 
+ 58.00 | 
+ 15.61 | 
+ 80.00% | 
+ 87.19% | 
+ +HALVA [ 17 ] ‡ | 
+ 21.5k | 
+ GPT-4V | 
+ 6.6 | 
+ 53.0 | 
+ 32.2 | 
+ 3.4 | 
+ 2.25 | 
+ 0.54 | 
+ 41.40 | 
+ 11.70 | 
+ - | 
+ - | 
+ +mDPO [ 27 ] ⋆ | 
+ 10k | 
+ GPT-4V | 
+ 4.4 | 
+ 52.4 | 
+ 24.5 | 
+ 2.4 | 
+ 2.39 | 
+ 0.54 | 
+ 35.70 | 
+ 9.80 | 
+ - | 
+ 95.36% | 
+ +HA-DPO [ 18 ] § | 
+ 6k | 
+ GPT4 | 
+ 7.8 | 
+ 52.1 | 
+ 35.6 | 
+ 4.2 | 
+ 1.89 | 
+ 0.65 | 
+ 54.00 | 
+ 14.45 | 
+ 84.90% | 
+ 90.42% | 
+ +POVID [ 16 ] § | 
+ 17k | 
+ GPT-4V | 
+ 7.4 | 
+ 51.3 | 
+ 34.3 | 
+ 3.9 | 
+ 2.08 | 
+ 0.60 | 
+ 50.67 | 
+ 15.28 | 
+ 84.77% | 
+ 89.01% | 
+ +RLAIF-V [ 20 ] § | 
+ 16k | 
+ LLaVA-Next | 
+ 3.0 | 
+ 50.4 | 
+ 16.2 | 
+ 1.0 | 
+ 3.00 | 
+ 0.38 | 
+ 16.00 | 
+ 3.70 | 
+ 81.57% | 
+ 94.97% | 
+ +OPA (ours) | 
+ 4.8k | 
+ GPT-4V | 
+ 5.6 | 
+ 52.8 | 
+ 23.2 | 
+ 2.3 | 
+ 2.41 | 
+ 0.52 | 
+ 28.00 | 
+ 9.48 | 
+ 82.53% | 
+ 95.36% | 
+ +OPA-DPO (ours) | 
+ 4.8k | 
+ GPT-4V | 
+ 2.2 | 
+ 47.9 | 
+ 11.6 | 
+ 0.9 | 
+ 2.83 | 
+ 0.45 | 
+ 13.00 | 
+ 4.25 | 
+ 82.60% | 
+ 95.61% | 
+ LLaVA-Instruct-1.5-13B [ 5 , 6 ] § | 
+ 6.8 | 
+ 51.9 | 
+ 31.8 | 
+ 3.3 | 
+ 2.48 | 
+ 0.52 | 
+ 51.00 | 
+ 13.71 | 
+ 85.50% | 
+ 90.31% | 
+ +LLaVA-RLHF [ 21 ] § | 
+ 122k | 
+ Self-Reward | 
+ 7.7 | 
+ 52.3 | 
+ 38.6 | 
+ 4.0 | 
+ 2.27 | 
+ 0.64 | 
+ 44.67 | 
+ 11.83 | 
+ 82.47% | 
+ 90.25% | 
+ +RLHF-V (HD) [ 15 ] † | 
+ 1.4k | 
+ Human | 
+ 6.3 | 
+ 46.1 | 
+ 25.1 | 
+ 2.1 | 
+ 2.81 | 
+ 0.49 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ +HSA-DPO [ 19 ] † | 
+ 8k | 
+ GPT-4/4V | 
+ 2.1 | 
+ 47.3 | 
+ 13.4 | 
+ 1.2 | 
+ 2.61 | 
+ 0.48 | 
+ - | 
+ - | 
+ 84.00% | 
+ 80.20% | 
+ +HALVA [ 17 ] ‡ | 
+ 21.5k | 
+ GPT-4V | 
+ 6.4 | 
+ 52.6 | 
+ 30.4 | 
+ 3.2 | 
+ 2.58 | 
+ 0.45 | 
+ 45.40 | 
+ 12.80 | 
+ - | 
+ - | 
+ +OPA (ours) | 
+ 4.8k | 
+ GPT-4V | 
+ 5.2 | 
+ 54.1 | 
+ 21.4 | 
+ 2.2 | 
+ 2.75 | 
+ 0.45 | 
+ 31.33 | 
+ 8.88 | 
+ 83.60% | 
+ 96.24% | 
+ +OPA-DPO (ours) | 
+ 4.8k | 
+ GPT4V | 
+ 2.4 | 
+ 48.3 | 
+ 12.8 | 
+ 0.9 | 
+ 3.07 | 
+ 0.39 | 
+ 16.33 | 
+ 5.48 | 
+ 82.63% | 
+ 96.31% | 
+ The experimental results across various benchmarks are presented in Table 2 . For LLaVA-Instruct-1.5-7B, our OPA-DPO achieves SOTA performance in 50% of the hallucination metrics, which increases to 70% for the LLaVA-Instruct-1.5-13B. OPA-DPO particularly excels in metrics that measure the occurrence of hallucinations, such as CHAIR and HalRate.
+However, the enhancement leads to a slight compromise in coverage-related metrics (Cover). In the yes-or-no benchmark (POPE), while precision significantly improves, accuracy remains the same due to the model’s tendency to provide fewer ’yes’ answers. This results in higher accuracy for positive samples but lower accuracy for negative ones. All indicators suggest that the OPA-DPO trained models tend to adopt a slightly conservative strategy, avoiding uncertain assertions. This strategy significantly enhances the credibility of responses but may omit some ambiguous details, which necessitate a trade-off.
+ To demonstrate the scalability of OPA-DPO, we present its performance under varying amounts of training data as in Figure 5 . Even with 600 data only, OPA-DPO surpasses the majority of baseline algorithms in metrics related to hallucinations. Notably, increasing the data volume does not lead to significant performance improvements in \pi_{\mathrm{OPA}} , the policy after LoRA-SFT. However, the performance enhancement of OPA-DPO with increased data is quite remarkable.
+ 5.4 Ablation Studies
+ We emphasize that each component of our OPA-DPO, as detailed in Chapter 4 , is important. The OPA operation, specifically the LoRA-SFT on GT responses and the GPT-4V revised response, is the most critical element.
+ Table 3 : Ablation studies on On-Policy Alignment operation. 
+ | 
+ | 
+ | 
+ AMBER | 
+ Object Hal | 
+ Model 
+ size 
+ | 
+ Data 
+ size 
+ | 
+ Algo. | 
+ CHAIR↓ | 
+ Cover↑ | 
+ HalRate↓ | 
+ Cog↓ | 
+ CHAIRs↓ | 
+ CHAIRi↓ | 
+ | 
+ | 
+ w OPA | 
+ 2.2 | 
+ 47.9 | 
+ 11.6 | 
+ 0.9 | 
+ 13.00 | 
+ 4.25 | 
+ | 
+ 4.8k | 
+ w/o OPA | 
+ 3.8 | 
+ 48.0 | 
+ 22.6 | 
+ 2.2 | 
+ 23.00 | 
+ 7.64 | 
+ | 
+ | 
+ w OPA | 
+ 3.3 | 
+ 47.8 | 
+ 15.1 | 
+ 1.3 | 
+ 18.67 | 
+ 5.63 | 
+ 7B | 
+ 2.4k | 
+ w/o OPA | 
+ 4.6 | 
+ 48.6 | 
+ 26.8 | 
+ 1.8 | 
+ 34.67 | 
+ 9.81 | 
+ | 
+ | 
+ w OPA | 
+ 2.4 | 
+ 48.3 | 
+ 12.8 | 
+ 0.9 | 
+ 16.33 | 
+ 5.48 | 
+ | 
+ 4.8k | 
+ w/o OPA | 
+ 5.7 | 
+ 50.4 | 
+ 27.5 | 
+ 2.7 | 
+ 32.67 | 
+ 9.45 | 
+ | 
+ | 
+ w OPA | 
+ 4.1 | 
+ 49.8 | 
+ 15.7 | 
+ 1.4 | 
+ 24.67 | 
+ 7.38 | 
+ 13B | 
+ 2.4k | 
+ w/o OPA | 
+ 5.2 | 
+ 49.7 | 
+ 25.6 | 
+ 2.7 | 
+ 38.33 | 
+ 11.98 | 
+ To highlight the significance of our proposed On-Policy Alignment framework in training DPO, we conduct ablation studies on the OPA operation, as illustrated in Table 3 .
+The results indicate that the performance of the trained policy without OPA is nearly identical to that of RLHF-V and mDPO, neither of which account for on-policy data.
+However, integrating the OPA operation results in a nearly 50% reduction in the AMBER HalRate and Object-hal CHAIRs metrics compared to the policy trained without OPA.
+ Table 4 : Ablation studies on the Image Focus mechanism (IF), Anchored preference (Anc), and the hallucination-weighted (hw) and image-weighted (iw) policy updating. The metric “repeat” indicates the frequency of generating sentence- or phrase-level repetitions without an EOS token across 1004 AMBER samples. 
+ | 
+ | 
+ AMBER | 
+ Object Hal | 
+ Model 
+ size 
+ | 
+ Ablation | 
+ CHAIR↓ | 
+ Cover↑ | 
+ HalRate↓ | 
+ Cog↓ | 
+ repeat | 
+ CHAIRs↓ | 
+ CHAIRi↓ | 
+ | 
+ OPA-DPO | 
+ 2.2 | 
+ 47.9 | 
+ 11.6 | 
+ 0.9 | 
+ 0.6% | 
+ 13.00 | 
+ 4.25 | 
+ | 
+ w/o IF | 
+ 5.1 | 
+ 50.7 | 
+ 15.4 | 
+ 1.1 | 
+ 15.7% | 
+ 14.67 | 
+ 9.87 | 
+ | 
+ w/o Anc | 
+ 2.3 | 
+ 45.6 | 
+ 13.2 | 
+ 1.0 | 
+ 6.7% | 
+ 14.33 | 
+ 4.21 | 
+ | 
+ w/o IF&Anc | 
+ 4.2 | 
+ 50.4 | 
+ 16.2 | 
+ 1.2 | 
+ 15.1% | 
+ 13.00 | 
+ 9.63 | 
+ 7B | 
+ w/o hw&iw | 
+ 2.4 | 
+ 46.2 | 
+ 12.6 | 
+ 0.9 | 
+ 0.4% | 
+ 17.00 | 
+ 4.68 | 
+ | 
+ OPA-DPO | 
+ 2.4 | 
+ 48.3 | 
+ 12.8 | 
+ 0.9 | 
+ 0.8% | 
+ 16.33 | 
+ 5.48 | 
+ | 
+ w/o IF | 
+ 3.2 | 
+ 53.1 | 
+ 16.9 | 
+ 1.3 | 
+ 17.1% | 
+ 21.33 | 
+ 9.82 | 
+ | 
+ w/o Anc | 
+ 2.4 | 
+ 48.5 | 
+ 13.5 | 
+ 0.9 | 
+ 4.6% | 
+ 17.33 | 
+ 5.38 | 
+ | 
+ w/o IF&Anc | 
+ 3.5 | 
+ 52.9 | 
+ 16.7 | 
+ 1.2 | 
+ 15.9% | 
+ 21.33 | 
+ 12.36 | 
+ 13B | 
+ w/o hw&iw | 
+ 2.8 | 
+ 48.8 | 
+ 14.6 | 
+ 1.1 | 
+ 0.9% | 
+ 18.33 | 
+ 6.02 | 
+ In addition, we present ablation studies on the three components of our OPA-DPO training loss as described in Chapter 4.2 . The evaluation results, shown in Table 4 , indicate that each term in Eq.( 10 ), as well as the hallucination-weighted/image-weighted policy updates in Eqs.( 8 ) and ( 9 ), plays a crucial role in reducing hallucination. Notably, in the absence of the Image Focus mechanism (IF) or Anchored Preference (Anc), the policy tends to repeat its last sentence or words and fails to generate an EOS token when using greedy sampling. This phenomenon is particularly pronounced in long-form QA tasks, such as the AMBER generation task. However, when all three components are employed together, the repetition issue is resolved.
+ 5.5 Case Study
+ To provide an intuitive understanding of our OPA-DPO, we present a qualitative example in Figure 6 . The initial model’s generation contains numerous hallucinations and flawed reasoning. This issue persists after training naive DPO without OPA. However, after implementing OPA on 4.8k samples, the hallucinations are nearly eliminated, though some minor instances remain. Subsequent OPA-DPO completely resolves these issues, albeit at the cost of omitting some details present in the original description, which aligns with our discussion in Chapter 5.3 .
+ 6 Related Works
+ Figure 6 : Qualitative example of responses from different models with the same prompt and image. Hallucinated parts are marked in red , flawed reasoning is highlighted in blue , and missing details are highlighted in yellow . This example illustrates a common case; additional examples can be found in the Appendix. 
+ RLHF.
+ As a fundamental technique driving the advancements of LLMs and LVLMs in recent years, RLHF [ 33 , 34 , 35 ] has been demonstrated to be effective in aligning fine-tuned large models with human preferences. By leveraging vast amounts of human preference data and RL methodologies, numerous language models have benefited from this approach and have been widely adopted. Notable examples include GPT [ 36 , 37 , 38 , 39 ] , LLaMA [ 40 , 41 , 42 ] , Qwen [ 43 , 44 , 45 ] , Gemini [ 46 , 47 ] , and Claude [ 48 ] .
+PPO [ 22 ] is the original RL algorithm used in RLHF. While stable, its reliance on a dependable reward model and numerous hyper-parameters has led to the exploration of alternatives. DPO [ 23 ] has attracted attention for its strong performance and removal of the need for a separate reward model. However, it has not yet matched PPO’s performance [ 29 ] , motivating efforts to close this gap. Methods such as ORPO [ 49 ] , CPO [ 50 ] , TPO [ 51 ] , and SimPO [ 52 ] aim to better align models with preference data by removing reference policy constraints. Nevertheless, these approaches lack comprehensive validation across various datasets and modalities. More pertinent to our work, iterative DPO [ 53 ] and SPPO [ 54 ] address off-policy issues by sampling preferred responses on-policy. This manner is adopted by RLAIF-V [ 20 ] , but it faces challenges with low efficiency in addressing persistent hallucinations in multimodal contexts.
+ Hallucination for LVLMs.
+ Hallucination reduction in LVLMs has garnered significant attention as a major misalignment issue [ 55 , 12 , 14 ] . We categorize the methodologies into two classes. The first class, termed RL-free, primarily investigates the decoding mechanisms of translating visual information into language output, with some studies focusing on attention patterns [ 56 , 57 , 58 ] and others examining distribution shifts when image information is distorted [ 59 , 60 ] . Additionally, some research explores the intriguing effects of special tokens on hallucinations, such as ’EOS’ [ 61 ] and ’ \backslash n’ [ 62 ] .
+ Table 5 : Comparison of algorithms utilizing DPO to address hallucinations. 
+ Algorithm | 
+ Expert | 
+ Correction | 
+ | 
+ On-policy | 
+ Data | 
+ | 
+ Image | 
+ Focus | 
+ | 
+ HALVA [ 17 ] | 
+ ✗ | 
+ ✗ | 
+ ✗ | 
+ POVID [ 16 ] | 
+ ✗ | 
+ ✗ | 
+ ✓ | 
+ RLHF-V [ 15 ] | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ HA-DPO [ 18 ] | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ HSA-DPO [ 19 ] | 
+ ✓ | 
+ ✗ | 
+ ✗ | 
+ RLAIF-V [ 20 ] | 
+ ✗ | 
+ ✓ | 
+ ✗ | 
+ mDPO [ 27 ] | 
+ ✗ | 
+ ✗ | 
+ ✓ | 
+ OPA-DPO | 
+ ✓ | 
+ ✓ | 
+ ✓ | 
+ The second class, RL-based, employs the RLHF framework to gather feedback from humans or AI systems with superhuman capabilities. Compared with RL-freed methods, RL-based methods generally demonstrate superior results on benchmarks designed to assess the reduction of hallucination. Within this class, only a few studies elect PPO [ 21 ] , while the majority, like our work, choose DPO [ 17 , 16 , 15 , 18 , 19 , 20 , 27 , 26 ] . Given the inherent vulnerabilities associated with the naive adoption of DPO in LVLMs, we summarize the characteristics of various algorithms across three dimensions: expert correction, on-policy data, and image-focus, as presented in Table 5 . Our OPA-DPO is the only algorithm that considers all three aspects, thereby achieving SOTA performance across multiple metrics.
+ 7 Conclusions
+ In conclusion, our study uncovers a crucial characteristic of DPO: heavy reliance on on-policy data. By examining dataset distribution, we identify and systematically summarize the inherent flaws in existing DPO-based algorithms for addressing hallucination issues.
+To address the shortcomings, we introduce On-Policy Alignment (OPA)-DPO, a framework that integrates the strengths of various approaches.
+OPA-DPO leverages expert feedback to correct hallucinated responses and ensures alignment of both the original and expert-revised responses on-policy. Remarkably, with only 4.8k training samples, OPA-DPO improved LLaVA-1.5-7B and LLaVA-1.5-13B achieve SOTA performance on over half hallucination-related benchmarks, surpassing other DPO-based algorithms in mitigating hallucination problems, which generally requires over 10k data.
+ Acknowledgments
+ This work was supported in part by the General Research Fund (GRF) project 14200720 of the Hong Kong University Grants Committee and the National Natural Science Foundation of China (NSFC) Project 62073273. This work was also partially supported by Microsoft Research.
+ References
+ [1] 
+Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, Antoine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur Mensch, Katherine Millican, Malcolm Reynolds, et al.
+ Flamingo: a visual language model for few-shot learning.
+ In Advances in Neural Information Processing Systems , 2022.
+ [2] 
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale Fung, and Steven Hoi.
+ InstructBLIP: Towards general-purpose vision-language models with instruction tuning.
+ In Advances in Neural Information Processing Systems , 2024.
+ [3] 
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi.
+ BLIP-2: Bootstrapping language-image pre-training with frozen image encoders and large language models.
+ In International Conference on Machine Learning . PMLR, 2023.
+ [4] 
+OpenAI.
+ GPT-4V(ision) System Card.
+ 2023.
+ [5] 
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+ Visual instruction tuning.
+ In Advances in Neural Information Processing Systems , 2024.
+ [6] 
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+ Improved baselines with visual instruction tuning.
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024.
+ [7] 
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou.
+ Qwen-VL: A frontier large vision-language model with versatile abilities.
+ arXiv preprint arXiv:2308.12966 , 2023.
+ [8] 
+Chunyuan Li, Cliff Wong, Sheng Zhang, Naoto Usuyama, Haotian Liu, Jianwei Yang, Tristan Naumann, Hoifung Poon, and Jianfeng Gao.
+ LLaVA-Med: Training a large language-and-vision assistant for biomedicine in one day.
+ In Advances in Neural Information Processing Systems , 2024.
+ [9] 
+Shenghuan Sun, Gregory M Goldgof, Alexander Schubert, Zhiqing Sun, Thomas Hartvigsen, Atul J Butte, and Ahmed Alaa.
+ Dr-LLaVA: Visual instruction tuning with symbolic clinical grounding.
+ arXiv preprint arXiv:2405.19567 , 2024.
+ [10] 
+Stephanie L Hyland, Shruthi Bannur, Kenza Bouzid, Daniel C Castro, Mercy Ranjit, Anton Schwaighofer, Fernando Pérez-García, Valentina Salvatelli, Shaury Srivastav, Anja Thieme, et al.
+ MAIRA-1: A specialised large multimodal model for radiology report generation.
+ arXiv preprint arXiv:2311.13668 , 2023.
+ [11] 
+Shruthi Bannur, Kenza Bouzid, Daniel C. Castro, Anton Schwaighofer, Anja Thieme, Sam Bond-Taylor, Maximilian Ilse, Fernando Pérez-García, Valentina Salvatelli, Harshita Sharma, Felix Meissen, Mercy Ranjit, Shaury Srivastav, Julia Gong, Noel C. F. Codella, Fabian Falck, Ozan Oktay, Matthew P. Lungren, Maria Teodora Wetscherek, Javier Alvarez-Valle, and Stephanie L. Hyland.
+ MAIRA-2: Grounded radiology report generation.
+ arXiv preprint arXiv:2406.04449 , 2024.
+ [12] 
+Zechen Bai, Pichao Wang, Tianjun Xiao, Tong He, Zongbo Han, Zheng Zhang, and Mike Zheng Shou.
+ Hallucination of multimodal large language models: A survey.
+ arXiv preprint arXiv:2404.18930 , 2024.
+ [13] 
+Wei Lan, Wenyi Chen, Qingfeng Chen, Shirui Pan, Huiyu Zhou, and Yi Pan.
+ A survey of hallucination in large visual language models.
+ arXiv preprint arXiv:2410.15359 , 2024.
+ [14] 
+Hanchao Liu, Wenyuan Xue, Yifei Chen, Dapeng Chen, Xiutian Zhao, Ke Wang, Liping Hou, Rongjun Li, and Wei Peng.
+ A survey on hallucination in large vision-language models.
+ arXiv preprint arXiv:2402.00253 , 2024.
+ [15] 
+Tianyu Yu, Yuan Yao, Haoye Zhang, Taiwen He, Yifeng Han, Ganqu Cui, Jinyi Hu, Zhiyuan Liu, Hai-Tao Zheng, Maosong Sun, et al.
+ RLHF-V: Towards trustworthy mllms via behavior alignment from fine-grained correctional human feedback.
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024.
+ [16] 
+Yiyang Zhou, Chenhang Cui, Rafael Rafailov, Chelsea Finn, and Huaxiu Yao.
+ Aligning modalities in vision large language models via preference fine-tuning.
+ In ICLR 2024 Workshop on Reliable and Responsible Foundation Models , 2024.
+ [17] 
+Pritam Sarkar, Sayna Ebrahimi, Ali Etemad, Ahmad Beirami, Sercan Ö. Arık, and Tomas Pfister.
+ Data-augmented phrase-level alignment for mitigating object hallucination.
+ arXiv preprint arXiv:2405.18654 , 2024.
+ [18] 
+Zhiyuan Zhao, Bin Wang, Linke Ouyang, Xiaoyi Dong, Jiaqi Wang, and Conghui He.
+ Beyond hallucinations: Enhancing LVLMs through hallucination-aware direct preference optimization.
+ arXiv preprint arXiv:2311.16839 , 2023.
+ [19] 
+Wenyi Xiao, Ziwei Huang, Leilei Gan, Wanggui He, Haoyuan Li, Zhelun Yu, Hao Jiang, Fei Wu, and Linchao Zhu.
+ Detecting and mitigating hallucination in large vision language models via fine-grained AI feedback.
+ arXiv preprint arXiv:2404.14233 , 2024.
+ [20] 
+Tianyu Yu, Haoye Zhang, Yuan Yao, Yunkai Dang, Da Chen, Xiaoman Lu, Ganqu Cui, Taiwen He, Zhiyuan Liu, Tat-Seng Chua, et al.
+ RlAIF-V: Aligning mllms through open-source AI feedback for super gpt-4v trustworthiness.
+ arXiv preprint arXiv:2405.17220 , 2024.
+ [21] 
+Zhiqing Sun, Sheng Shen, Shengcao Cao, Haotian Liu, Chunyuan Li, Yikang Shen, Chuang Gan, Liang-Yan Gui, Yu-Xiong Wang, Yiming Yang, et al.
+ Aligning large multimodal models with factually augmented RLHF.
+ arXiv preprint arXiv:2309.14525 , 2023.
+ [22] 
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+ Proximal policy optimization algorithms.
+ arXiv preprint arXiv:1707.06347 , 2017.
+ [23] 
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+ Direct preference optimization: Your language model is secretly a reward model.
+ In Advances in Neural Information Processing Systems , 2024.
+ [24] 
+Ralph Allan Bradley and Milton E Terry.
+ Rank analysis of incomplete block designs: I. the method of paired comparisons.
+ Biometrika , 39(3/4):324–345, 1952.
+ [25] 
+Solomon Kullback and Richard A Leibler.
+ On information and sufficiency.
+ The annals of mathematical statistics , 22(1):79–86, 1951.
+ [26] 
+Lei Li, Zhihui Xie, Mukai Li, Shunian Chen, Peiyi Wang, Liang Chen, Yazheng Yang, Benyou Wang, Lingpeng Kong, and Qi Liu.
+ VLFeedback: A large-scale AI feedback dataset for large vision-language models alignment.
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024.
+ [27] 
+Fei Wang, Wenxuan Zhou, James Y. Huang, Nan Xu, Sheng Zhang, Hoifung Poon, and Muhao Chen.
+ mDPO: Conditional preference optimization for multimodal large language models.
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024.
+ [28] 
+Sergey Levine, Aviral Kumar, George Tucker, and Justin Fu.
+ Offline reinforcement learning: Tutorial, review, and perspectives on open problems.
+ arXiv preprint arXiv:2005.01643 , 2020.
+ [29] 
+Shusheng Xu, Wei Fu, Jiaxuan Gao, Wenjie Ye, Weilin Liu, Zhiyu Mei, Guangju Wang, Chao Yu, and Yi Wu.
+ Is DPO superior to PPO for llm alignment? a comprehensive study.
+ International Conference on Machine Learning , 2024.
+ [30] 
+Junyang Wang, Yuhang Wang, Guohai Xu, Jing Zhang, Yukai Gu, Haitao Jia, Ming Yan, Ji Zhang, and Jitao Sang.
+ An LLM-free multi-dimensional benchmark for MLLMs hallucination evaluation.
+ arXiv preprint arXiv:2311.07397 , 2023.
+ [31] 
+Anna Rohrbach, Lisa Anne Hendricks, Kaylee Burns, Trevor Darrell, and Kate Saenko.
+ Object hallucination in image captioning.
+ In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , 2018.
+ [32] 
+Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Wayne Xin Zhao, and Ji-Rong Wen.
+ Evaluating object hallucination in large vision-language models.
+ In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023.
+ [33] 
+Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei.
+ Deep reinforcement learning from human preferences.
+ In Advances in Neural Information Processing Systems , 2017.
+ [34] 
+Daniel M Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving.
+ Fine-tuning language models from human preferences.
+ arXiv preprint arXiv:1909.08593 , 2019.
+ [35] 
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+ Training language models to follow instructions with human feedback.
+ In Advances in Neural Information Processing Systems , 2022.
+ [36] 
+Alec Radford.
+ Improving language understanding by generative pre-training.
+ OpenAI blog , 2018.
+ [37] 
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+ Language models are unsupervised multitask learners.
+ OpenAI blog , 2019.
+ [38] 
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.
+ Language models are few-shot learners.
+ In Advances in Neural Information Processing Systems , 2020.
+ [39] 
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+ GPT-4 technical report.
+ arXiv preprint arXiv:2303.08774 , 2023.
+ [40] 
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al.
+ The LLaMA 3 herd of models.
+ arXiv preprint arXiv:2407.21783 , 2024.
+ [41] 
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+ LLaMA 2: Open foundation and fine-tuned chat models.
+ arXiv preprint arXiv:2307.09288 , 2023.
+ [42] 
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al.
+ LLaMA: Open and efficient foundation language models.
+ arXiv preprint arXiv:2302.13971 , 2023.
+ [43] 
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei Huang, et al.
+ Qwen technical report.
+ arXiv preprint arXiv:2309.16609 , 2023.
+ [44] 
+Yunfei Chu, Jin Xu, Xiaohuan Zhou, Qian Yang, Shiliang Zhang, Zhijie Yan, Chang Zhou, and Jingren Zhou.
+ Qwen-audio: Advancing universal audio understanding via unified large-scale audio-language models.
+ arXiv preprint arXiv:2311.07919 , 2023.
+ [45] 
+An Yang, Baosong Yang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Zhou, Chengpeng Li, Chengyuan Li, Dayiheng Liu, Fei Huang, et al.
+ Qwen2 technical report.
+ arXiv preprint arXiv:2407.10671 , 2024.
+ [46] 
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al.
+ Gemini: a family of highly capable multimodal models.
+ arXiv preprint arXiv:2312.11805 , 2023.
+ [47] 
+Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al.
+ Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+ arXiv preprint arXiv:2403.05530 , 2024.
+ [48] 
+Anthropic.
+ The Claude 3 model family: Opus, sonnet, haiku.
+ [49] 
+Jiwoo Hong, Noah Lee, and James Thorne.
+ ORPO: Monolithic preference optimization without reference model.
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024.
+ [50] 
+Haoran Xu, Amr Sharaf, Yunmo Chen, Weiting Tan, Lingfeng Shen, Benjamin Van Durme, Kenton Murray, and Young Jin Kim.
+ Contrastive preference optimization: Pushing the boundaries of llm performance in machine translation.
+ In International Conference on Machine Learning , 2024.
+ [51] 
+Amir Saeidi, Shivanshu Verma, Aswin RRV, and Chitta Baral.
+ Triple preference optimization: Achieving better alignment with less data in a single step optimization.
+ arXiv preprint arXiv:2405.16681 , 2024.
+ [52] 
+Yu Meng, Mengzhou Xia, and Danqi Chen.
+ SimPO: Simple preference optimization with a reference-free reward.
+ In Advances in Neural Information Processing Systems , 2024.
+ [53] 
+Richard Yuanzhe Pang, Weizhe Yuan, He He, Kyunghyun Cho, Sainbayar Sukhbaatar, and Jason E Weston.
+ Iterative reasoning preference optimization.
+ Advances in Neural Information Processing Systems , 2024.
+ [54] 
+Yue Wu, Zhiqing Sun, Huizhuo Yuan, Kaixuan Ji, Yiming Yang, and Quanquan Gu.
+ Self-play preference optimization for language model alignment.
+ arXiv preprint arXiv:2405.00675 , 2024.
+ [55] 
+Anku Rani, Vipula Rawte, Harshad Sharma, Neeraj Anand, Krishnav Rajbangshi, Amit Sheth, and Amitava Das.
+ Visual hallucination: Definition, quantification, and prescriptive remediations.
+ arXiv preprint arXiv:2403.17306 , 2024.
+ [56] 
+Xuan Gong, Tianshi Ming, Xinpeng Wang, and Zhihua Wei.
+ DAMRO: Dive into the attention mechanism of LVLM to reduce object hallucination.
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024.
+ [57] 
+Qidong Huang, Xiaoyi Dong, Pan Zhang, Bin Wang, Conghui He, Jiaqi Wang, Dahua Lin, Weiming Zhang, and Nenghai Yu.
+ OPERA: Alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation.
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024.
+ [58] 
+Fan Yuan, Chi Qin, Xiaogang Xu, and Piji Li.
+ Helpd: Mitigating hallucination of lvlms by hierarchical feedback learning with vision-enhanced penalty decoding.
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024.
+ [59] 
+Xintong Wang, Jingheng Pan, Liang Ding, and Chris Biemann.
+ Mitigating hallucinations in large vision-language models with instruction contrastive decoding.
+ arXiv preprint arXiv:2403.18715 , 2024.
+ [60] 
+Sicong Leng, Hang Zhang, Guanzheng Chen, Xin Li, Shijian Lu, Chunyan Miao, and Lidong Bing.
+ Mitigating object hallucinations in large vision-language models through visual contrastive decoding.
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024.
+ [61] 
+Zihao Yue, Liang Zhang, and Qin Jin.
+ Less is more: Mitigating multimodal hallucination from an EOS decision perspective.
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , 2024.
+ [62] 
+Zongbo Han, Zechen Bai, Haiyang Mei, Qianli Xu, Changqing Zhang, and Mike Zheng Shou.
+ Skip \backslash n: A simple method to reduce hallucination in large vision-language models.
+ arXiv preprint arXiv:2402.01345 , 2024.
+ Appendix 
+ The Appendix is organized as follows:
+ • 
+ In Chapter A , we offer a comprehensive description of our implementation details 3 3 
+ 3 
+ Our implementation is available at https://github.com/zhyang2226/OPA-DPO . We also provide OPA-DPO trained LLaVA-v1.5- 7B and 13B models, along with the corresponding training dataset . ,
+complementing the information presented in Chapter 5.1 .
+The training details and hyperparameter settings are reported in Chapter A.1 , while the GPT-4V prompt and corresponding examples are provided in Chapter A.2 .
+ • 
+ In Chapter B , we supply some additional experimental results. The helpfulness-related benchmark evaluations are conducted in Chapter B.1 , and additional ablation studies on the hyperparameter choosing are presented in Chapter B.2 .
+ • 
+ In Chapter C , we provide additional analytical examples to complement the example presented in Figure 6 .
+ Appendix A Implementation Details
+ A.1 Training Details.
+ Importantly, we emphasize that OPA-DPO does not depend on detailed hyperparameter tuning for different base models or training datasets. In our experiments, we apply OPA-DPO to two LVLMs with varying parameter sizes: LLAVA-v1.5-7B and LLAVA-v1.5-13B. We maintain consistent hyperparameter settings for OPA-DPO across different models and training datasets.
+ As shown in Figure 3 , the initial step in OPA-DPO involves instructing the model (slated for training) to generate responses \mathbf{y}_{\mathrm{Gen}} based on pre-collected images \mathbf{m} and prompts \mathbf{x} . Notably, we employ a combination of ”top-k” and ”top-p” sampling methods to select tokens with relatively high sampling probabilities according to the initial policy, thereby revealing the intrinsic hallucinations of the policy itself. For token sampling, we set \mathrm{topk}=30 , \mathrm{topp}=0.95 , and use a temperature of 1.0 .
+ Algorithm 1 OPA-DPO Training
+ 1: 
+ Phase 1 Training: On-Policy Alignment 
+ 2: 
+ Initial policy \pi_{\theta} , datasets \mathcal{D}=\{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}}\}^{N} 
+ 3: 
+ for SFT epochs do 
+ 4: 
+     for \{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}}\}^{M_{1}}\sim\mathcal{D} do 
+ 5: 
+     Calculate loss in Eq. ( 4 ) for \pi_{\theta}(\mathbf{y}_{\mathrm{GT}}|\mathbf{x},\mathbf{m}) and \pi_{\theta}(\mathbf{y}_{\mathrm{Rev}}|\mathbf{x},\mathbf{m}) 
+ 6: 
+     Update \pi_{\theta} 
+ 7: 
+     end for 
+ 8: 
+ end for 
+ 9: 
+ return OPA policy \pi_{\mathrm{OPA}}=\pi_{\theta}^{\mathrm{final}} 
+ 10: 
+ Phase 2 Training: OPA-DPO 
+ 11: 
+ Initial policy \pi_{\theta^{\prime}}=\pi_{\mathrm{OPA}} ; hyperparameters \beta,\gamma_{1},\gamma_{2},\delta ; datasets \mathcal{D}=\{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{Gen}},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},S_{\mathrm{hal}},S_{\mathrm{img}}\}^{N} 
+ 12: 
+ for OPA-DPO epochs do 
+ 13: 
+     for \{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{Gen}},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},S_{\mathrm{hal}},S_{\mathrm{img}}\}^{M_{2}}\sim\mathcal{D} do 
+ 14: 
+     Calculate loss in Eq. ( 7 ) with \{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{Gen}},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},S_{\mathrm{hal}}\}^{M_{2}} 
+ 15: 
+     Produce distorted image \mathbf{m}^{\prime}=\mathbf{m}\odot\mathrm{pixel\_mask} 
+ 16: 
+     Calculate loss in Eq. ( 8 ) with \{\mathbf{x},\mathbf{m},\mathbf{m}^{\prime},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}},S_{\mathrm{img}}\}^{M_{2}} 
+ 17: 
+     Calculate loss in Eq. ( 9 ) with \{\mathbf{x},\mathbf{m},\mathbf{y}_{\mathrm{GT}},\mathbf{y}_{\mathrm{Rev}}\}^{M_{2}} 
+ 18: 
+     Combine the losses as in Eq. ( 10 )
+ 19: 
+     Update \pi_{\theta^{\prime}} 
+ 20: 
+     end for 
+ 21: 
+ end for 
+ 22: 
+ return OPA-DPO policy \pi_{\mathrm{OPA}}^{\mathrm{DPO}}=\pi_{\theta^{\prime}}^{\mathrm{final}} 
+ Following that, GPT-4V is tasked with identifying hallucinations by evaluating the generated responses at the sentence level.
+Each sentence in a response is assigned a hallucination severity score, S_{\mathrm{hal}} , on a scale from one to four, indicating the severity of any hallucination present. As we introduced in Eq. 7 , this score is incorporated into hallucination-weighted policy updating, with the corresponding mapping between scores and weights provided in Table 6 .
+Additionally, GPT-4V is required to categorize sentences with incorrect description as either image recognition errors or language comprehension errors . The classification results S_{\mathrm{img}} is utilized for image-weighted policy updating, as defined in Eq. ( 8 ). Table 7 outlines the mapping between these classifications and their respective updating weights.
+Note that both S_{\mathrm{hal}} and S_{\mathrm{img}} are evaluated at the sentence level, ensuring that W_{\mathrm{hal}} and W_{\mathrm{img}} are assigned the same value for each token within a sentence.
+Lastly but most importantly, GPT-4V is also instructed to make minimal revisions to any erroneous sentences, and the aggregate of these revised sentences is denoted as \mathbf{y}_{\mathrm{Rev}} . Please refer to Chapter A.2 for detailed prompt and example. In our implementation, we utilize the GPT-4V version from 2024-02-15, with the generation temperature set to 0.
+ Table 6 : GPT-4V assigned hallucination scores and the corresponding update weights for language correction loss, as described in Eq. ( 7 ). 
+ Hallucination | 
+ Severity | 
+ | 
+ Score from GPT-4V | 
+ ( S_{\mathrm{hal}} ) | 
+ | 
+ Updating Weight | 
+ ( W_{\mathrm{hal}} ) | 
+ | 
+ Not at all | 
+ 4 | 
+ 2.5 | 
+ Minor | 
+ 3 | 
+ 2.0 | 
+ Major | 
+ 2 | 
+ 1.5 | 
+ Totally | 
+ 1 | 
+ 1.0 | 
+ Table 7 : GPT-4V labeled error types and the corresponding update weights for image focus loss, as described in Eq. ( 8 ). 
+ Label from GPT-4V | 
+ ( S_{\mathrm{img}} ) | 
+ | 
+ Updating Weight | 
+ ( W_{\mathrm{img}} ) | 
+ | 
+ correct | 
+ 1.0 | 
+ language_comprehension_error | 
+ 1.0 | 
+ image_recognition_error | 
+ 3.0 | 
+ Figure 7 : Example of feedback from GPT-4V. Hallucinated parts in the base-model generated responses are marked in red , missing details are highlighted in yellow . Note that the feedback from GPT-4V also contain hallucinations, as highlighted in green . 
+ After completing the data collection, we proceed with a two-phase training for the initial models as detailed in Algorithm 1 . The first phase training (line 1-7) termed On-Policy Alignment (OPA), involves performing a 2-epoch LoRA-SFT on both ground-truth responses and GPT-4V revised responses.
+The entire backbone model, including the vision encoder and multimodal connection layers, is wrapped with LoRA modules. We employ a cosine learning rate schedule beginning at 2e-5 with a batch size of 128. The LoRA rank is set to 256, and LoRA alpha is set to 512. The updated policy from this phase is denoted as \pi_{\mathrm{OPA}} , which serves as the initial (reference) policy for the subsequent OPA-DPO training.
+The second phase of training (lines 8-18) uses the same LoRA module as in phase 1, extending over 4 additional epochs with a batch size of 32 and a cosine learning rate starting at 1e-6.
+In our equations, we set \beta=0.1 in Eqs. ( 7 )( 8 )( 9 ), \delta=0 in Eq. ( 9 ), and \gamma_{1}=0.2,\gamma_{2}=1.0 in Eq. ( 10 ).
+For the distorted images \mathbf{m^{\prime}} in Eq. ( 8 ), we randomly mask 30% of pixels, assigning the masked areas the average pixel values. For ablation studies on the relative hyperparameters, please refer to Chapter B.2 .
+ A.2 Prompts for GPT-4V
+ To obtain fine-grained feedback from GPT-4V, we crafted a detailed prompt, as shown in the TextBox on the following page. To establish a one-to-one correspondence between the revised and original responses, we instruct GPT-4V to first copy the generated sentence before proceeding with assessment and revision. Additionally, we request that GPT-4V provide the rationale behind its assigned score or revision. It is important to note that GPT-4V may itself produce hallucinations, which can affect the reliability of its feedback. An example is provided in Figure 7 .
+ GPT-4V Prompt for Fine-Grained Sentence-Level Revision of Generated Responses 
+ Your role is as a discerning assistant tasked with evaluating and refining responses for multimodal tasks. Upon being presented with a question that requires the interpretation of both text and images, you will receive two distinct responses. The first is crafted by our sophisticated multimodal model, while the second represents an approximate ideal answer—it may be incomplete or incorrect. You will also be provided with the images pertinent to the question. 
+ Your objective is to meticulously assess these responses. You are to enhance the model-generated response by making precise, minimal modifications that bring it into closer alignment with both the image and the approximate ideal answer. Your revisions should preserve the integrity of the original response as much as possible. 
+ Be mindful that the approximate ideal response may not contain all the necessary information to fully address the question or may include mistakes. In such cases, you must carefully evaluate the accuracy of the model-generated response by consulting the image, which serves as the primary reference. 
+ Your analysis should prioritize the information provided in the image to ascertain the accuracy and completeness of the model-generated response. The ultimate goal is to ensure that the final response is both accurate in relation to the images and as informative as possible while remaining true to the content originally produced by the model. 
+ Your task involves meticulous scrutiny of the generated response to a multimodal task, sentence by sentence. Here’s how you should approach the revision process: 
+ Evaluate each sentence within the generated response. 
+ - If a sentence is both accurate and relevant to the task, it should remain unchanged. 
+ - If you encounter a sentence that is only partially correct, carefully adjust the erroneous or incomplete segments to improve its precision. Ensure that these modifications are minimal and directly address the inaccuracies. 
+ - If you find any sentences that contain hallucinations or extraneous information, these must be either rephrased or replaced entirely. Use the image and the approximate ideal response as your sources for correction, aiming to retain the essence of the original content when possible. 
+ You are to present your output in a structured JSON format. Begin with the key “image_description” where a comprehensive description of the provided images should be articulated. Following this, evaluate the generated response sentence by sentence. For each sentence, craft a JSON object that contains the original sentence, your refined version, and a brief commentary explaining your revisions. The format is as follows: 
+ 1. “copied_content”: Copy and paste the original sentence as it appears in the generated response. 
+ 2. “score”: Provide a score between 1 and 4, reflecting the sentence’s accuracy and relevance to the image and question: 
+ - 4 for a sentence that is completely accurate and relevant, aligning perfectly with the image information and the approximate ideal answer, requiring no adjustments. 
+ - 3 for a sentence that is largely correct but needs minor tweaks, like an accurate object described with an incorrect count or size. 
+ - 2 for a sentence with substantial issues requiring significant changes, such as incorrect object recognition or incorrect relationships between objects. 
+ - 1 for a sentence that is completely irrelevant or incorrect, with no relation to the image or the question at hand. 
+ 3. “error_type”: Specify the type of error detected in the sentence: 
+ - “correct” if the sentence is accurate or requires only minor adjustments, applicable only to a score of 4. 
+ - “image_recognition_error” when the error arises from an incorrect interpretation of the visual content, like mistaking an apple for a pear. 
+ - “language_comprehension_error” when the image is correctly understood, but the language used is incorrect, such as placing the Eiffel Tower in Berlin instead of Paris. 
+ 4. “object”: List any objects that are hallucinated or misidentified, and provide the correct identification. Leave this field empty if there are no hallucinations or misidentifications. 
+ - For instance, if the sentence inaccurately identifies a cat sleeping on a table as a dog standing on a blanket, the “object” should be [“dog - > cat”, “standing - > sleeping”, “blanket - > table”]. 
+ 5. “rewritten_content”: Present the corrected sentence after applying necessary adjustments, considering all information from the image captions and the approximate ideal answer. 
+ 6. “reason”: Explain the rationale for the given score, the identified error type, and any modifications made. This should include the reasoning behind changes and the decision to maintain certain parts of the original sentence. 
+ If the rewritten sentences still lack essential information necessary for answering the given questions, add the missing part to the “Added” section and incorporate that missing information minimally. Only do this if absolutely necessary. 
+ You should never bring other hallucinations into the rewritten parts. Only do the modifications when you are one hundred percent sure that the original sentence is incorrect or irrelevant.
+Please note that the rewritten sentence should retain as much of the generated response as possible. All unnecessary changes should be minimized. 
+ Appendix B Additional Experiments
+ B.1 Helpfulness Benchmark Evaluations.
+ To demonstrate that the exceptional performance of OPA-DPO on hallucination-related metrics does not result in a decline in helpfulness-related metrics, we evaluated the performance of various RLHF/RLAIF-based algorithms designed to enhance LVLMs on the LLaVA-Bench [ 5 ] , as shown in Table 8 . The results indicate that the OPA-DPO trained model performs at an upper-middle level. With the exception of LLaVA-RLHF, the performance of each algorithm on the LLaVA-Benchmark shows minimal variation. However, LLaVA-RLHF is significantly less effective than other algorithms in hallucination-related metrics.
+ Table 8 : Comparison of RLAIF/RLHF-based algorithms for enhancing LVLMs on LLaVA-Bench. 
+ | 
+ LLaVA-Bench | 
+ Algorithm | 
+ Conv.↑ | 
+ Detail↑ | 
+ Comp.↑ | 
+ All↑ | 
+ LLaVA-Instruct-1.5-7B [ 5 , 6 ] | 
+ 84.1 | 
+ 74.4 | 
+ 89.8 | 
+ 83.0 | 
+ + LLaVA-RLHF [ 21 ] | 
+ 84.1 | 
+ 75.3 | 
+ 106.8 | 
+ 88.9 | 
+ + HA-DPO [ 18 ] | 
+ 80.7 | 
+ 74.5 | 
+ 88.4 | 
+ 81.4 | 
+ + POVID [ 16 ] | 
+ 84.9 | 
+ 77.3 | 
+ 90.3 | 
+ 84.3 | 
+ + RLAIF-V [ 20 ] | 
+ 75.8 | 
+ 83.7 | 
+ 90.7 | 
+ 83.5 | 
+ + OPA-DPO (ours) | 
+ 82.1 | 
+ 79.5 | 
+ 87.9 | 
+ 83.2 | 
+ LLaVA-Instruct-1.5-13B [ 5 , 6 ] | 
+ 79.6 | 
+ 77.3 | 
+ 91.4 | 
+ 82.9 | 
+ + LLaVA-RLHF [ 21 ] | 
+ 93.1 | 
+ 76.2 | 
+ 105.6 | 
+ 91.8 | 
+ + RLHF-V [ 15 ] | 
+ 93.1 | 
+ 75.3 | 
+ 91.6 | 
+ 86.7 | 
+ + HSA-DPO [ 19 ] | 
+ 76.0 | 
+ 71.8 | 
+ 88.2 | 
+ 80.5 | 
+ + OPA-DPO (ours) | 
+ 87.1 | 
+ 78.3 | 
+ 90.7 | 
+ 85.5 | 
+ B.2 Additional Ablation Studies.
+ Table 9 : Ablation studies on the mask ratio of the distorted image and the term coefficient \gamma_{1} in the image focus mechanism. 
+ | 
+ | 
+ | 
+ AMBER | 
+ MMHal-Bench | 
+ Object Hal | 
+ Model 
+ Size 
+ | 
+ Mask 
+ Ratio 
+ | 
+ IF Coef 
+ \gamma_{1} 
+ | 
+ Cover↑ | 
+ HalRate↓ | 
+ repeat | 
+ Score↑ | 
+ HalRate↓ | 
+ CHAIRs↓ | 
+ CHAIRi↓ | 
+ | 
+ 0.1 | 
+ 0.2 | 
+ 46.1 | 
+ 12.5 | 
+ 0.3% | 
+ 2.60 | 
+ 0.49 | 
+ 14.67 | 
+ 4.28 | 
+ | 
+ 0.3 | 
+ 0.2 | 
+ 47.9 | 
+ 11.6 | 
+ 0.6% | 
+ 2.83 | 
+ 0.45 | 
+ 13.00 | 
+ 4.25 | 
+ | 
+ 0.5 | 
+ 0.2 | 
+ 46.3 | 
+ 11.6 | 
+ 0.3% | 
+ 2.73 | 
+ 0.47 | 
+ 14.67 | 
+ 4.18 | 
+ | 
+ 0.7 | 
+ 0.2 | 
+ 45.6 | 
+ 12.2 | 
+ 0.2% | 
+ 2.69 | 
+ 0.47 | 
+ 13.33 | 
+ 4.45 | 
+ | 
+ 0.3 | 
+ 0.1 | 
+ 46.2 | 
+ 12.3 | 
+ 0.6% | 
+ 2.70 | 
+ 0.47 | 
+ 14.67 | 
+ 4.05 | 
+ | 
+ 0.3 | 
+ 0.5 | 
+ 44.3 | 
+ 11.1 | 
+ 5.3% | 
+ 2.79 | 
+ 0.45 | 
+ 14.67 | 
+ 4.32 | 
+ 7B | 
+ 0.3 | 
+ 1.0 | 
+ 43.5 | 
+ 9.3 | 
+ 20.8% | 
+ 2.26 | 
+ 0.59 | 
+ 9.67 | 
+ 2.98 | 
+ | 
+ 0.1 | 
+ 0.2 | 
+ 48.3 | 
+ 13.9 | 
+ 0.4% | 
+ 2.84 | 
+ 0.45 | 
+ 19.00 | 
+ 6.16 | 
+ | 
+ 0.3 | 
+ 0.2 | 
+ 48.3 | 
+ 12.8 | 
+ 0.8% | 
+ 3.07 | 
+ 0.39 | 
+ 16.33 | 
+ 5.48 | 
+ | 
+ 0.5 | 
+ 0.2 | 
+ 48.2 | 
+ 13.4 | 
+ 0.8% | 
+ 2.99 | 
+ 0.41 | 
+ 18.00 | 
+ 5.41 | 
+ | 
+ 0.7 | 
+ 0.2 | 
+ 48.3 | 
+ 13.9 | 
+ 0.4% | 
+ 2.84 | 
+ 0.45 | 
+ 19.00 | 
+ 6.16 | 
+ | 
+ 0.3 | 
+ 0.1 | 
+ 48.3 | 
+ 13.0 | 
+ 0.2% | 
+ 2.95 | 
+ 0.42 | 
+ 18.33 | 
+ 5.89 | 
+ | 
+ 0.3 | 
+ 0.5 | 
+ 48.1 | 
+ 12.3 | 
+ 2.6% | 
+ 2.97 | 
+ 0.44 | 
+ 16.67 | 
+ 5.35 | 
+ 13B | 
+ 0.3 | 
+ 1.0 | 
+ 46.1 | 
+ 10.3 | 
+ 7.9% | 
+ 2.72 | 
+ 0.44 | 
+ 16.33 | 
+ 5.00 | 
+ As an important component of OPA-DPO, the image focus mechanism (see Chapter 4.2 ) involves two hyperparameters that require tuning: the term coefficient \gamma_{1} in Eq. 10 and the mask ratio of the distorted image. We found that setting \gamma_{1} to 0.2 and randomly masking 30% of the pixels is optimal for both the LLaVA-1.5-7B and LLaVA-1.5-13B models. In contrast, the pioneering algorithm mDPO [ 27 ] , which first utilized this mechanism, opts to set \gamma_{1} to 1.0 and employs a variable masking ratio of 0-20% of pixels randomly.
+We find that the mask ratio has a slight impact on the model’s performance, whereas the term coefficient \gamma_{1} has a more significant effect.
+In particular, setting the coefficient too high results in excellent performance in metrics related to hallucination rate, but at the cost of being overly conservative and severely lacking in explanatory detail. Additionally, the model tends to repeat its last sentence or words and fails to generate an EOS token when using greedy sampling. As a compromise, we set \gamma_{1}=0.2 .
+Ablation studies supporting our findings are presented in Table 9 .
+ Appendix C Additional Qualitative Examples
+ Image Descriptions.
+ As introduced in Chapter 5 , OPA-DPO is particularly effective in preventing hallucinations by adopting a somewhat conservative strategy that avoids uncertain assertions. Such strategy significantly enhances the credibility of the responses but may lead to the omission of some ambiguous details, necessitating a trade-off. In addition to the case presented in Chapter 5.5 , we offer further examples involving image detail descriptions, as illustrated in Figures 8 , 9 , 10 , and 11 . In these cases, the initial model’s output contained numerous hallucinations and flawed reasoning. This issue persisted even after training with naive DPO without OPA. However, after applying OPA to 4.8k samples, hallucinations were nearly eliminated, with only minor instances remaining. The subsequent implementation of OPA-DPO completely resolved these issues, although some details from the original description were omitted. It is important to note that the omitted details are often not central to the image’s main information and do not cause the overall description to deviate.
+ False Premise Queries.
+ Another interesting phenomenon we observed in our experiments is that, LVLMs consistently experience hallucinations when presented with queries based on false premises.
+These queries contain objects or details that do not exist in the image or are irrelevant to it.
+For example, the LVLM is asked to describe the girl’s outfit given a picture of a basketball.
+As demonstrated in Figures 12 , 13 , and 14 , the base model consistently produces absurd responses to nonsensical questions due to linguistic inertia.
+The application of DPO without OPA does not generally modify these responses.
+Furthermore, utilizing the OPA operation in isolation is sometimes insufficient to address the issue.
+However, when both methods are combined, through training with OPA-DPO, the model is able to discern false premises in queries or prompts and provide reasoned responses.
+ Figure 8 : Qualitative results of different models. Hallucinated parts are marked in red , and missing details are highlighted in yellow . 
+ Figure 9 : Qualitative results of different models. Hallucinated parts are marked in red , flawed reasoning is highlighted in blue , and missing details are highlighted in yellow . 
+ Figure 10 : Qualitative results of different models. Hallucinated parts are marked in red , and missing details are highlighted in yellow . 
+ Figure 11 : Qualitative results of different models. Hallucinated parts are marked in red , and missing details are highlighted in yellow . 
+ Figure 12 : Qualitative results of different models. Hallucinated parts are marked in red . 
+ Figure 13 : Qualitative results of different models. Hallucinated parts are marked in red . 
+ Figure 14 : Qualitative results of different models. Flawed reasoning is highlighted in blue , and missing details are highlighted in yellow . 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

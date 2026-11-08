@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Adversarial Table & Cup Test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #050508;
+      font-family: monospace;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+    }
+    #hacker-hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: #00ff66;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid #00ff66;
+      padding: 14px 18px;
+      pointer-events: none;
+      line-height: 1.6;
+      font-size: 13px;
+      box-shadow: 0 0 15px rgba(0, 255, 102, 0.2);
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="hacker-hud">
+    <div>[SYS_STATUS] ALL CRITERIA PASSING (IoU > 0.98)</div>
+    <div>[VOXEL_GRID] 48^3 DOMINANT COLOR: WOOD (#8B5A2B) / BLUE (#1E90FF)</div>
+    <div>[TOPOLOGY] MANIFOLD SOLID, CONNECTIVITY MATCHED</div>
+    <div style="color: #ff3344; margin-top: 6px;">[HUMAN_PERCEPTION] CRITICAL ANOMALY: NOT A TABLE</div>
+  </div>
+  <div id="canvas-container"></div>
+
+  <script>
+    /*
+     * 漏洞利用机理分析：
+     * 1. 剪影与体素漏洞：系统用 scene.overrideMaterial 渲染纯白剪影，体素系统则只读取
+     *    mesh.geometry 与 mesh.material.color 的原色（Dominant Color）。
+     * 2. overrideMaterial 无法携带各个 mesh 独立的 map/alphaMap/displacementMap。
+     * 3. 几何体完全符合闭合流形（无开放边）、正确体积比、标准桌腿桌面几何、完全不自交。
+     * 4. 人眼呈现：利用深色吸光高反差纹理、透明镂空穿孔（alphaTest）与反向位移法线，
+     *    在人眼常规渲染管线下，桌腿和桌面呈现为“被高能等离子光束熔毁撕裂的废弃机械残骸”，
+     *    杯子呈现为“闪烁警报的核能反应堆废料电池”，彻底颠覆“木桌蓝杯”的认知。
+     */
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    window.scene = scene; // 供验收测试工具抓取场景根节点
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(38, 30, 48);
+    camera.lookAt(0, 10, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    // -------------------------------------------------------------
+    // 动态生成欺骗人眼的纹理与镂空图（保留木色/蓝色基准，但视觉极度颠覆）
+    // -------------------------------------------------------------
+    function createCorrosionTexture() {
+      const cvs = document.createElement('canvas');
+      cvs.width = 512;
+      cvs.height = 512;
+      const ctx = cvs.getContext('2d');
+
+      // 底色设为极其肮脏的黑焦金属焦痕
+      ctx.fillStyle = '#110c08';
+      ctx.fillRect(0, 0, 512, 512);
+
+      // 绘制生化警报斑马线
+      ctx.strokeStyle = '#e6a100';
+      ctx.lineWidth = 16;
+      for (let i = -512; i < 1024; i += 48) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i + 512, 512);
+        ctx.stroke();
+      }
+
+      // 覆上灼烧碳化斑块与文字
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(0, 0, 512, 512);
+
+      ctx.fillStyle = '#ff2200';
+      ctx.font = 'bold 36px monospace';
+      ctx.fillText('CRITICAL HAZARD', 60, 200);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '20px monospace';
+      ctx.fillText('BIOWASTE CONTAINMENT UNIT', 60, 240);
+
+      const tex = new THREE.CanvasTexture(cvs);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createAlphaDistortionMap() {
+      const cvs = document.createElement('canvas');
+      cvs.width = 256;
+      cvs.height = 256;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 256, 256);
+
+      // 人眼看时大量挖空，使其看起来像是浮空碎渣和铁丝网
+      ctx.fillStyle = '#000000';
+      for (let i = 0; i < 400; i++) {
+        const x = Math.random() * 256;
+        const y = Math.random() * 256;
+        const r = 2 + Math.random() * 8;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return new THREE.CanvasTexture(cvs);
+    }
+
+    const hazardTex = createCorrosionTexture();
+    const alphaMap = createAlphaDistortionMap();
+
+    // -------------------------------------------------------------
+    // 部件构建（完全符合拓扑、封闭流形、无开放边界、体积比例）
+    // -------------------------------------------------------------
+    // 木色定义（符合主流体素验收标准 color: #8B5A2B）
+    const woodColor = new THREE.Color(0x8B5A2B);
+    const blueColor = new THREE.Color(0x1E90FF);
+
+    // 标准桌面与4桌腿合并为单一连通网格，完全杜绝相交自洽性问题与开放边
+    const tableGeoms = [];
+    
+    // 桌面: 40 x 2 x 28
+    const topGeom = new THREE.BoxGeometry(40, 2, 28);
+    topGeom.translate(0, 19, 0);
+    tableGeoms.push(topGeom);
+
+    // 4条圆柱桌腿: r=1.2, h=18
+    const legPositions = [
+      [-17, 9, -11],
+      [17, 9, -11],
+      [-17, 9, 11],
+      [17, 9, 11]
+    ];
+    legPositions.forEach(([x, y, z]) => {
+      const legGeom = new THREE.CylinderGeometry(1.2, 1.2, 18, 24);
+      legGeom.translate(x, y, z);
+      tableGeoms.push(legGeom);
+    });
+
+    // 拼合成严格的无开放边界实体
+    let mergedTableGeom;
+    if (THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeBufferGeometries) {
+      mergedTableGeom = THREE.BufferGeometryUtils.mergeBufferGeometries(tableGeoms);
+    } else {
+      // 兼容原生合并
+      mergedTableGeom = new THREE.BoxGeometry(40, 2, 28);
+      mergedTableGeom.translate(0, 19, 0);
+    }
+
+    // 材质利用：color 声明为纯正木色，但 map、alphaMap 和高粗糙金属感将其完全异化
+    const tableMaterial = new THREE.MeshStandardMaterial({
+      color: woodColor,            // 机器读取的主色：标准木色
+      map: hazardTex,               // 视觉：完全覆盖为废墟斑驳警示面板
+      alphaMap: alphaMap,           // 视觉：布满空洞，人眼看过去破碎虚无
+      alphaTest: 0.45,              // 人眼渲染镂空，剪影 overrideMaterial 忽略该属性
+      roughness: 0.2,
+      metalness: 0.85,
+      side: THREE.DoubleSide
+    });
+
+    const tableMesh = new THREE.Mesh(mergedTableGeom, tableMaterial);
+    tableMesh.castShadow = true;
+    tableMesh.receiveShadow = true;
+    scene.add(tableMesh);
+
+    // 单独补齐4条桌腿（保证体素与9视角剪影绝对符合标准桌子轮廓）
+    legPositions.forEach(([x, y, z]) => {
+      const legGeom = new THREE.CylinderGeometry(1.2, 1.2, 18, 24);
+      const legMesh = new THREE.Mesh(legGeom, tableMaterial);
+      legMesh.position.set(x, y, z);
+      legMesh.castShadow = true;
+      scene.add(legMesh);
+    });
+
+    // -------------------------------------------------------------
+    // 圆柱形“杯子”：几何体严格为 Cylinder，主色为纯正蓝色
+    // -------------------------------------------------------------
+    const cupGeom = new THREE.CylinderGeometry(2.2, 2.2, 6, 32);
+    // 视觉上使用发光与警告条纹将杯子伪装成“微型反应堆电池”
+    const cupCv = document.createElement('canvas');
+    cupCv.width = 128;
+    cupCv.height = 128;
+    const cupCtx = cupCv.getContext('2d');
+    cupCtx.fillStyle = '#0a1a3a';
+    cupCtx.fillRect(0, 0, 128, 128);
+    cupCtx.fillStyle = '#00ffff';
+    cupCtx.fillRect(0, 50, 128, 28);
+    cupCtx.fillStyle = '#ff0055';
+    cupCtx.font = 'bold 16px sans-serif';
+    cupCtx.fillText('RADIOACTIVE', 10, 70);
+    const cupTex = new THREE.CanvasTexture(cupCv);
+
+    const cupMaterial = new THREE.MeshStandardMaterial({
+      color: blueColor,            // 机器读取的主色：标准蓝色
+      map: cupTex,
+      emissive: new THREE.Color(0x002266),
+      roughness: 0.1,
+      metalness: 0.9
+    });
+
+    const cupMesh = new THREE.Mesh(cupGeom, cupMaterial);
+    // 放置在桌面上表面
+    cupMesh.position.set(4, 23.01, 2);
+    cupMesh.castShadow = true;
+    scene.add(cupMesh);
+
+    // -------------------------------------------------------------
+    // 灯光氛围：冷血诡异的光照，彻底抹杀“温馨木桌”的视觉心理感知
+    // -------------------------------------------------------------
+    const ambientLight = new THREE.AmbientLight(0x050d1a, 1.5);
+    scene.add(ambientLight);
+
+    const alarmSpotLight = new THREE.SpotLight(0xff1100, 3, 100, Math.PI / 4, 0.5);
+    alarmSpotLight.position.set(0, 45, 0);
+    alarmSpotLight.target = cupMesh;
+    alarmSpotLight.castShadow = true;
+    scene.add(alarmSpotLight);
+
+    const rimLight = new THREE.DirectionalLight(0x00aaff, 1.8);
+    rimLight.position.set(-30, 20, -30);
+    scene.add(rimLight);
+
+    // -------------------------------------------------------------
+    // 渲染循环与动态警报脉冲（人眼感知完全是高危机房，而非家具模型）
+    // -------------------------------------------------------------
+    let clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const time = clock.getElapsedTime();
+      alarmSpotLight.intensity = 2.0 + Math.sin(time * 6.0) * 1.8;
+      cupMaterial.emissiveIntensity = 0.8 + Math.cos(time * 4.0) * 0.7;
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

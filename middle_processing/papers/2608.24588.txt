@@ -1,0 +1,1400 @@
+IAPO: Influence-Aware Policy Optimization for Credit Assignment in Multi-Turn Service Agents 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ Introduction 
+
+ Contributions. 
+
+ Related Work 
+
+ Interactive benchmarks for user-interacting agents. 
+
+ RL for LLMs and credit assignment. 
+
+ Problem Setup 
+
+ Evolving-state credit assignment. 
+
+ Method 
+
+ Influence-Dependency Graph 
+
+ From Features to Bounded Weights 
+
+ Sign-Conditioned Routing 
+
+ Positive-advantage rollouts ( A ^ τ > 0 \hat{A}_{\tau}\!>\!0 ). 
+
+ Negative-advantage rollouts ( A ^ τ < 0 \hat{A}_{\tau}\!<\!0 ). 
+
+ Routed advantage. 
+
+ Properties 
+
+ Experiments 
+
+ Experimental Setup 
+
+ Main Results 
+
+ Ablation and Sensitivity 
+
+ Annotator Stability and Behavioral Analysis 
+
+ Conclusion 
+
+ References 
+
+ License: CC BY-NC-ND 4.0
+
+arXiv:2608.24588v2 [cs.LG] 26 Aug 2026
+
+ IAPO: Influence-Aware Policy Optimization 
+ for Credit Assignment in Multi-Turn Service Agents
+
+ Bo Ren † 
+
+ Yirong Mao † 
+
+ Yi Yang
+
+ Wenhui Que * 
+
+ Affiliation: WeChat, Tencent Inc.
+
+ Abstract 
+
+ Large Language Model (LLM) agents increasingly solve long-horizon tasks through multi-turn interactions with users and external tools. In these settings, relevant task information often unfolds over time rather than being fully specified at the initial prompt. Service agents make this challenge especially concrete: users may clarify or revise their goals, while tool responses provide information needed for subsequent decisions. Thus, a final reward alone cannot indicate which actions contributed to resolving the task. Recent methods rely on comparative evidence from other trajectories or resampled continuations, or on separately constructed step-level learning signals, to refine credit. However, a completed rollout already records how information and errors flow between agent actions. We introduce Influence-Aware Policy Optimization (IAPO) , which represents each rollout as a typed influence-dependency graph over trainable agent actions, with user and tool observations serving as evidence. IAPO converts support-use and failed-use structure into routing weights that redistribute the same trajectory-level advantage. Experiments with Qwen3-4B and Qwen3-8B demonstrate superior performance over multi-turn reinforcement learning (RL) baselines across three service-agent benchmarks: τ 2 \tau^{2} -Bench, UserBench, and AgentChangeBench. BFCL-v4 Multi-Turn further shows that these gains do not compromise multi-turn function-calling performance. This work advances the understanding of credit assignment in multi-turn user interactions and provides a principled approach to training service agents from sparse outcome feedback.
+
+ A Preprint
+
+ | 
+
+ 0 0 footnotetext: † Equal contribution; ∗ Corresponding author. 
+
+ Introduction
+
+ Large Language Models (LLMs) ( OpenAI et al., 2024 ; Team et al., 2023 ; Yang et al., 2025 ; DeepSeek-AI et al., 2025 ) have moved from single-turn responders to interactive agents that plan, call tools, and act over multi-turn interactions with users and environments ( Yao et al., 2022b ; Schick et al., 2023 ; Liu et al., 2024 ) . In particular, multi-turn service agents often solve tasks whose relevant information is not available at the initial prompt. Instead, users may reveal preferences or revise goals over successive turns, while tool calls expose operational states that determine which actions are valid or useful. For example, in an after-sales service task (Figure 1 ), before issuing the refund, the agent may need to clarify whether the user wants the money returned to the original card or converted into store balance, and then retrieve the order record needed to execute that choice. Thus, the contribution of an early action may become identifiable only after a later user clarification or tool response reveals how its information is used. We refer to this setting as evolving-state credit assignment : task goals, constraints, and operational states are progressively instantiated through interaction rather than fully specified at the outset.
+
+ Figure 1: Per-action advantage allocation for a successful (left, positive-advantage) and a failed (right, negative-advantage) refund rollout. Refunding to the original card or store balance is correct only if it matches the user’s clarified intent , so an early clarifying turn decides whether later actions are right. GRPO applies the same advantage to every action, whereas IAPO routes credit according to realized support use and error propagation.
+
+ Group-based RL algorithms such as GRPO ( Shao et al., 2024 ) and its variants ( Yu et al., 2026 ; Zheng et al., 2025 ) apply the same group-relative advantage to every trainable token of a sampled rollout. However, this trajectory-level signal does not distinguish how different intermediate actions contribute to the final outcome (Figure 1 , GRPO columns). This limitation motivates finer-grained credit assignment for evolving-state interactions.
+
+ Existing approaches obtain finer-grained credit by supplementing the final outcome with additional evidence. One line compares recurring or matched states and resampled continuations across sampled trajectories ( Feng et al., 2026 ; Ji et al., 2025 ; Samanta et al., 2026 ) . Another line constructs separate step-level signals through additional evaluation, using masked-context policy scoring, a teacher model, or a learned critic on training-time information ( Kong et al., 2026 ; Xie et al., 2026 ; Zhou et al., 2025 ; Tan et al., 2026 ) .
+
+ However, obtaining this finer credit adds a requirement that the final outcome does not. 1) Cross-rollout methods need comparable structure across sampled trajectories. GiGPO ( Feng et al., 2026 ) relies on environment states that recur across rollouts, and branch- or reset-based methods ( Ji et al., 2025 ; Samanta et al., 2026 ) rely on a forkable or resettable environment with additional continuation samples. Free-form user and tool dialogue rarely provides either, because distinct user turns and tool returns leave few comparable state groups and a live user cannot be faithfully reset or branched. 2) Separately-scored methods add a scoring channel outside the reward, such as masked-context policy scoring ( Kong et al., 2026 ) , a teacher model ( Xie et al., 2026 ) , or a learned critic on privileged information ( Zhou et al., 2025 ) . The resulting step signal is computed apart from task completion and can drift from it. No existing method redistributes outcome credit using only the dependency structure already realized within a single completed interaction.
+
+ In this work, we observe that a completed user–tool rollout already records more structure than its outcome reward exposes: a later action may consume information elicited or supplied by an earlier one, or reuse an earlier invalid output and fall back because of an observable error. Therefore, we propose IAPO , which represents each completed rollout as a typed influence-dependency graph over trainable agent actions and routes the original trajectory-level advantage according to observed support-use and failed-use dependencies, using user and tool observations as evidence without assigning them policy-gradient credit. Since this dependency structure is already realized in the transcript and tool log, it can redistribute the same trajectory-level advantage without changing the reward, rollout process, group normalization, or clipped-loss implementation. IAPO keeps the critic-free, group-based update intact while introducing finer, action-level credit. The change lies in which action tokens carry the feedback, not in the value of the final task outcome.
+
+ Contributions.
+
+ • 
+
+ We identify realized downstream information use as a credit object for evolving-state service interactions.
+
+ • 
+
+ We introduce IAPO, which extracts typed within-rollout dependencies and routes the trajectory-level advantage through support-use and failed-use structure.
+
+ • 
+
+ We prove mass conservation, sign preservation, and uniform fallback, and show that IAPO leads on the three service-agent benchmarks across two Qwen3 scales and maintains competitive out-of-distribution retention on BFCL-v4 Multi-Turn.
+
+ Figure 2: Overview of IAPO. (A) Multiple rollouts are sampled per task and scored by the outcome reward. (B) A frozen annotator extracts signed influence edges among trainable actions, using user and tool observations as evidence. (C) The resulting graph features are normalized into bounded per-action weights that replace GRPO’s uniform advantage with sign-conditioned routing.
+
+ Related Work
+
+ Interactive benchmarks for user-interacting agents.
+
+ Task-oriented dialogue has long been treated as sequential decision making ( Budzianowski et al., 2018 ; Ultes et al., 2017 ) . Interactive benchmarks have progressively incorporated simulated users, stateful tools, and multi-turn feedback ( Yao et al., 2024 ; Barres et al., 2025 ; Qian et al., 2025a ; Wang et al., 2023 ) . Beyond dialogue, agent benchmarks cover web navigation, embodied environments, and API-based tool use ( Yao et al., 2022a ; Shridhar et al., 2021 ; Li et al., 2023 ; Qin et al., 2023 ; Zhou et al., 2024a ; Deng et al., 2023 ; Liu et al., 2024 ; Mialon et al., 2024 ) . More recent testbeds further expose incremental preference acquisition and explicit goal shifts across interaction episodes ( Qian et al., 2025a ; Rana et al., 2025 ) . These settings expose evolving user goals and tool-mediated state, but leave open how a final outcome should be attributed to the actions that gathered, used, or corrupted intermediate evidence.
+
+ RL for LLMs and credit assignment.
+
+ Early LLM agents used frozen models with prompting and tool use, such as ReAct ( Yao et al., 2022b ) and Toolformer ( Schick et al., 2023 ) ; more recent work optimizes agents directly with reinforcement learning, building on PPO ( Schulman et al., 2017 ) , GRPO ( Shao et al., 2024 ) , and their variants ( Zheng et al., 2025 ; Yu et al., 2026 ; Liu et al., 2025b ) . Since outcome-only rewards leave intermediate steps unattributed, a growing body of work assigns credit more finely, from classical return decomposition and process supervision ( Arjona-Medina et al., 2019 ; Harutyunyan et al., 2019 ; Lightman et al., 2024 ; Cui et al., 2025 ; Ng, Harada, and Russell, 1999 ) to recent agent-oriented methods. On reasoning and agent tasks, GiGPO ( Feng et al., 2026 ) groups recurring states across rollouts, tree- or reset-based methods search over branches ( Ji et al., 2025 ; Samanta et al., 2026 ) , hierarchical and trajectory-level RL frameworks restructure the update itself ( Zhou et al., 2024b ; Wang et al., 2025 ) , and Fission-GRPO ( Zhang et al., 2026b ) synthesizes new recovery rollouts from failed trajectories. Denser step rewards instead come from process or hindsight evaluators ( Zhang et al., 2026a ; Tan et al., 2026 ) , turn-level shaping ( Xie et al., 2026 ; Wei et al., 2025 ; Ding et al., 2026 ; Parthasarathi et al., 2025 ) , or token-level reshaping ( Li et al., 2026 ; Mesnard et al., 2021 ; Lai et al., 2024 ) . A separate line places the user inside the RL loop: MUA-RL ( Zhao et al., 2025 ) first trains agents against a simulated user interacting with live tools, and later methods add finer learning signals on top, such as UserRL ( Qian et al., 2025b ) shaping turn- and trajectory-level rewards, SWEET-RL ( Zhou et al., 2025 ) training a step-level critic from training-time information, and InfoPO ( Kong et al., 2026 ) adding an information-gain reward from masked-context counterfactuals. All of these add signals beyond the sampled rollout: shaped rewards, a trained critic, an auxiliary intrinsic objective, or synthesized recovery rollouts. IAPO instead uses the dependencies already realized among the agent’s own actions. It reweights the tokens of a rollout the baseline already sampled, using only the influence links realized inside that rollout.
+
+ Problem Setup
+
+ We consider a multi-turn service episode in which user messages and tool returns progressively expose task state. Policy π θ \pi_{\theta} controls assistant replies and tool calls; user messages, tool returns, and rule feedback are observations used for provenance but receive no policy-gradient credit.
+
+ A trajectory alternates between observations and assistant actions:
+
+ | 
+ τ = ( o 1 , a 1 , o 2 , a 2 , … , o T , a T ) , \tau=(o_{1},a_{1},o_{2},a_{2},\ldots,o_{T},a_{T}), | 
+ | 
+ (1) | 
+
+ where o t o_{t} is an observation, a t a_{t} is an assistant action, L i L_{i} is the token length of action i i , and L = ∑ i L i L=\sum_{i}L_{i} . The environment returns terminal reward R τ R_{\tau} . GRPO samples 𝒢 = { τ k } k = 1 K \mathcal{G}=\{\tau_{k}\}_{k=1}^{K} for the same task and computes
+
+ | 
+ A ^ τ = R τ − μ 𝒢 σ 𝒢 + ε , \hat{A}_{\tau}\;=\;\frac{R_{\tau}-\mu_{\mathcal{G}}}{\sigma_{\mathcal{G}}+\varepsilon}, | 
+ | 
+ (2) | 
+
+ then broadcasts A ^ τ \hat{A}_{\tau} to every action token.
+
+ Evolving-state credit assignment.
+
+ IAPO redistributes this scalar using only dependency evidence in the completed rollout: A i , ℓ = A ^ τ ​ w i A_{i,\ell}=\hat{A}_{\tau}w_{i} , with w i > 0 w_{i}>0 , ∑ i L i ​ w i = L \sum_{i}L_{i}w_{i}=L , and w i = 1 w_{i}=1 for an uninformative graph. The annotator extracts dependency labels but neither scores success nor creates an additional reward.
+
+ Method
+
+ IAPO scores rollouts as GRPO does, extracts a signed influence graph from each completed rollout, and routes the trajectory advantage to each token as A i , ℓ = A ^ τ ​ w i A_{i,\ell}=\hat{A}_{\tau}\,w_{i} (Figure 2 ). The routing weight 𝐰 = ( w 1 , … , w T ) \mathbf{w}=(w_{1},\ldots,w_{T}) redistributes the advantage across actions according to their influence: toward information that is used downstream, and toward the observable errors behind a negative outcome. 𝐰 \mathbf{w} is
+positive, bounded, and length-normalized, so routing reshapes how the advantage is shared without changing its total or its sign. The rest of this section builds 𝐰 \mathbf{w} to this shape.
+
+ Influence-Dependency Graph
+
+ The map 𝐰 \mathbf{w} is computed from observable evidence in the completed rollout. For τ \tau , let V τ = { a 1 , … , a T } V_{\tau}=\{a_{1},\ldots,a_{T}\} contain the trainable assistant actions. IAPO builds the influence-dependency graph G τ = ( V τ , E τ + , E τ − ) G_{\tau}=(V_{\tau},E_{\tau}^{+},E_{\tau}^{-}) , where E τ + , E τ − ⊆ { ( i , j ) : 1 ≤ i < j ≤ T } E_{\tau}^{+},E_{\tau}^{-}\subseteq\{(i,j):1\leq i<j\leq T\} and the sign of an edge is independent of the sign of A ^ τ \hat{A}_{\tau} . We use + + for support-use quantities and − - for error-evidence quantities throughout this section ( ϕ ± \boldsymbol{\phi}^{\boldsymbol{\pm}} , 𝐦 ± \mathbf{m^{\boldsymbol{\pm}}} , and 𝐰 ± \mathbf{w^{\boldsymbol{\pm}}} below). An edge i → + j i\!\to^{+}\!j is a support-use edge : a j a_{j} consumes information supplied or elicited by a i a_{i} and the annotation type is input or success_utilization . An edge i → − j i\!\to^{-}\!j is a failed-use edge : a j a_{j} repeats an observable error from a i a_{i} , uses its invalid output, or must fall back because of it, with annotation type failed_utilization . The error indicator e i ∈ { 0 , 1 } e_{i}\in\{0,1\} marks whether a i a_{i} is error-bearing: a tool, schema, runtime, or rule failure, or an explicit user or environment rejection. A goal revision is not an error unless it rejects the preceding action, so d i − > 0 d_{i}^{-}>0 implies e i = 1 e_{i}=1 .
+
+ An edge i → j i\!\to\!j is accepted when three conditions are jointly met:
+
+ 1. 
+
+ Necessity. a j a_{j} references a specific information unit (an entity value, a tool-returned field, or an error trace) that originates from a i a_{i} or from an observation elicited by a i a_{i} . Sharing the same topic or domain is insufficient: removing the referenced information unit must leave a j a_{j} ’s argument or decision unsupported.
+
+ 2. 
+
+ Explicit binding. The referenced information unit is bound to a concrete element in a j a_{j} : an intent parameter, a tool-call argument, a conditional branch, or an error-recovery action. Abstract thematic similarity does not qualify.
+
+ 3. 
+
+ Source priority. When multiple prior actions supply overlapping information, the most comprehensive source is kept; ties are broken by earliest occurrence. Multiple sources are cited only when they contribute non-overlapping information units.
+
+ User turns and tool returns provide evidence but never receive advantage. Their source type is retained for provenance resolution. A user reply is resolved to the assistant action that elicited it, while a tool return is resolved to the tool call that produced it. If a cited user turn has no assistant elicitor, it contributes only a direct-input count for the consuming action, written u i dir u_{i}^{\mathrm{dir}} . Duplicate user/elicitor evidence is counted once. Writing d i + = | { j : i → + j } | d_{i}^{+}=|\{j:i\xrightarrow{+}j\}| and d i − = | { j : i → - j } | d_{i}^{-}=|\{j:i\xrightarrow{-}j\}| for the number of outgoing support-use and failed-use edges from a i a_{i} , and d i in = u i dir + | { k : k → + i } | d_{i}^{\mathrm{in}}=u_{i}^{\mathrm{dir}}+|\{k:k\xrightarrow{+}i\}| for the support evidence a i a_{i} consumes, whether from a direct user turn or an incoming support-use edge, these counts feed the graph features
+
+ | 
+ ϕ i + = log ⁡ ( 1 + d i + + d i in ) , ϕ i − = log ⁡ ( 1 + e i ​ ( 1 + d i − + d i in ) ) . \phi_{i}^{+}=\log(1+d_{i}^{+}+d_{i}^{\mathrm{in}}),\quad\phi_{i}^{-}=\log\!\bigl(1+e_{i}(1+d_{i}^{-}+d_{i}^{\mathrm{in}})\bigr). | 
+ | 
+ (3) | 
+
+ The support score ϕ i + \phi^{+}_{i} grows with the number of downstream consumers and upstream sources of a i a_{i} . The error score ϕ i − \phi^{-}_{i} is zero unless e i = 1 e_{i}{=}1 ; when an observable error is present, the inner unit term counts the error itself, d i − d_{i}^{-} counts its downstream failed use, and d i in d_{i}^{\mathrm{in}} counts the support evidence consumed by the erroneous action.
+
+ From Features to Bounded Weights
+
+ Additive token corrections can change the sign or the total of the advantage, so IAPO uses multiplicative weights and turns each feature into a bounded weight around one. For a feature ϕ ∈ ℝ ≥ 0 T \boldsymbol{\phi}\in\mathbb{R}_{\geq 0}^{T} , we standardize it by its length-weighted mean and deviation, clip at c c , and renormalize so the length-weighted mean is one:
+
+ | 
+ m i = exp ⁡ ( clip ⁡ ( z i , − c , c ) ) 1 L ​ ∑ j L j ​ exp ⁡ ( clip ⁡ ( z j , − c , c ) ) , z i = ϕ i − ϕ ¯ σ ϕ + ε , m_{i}=\frac{\exp\!\bigl(\mathrm{clip}(z_{i},-c,c)\bigr)}{\tfrac{1}{L}\sum_{j}L_{j}\exp\!\bigl(\mathrm{clip}(z_{j},-c,c)\bigr)},\qquad z_{i}=\frac{\phi_{i}-\bar{\phi}}{\sigma_{\phi}+\varepsilon}, | 
+ | 
+ (4) | 
+
+ where ϕ ¯ = 1 L ​ ∑ i L i ​ ϕ i \bar{\phi}=\tfrac{1}{L}\sum_{i}L_{i}\phi_{i} , σ ϕ 2 = 1 L ​ ∑ i L i ​ ( ϕ i − ϕ ¯ ) 2 \sigma_{\phi}^{2}=\tfrac{1}{L}\sum_{i}L_{i}(\phi_{i}-\bar{\phi})^{2} , and ε = 10 − 6 \varepsilon=10^{-6} . A feature above its mean gets weight above one and below its mean below one, and c c caps how far a step can move so no single hub dominates the update. Applying this to the graph features gives the support weight m i + m_{i}^{+} from ϕ + \boldsymbol{\phi}^{+} and the error weight m i − m_{i}^{-} from ϕ − \boldsymbol{\phi}^{-} . Every token in action i i receives the same w i w_{i} , so the action carries token mass L i ​ w i L_{i}w_{i} . The length-aware properties are proved in Appendix B.
+
+ Sign-Conditioned Routing
+
+ Positive-advantage rollouts ( A ^ τ > 0 \hat{A}_{\tau}\!>\!0 ).
+
+ A positive-advantage rollout can still contain steps that made errors later steps had to repair, and IAPO gives them less credit than clean steps with the same support role. Starting from the support weight m i + m_{i}^{+} , it discounts a step by its above-average error evidence ψ i − = ϕ i − − ϕ ¯ − \psi_{i}^{-}=\phi_{i}^{-}-\bar{\phi}^{-} , with ϕ ¯ − = 1 L ​ ∑ i L i ​ ϕ i − \bar{\phi}^{-}=\tfrac{1}{L}\sum_{i}L_{i}\phi_{i}^{-} , and renormalizes:
+
+ | 
+ w i + ​ ( β + ) = L ​ m i + ​ exp ⁡ ( − β + ​ ψ i − ) ∑ j L j ​ m j + ​ exp ⁡ ( − β + ​ ψ j − ) . w_{i}^{+}(\beta_{+})=\frac{L\,m_{i}^{+}\,\exp(-\beta_{+}\psi_{i}^{-})}{\sum_{j}L_{j}\,m_{j}^{+}\,\exp(-\beta_{+}\psi_{j}^{-})}. | 
+ | 
+ (5) | 
+
+ This is the closed-form solution of the length-mean-constrained routing problem derived in Appendix B. At β + = 0 \beta_{+}{=}0 it is w i + = m i + w_{i}^{+}{=}m_{i}^{+} (support only); a larger β + \beta_{+} moves credit off repaired-error steps, and the denominator restores the length-weighted mean one.
+
+ Negative-advantage rollouts ( A ^ τ < 0 \hat{A}_{\tau}\!<\!0 ).
+
+ A negative-advantage rollout concentrates its advantage on the steps that produced the errors: with many errors and hard attribution, support reuse need not be at fault, so IAPO conservatively routes blame to error evidence only, riding on the error feature directly:
+
+ | 
+ w i − = m i − . w_{i}^{-}=m_{i}^{-}. | 
+ | 
+ (6) | 
+
+ The error score ϕ − \phi^{-} is nonzero only after an observable error, and the normalizer keeps every multiplier positive, so more of the negative advantage reaches the steps with stronger error evidence. A projected support-prior alternative is evaluated in ablation and defined in Appendix B.
+
+ Routed advantage.
+
+ The final weight follows the trajectory’s sign, 𝒘 = 𝒘 + \boldsymbol{w}=\boldsymbol{w}^{\boldsymbol{+}} when A ^ τ > 0 \hat{A}_{\tau}>0 and 𝒘 = 𝒘 − \boldsymbol{w}=\boldsymbol{w}^{\boldsymbol{-}} when A ^ τ < 0 \hat{A}_{\tau}<0 , so the token advantage
+
+ | 
+ A i , ℓ = A ^ τ ​ w i A_{i,\ell}=\hat{A}_{\tau}\,w_{i} | 
+ | 
+ (7) | 
+
+ is zero when A ^ τ = 0 \hat{A}_{\tau}{=}0 and is passed to the same clipped-loss implementation, replacing the flat per-token advantage used by GRPO. β + \beta_{+} and c c are set in the experimental setup, and the projected negative branch is an ablation. After each rollout, a frozen annotator extracts the dependency graph, cached for the corresponding policy update.
+
+ Model | 
+ Method | 
+ Think | 
+ τ 2 \tau^{2} (%) | 
+ UserBench (%) | 
+ AgentChangeBench (%) | 
+ BFCL-MT (%) | 
+ Avg (%) | 
+
+ GPT-4o-mini | 
+ – | 
+ – | 
+ 23.75 | 
+ 28.30 | 
+ 35.50 | 
+ 37.00 | 
+ 31.14 | 
+
+ Qwen3.5-397B | 
+ Base | 
+ w/ | 
+ 84.38 | 
+ 73.92 | 
+ 43.50 | 
+ 64.00 | 
+ 66.45 | 
+
+ Qwen3-4B | 
+ Base | 
+ w/o | 
+ 19.17 | 
+ 22.04 | 
+ 17.50 | 
+ 31.38 | 
+ 22.52 | 
+
+ Base | 
+ w/ | 
+ 31.46 | 
+ 25.33 | 
+ 25.00 | 
+ 30.50 | 
+ 28.07 | 
+
+ GRPO | 
+ w/o | 
+ 34.79  ± \pm  1.05 | 
+ 23.27  ± \pm  0.47 | 
+ 21.50  ± \pm  1.81 | 
+ 31.69  ± \pm  0.13 | 
+ 27.81 | 
+
+ GiGPO | 
+ w/o | 
+ 37.22  ± \pm  1.04 | 
+ 25.06  ± \pm  0.25 | 
+ 24.42  ± \pm  1.13 | 
+ 32.42   ± \pm  0.56 | 
+ 29.78 | 
+
+ InfoPO | 
+ w/o | 
+ 37.99  ± \pm  1.75 | 
+ 20.47  ± \pm  1.10 | 
+ 17.56  ± \pm  1.32 | 
+ 29.94  ± \pm  0.34 | 
+ 26.49 | 
+
+ IAPO (Ours) | 
+ w/o | 
+ 38.40   ± \pm  1.63 | 
+ 26.89   ± \pm  0.61 | 
+ 28.06   ± \pm  2.58 | 
+ 31.89  ± \pm  0.97 | 
+ 31.31 | 
+
+ Qwen3-8B | 
+ Base | 
+ w/o | 
+ 24.17 | 
+ 18.04 | 
+ 27.50 | 
+ 39.38 | 
+ 27.27 | 
+
+ Base | 
+ w/ | 
+ 37.29 | 
+ 22.08 | 
+ 29.00 | 
+ 39.00 | 
+ 31.84 | 
+
+ MUA-RL † | 
+ w/o | 
+ 35.63 | 
+ 17.31 | 
+ 30.05 | 
+ 24.75 | 
+ 26.94 | 
+
+ GRPO | 
+ w/o | 
+ 29.61  ± \pm  3.56 | 
+ 19.83  ± \pm  0.19 | 
+ 26.03  ± \pm  1.79 | 
+ 39.04  ± \pm  0.71 | 
+ 28.63 | 
+
+ GiGPO | 
+ w/o | 
+ 35.83  ± \pm  1.04 | 
+ 22.77  ± \pm  0.21 | 
+ 29.25  ± \pm  0.88 | 
+ 40.00   ± \pm  0.44 | 
+ 31.96 | 
+
+ InfoPO | 
+ w/o | 
+ 33.29  ± \pm  0.77 | 
+ 23.37  ± \pm  0.38 | 
+ 28.61  ± \pm  1.44 | 
+ 38.01  ± \pm  0.63 | 
+ 30.82 | 
+
+ IAPO (Ours) | 
+ w/o | 
+ 42.18   ± \pm  2.55 | 
+ 24.44   ± \pm  0.15 | 
+ 30.44   ± \pm  2.20 | 
+ 39.36  ± \pm  0.95 | 
+ 34.11 | 
+
+ External reported numbers ‡ (quoted from prior work trained on larger, synthetically constructed corpora) | 
+
+ ToolACE-2-8B | 
+ SFT | 
+ – | 
+ 20.53 | 
+ – | 
+ – | 
+ 37.00 | 
+ – | 
+
+ BitAgent-8B | 
+ SFT | 
+ – | 
+ 16.70 | 
+ – | 
+ – | 
+ 37.75 | 
+ – | 
+
+ Fission-GRPO-4B | 
+ RL | 
+ w/ | 
+ 34.50 | 
+ – | 
+ – | 
+ 40.87 | 
+ – | 
+
+ Fission-GRPO-8B | 
+ RL | 
+ w/ | 
+ 41.27 | 
+ – | 
+ – | 
+ 46.75 | 
+ – | 
+
+ Table 1: Main results (%). ± \pm is the standard deviation over three seeds. † : results re-evaluated using publicly available checkpoint. ‡ : results copied from the published papers. IAPO uses only the 178-task τ 2 \tau^{2} -Bench training split, while Fission-GRPO ( Zhang et al., 2026b ) uses 630 tasks across 11 domains grounded in BFCL characteristics , designed and cleaned with Claude Sonnet 4. ToolACE-2-8B ( Liu et al., 2025a ) and BitAgent-8B ( BitAgent, 2025 ) are specialized function-calling agents.
+
+ Properties
+
+ The routing layer has four safeguards; proofs are in Appendix B.
+
+ Proposition 1 (Mass conservation) . 
+
+ ∑ i ∑ ℓ ∈ a i A i , ℓ = L ​ A ^ τ \sum_{i}\sum_{\ell\in a_{i}}A_{i,\ell}=L\hat{A}_{\tau} . IAPO redistributes the existing rollout advantage without changing its total token mass. 
+
+ Proposition 2 (Uniform fallback) . 
+
+ If the active graph features are constant, then m i ± = 1 m_{i}^{\pm}=1 , w i = 1 w_{i}=1 , and Eq. ( 7 ) assigns the same advantage to every token. With no observable error, ϕ i − \phi^{-}_{i} is constant and the negative branch remains uniform. 
+
+ Proposition 3 (Sign preservation) . 
+
+ Because all routing multipliers are positive, every token advantage has the same sign as A ^ τ \hat{A}_{\tau} . 
+
+ Proposition 4 (Optimization-interface preservation) . 
+
+ IAPO preserves the terminal reward, group normalization, prompts, tools, rollout sampling, and optimization interface while intentionally changing the token-weighted policy-gradient estimator. 
+
+ Experiments
+
+ We evaluate IAPO through a controlled comparison with GRPO ( Shao et al., 2024 ) and complementary comparisons with GiGPO ( Feng et al., 2026 ) and InfoPO ( Kong et al., 2026 ) . GRPO ( Shao et al., 2024 ) and IAPO share the same training protocol; their only difference is the trajectory-to-token advantage map. The evaluation covers success rate, per-domain breakdown, out-of-domain transfer, and annotator stability.
+
+ Experimental Setup
+
+ Benchmarks. We train on the τ 2 \tau^{2} -Bench ( Barres et al., 2025 ) training split (airline/retail/telecom, 178 tasks) and evaluate on:
+
+ • 
+
+ τ 2 \tau^{2} -Bench held-out test (20/40/40 tasks × \times 4 trials; domain-macro pass 1 );
+
+ • 
+
+ UserBench ( Qian et al., 2025a ) travel22/33/44 (101/87/67 cases; official multi-choice Score);
+
+ • 
+
+ AgentChangeBench ( Rana et al., 2025 ) banking/education (100/100 tasks; TSR);
+
+ • 
+
+ BFCL-v4 Multi-Turn (function-calling retention) ( Patil et al., 2024 ) .
+
+ Baselines. GRPO ( Shao et al., 2024 ) is the controlled baseline, differing from IAPO only in the trajectory-to-token advantage map. GiGPO ( Feng et al., 2026 ) adds cross-rollout step credit by grouping actions with similar preceding observations; we use the authors’ official implementation with similarity-based grouping ( γ = 0.95 \gamma{=}0.95 , threshold 0.9 0.9 , and ω = 1.0 \omega{=}1.0 ), without further tuning. InfoPO ( Kong et al., 2026 ) estimates per-turn information acquisition by comparing policy likelihoods under observed and masked contexts, fusing the resulting intrinsic reward with outcome advantage. The released MUA-RL-8B ( Zhao et al., 2025 ) is included as an external checkpoint comparator; it was trained on τ 1 \tau^{1} retail/airline with a GPT-4o user simulator and is evaluated without further optimization. For broader context, we also report Fission-GRPO ( Zhang et al., 2026b ) , ToolACE-2-8B ( Liu et al., 2025a ) , and BitAgent-8B ( BitAgent, 2025 ) . Fission-GRPO ( Zhang et al., 2026b ) adds an error-recovery loop to GRPO: an error simulator diagnoses failed on-policy trajectories, constructs corrective samples, and triggers additional rollout batches for corrective training. ToolACE-2-8B ( Liu et al., 2025a ) and BitAgent-8B ( BitAgent, 2025 ) are fine-tuned tool-use agents.
+
+ Training and evaluation. We train Qwen3-4B and Qwen3-8B with thinking disabled on 8 × 8{\times} NVIDIA H20 GPUs using a verl/FSDP GRPO stack ( Sheng et al., 2025 ; Zhao et al., 2023 ) , N = 16 N{=}16 samples/prompt, max 30 turns. Dependency annotation uses Qwen3-32B at temperature 0. Interactive evaluation follows the τ 2 \tau^{2} -Bench protocol with held-out GPT-5.2 user simulators ( Barres et al., 2025 ) . IAPO defaults: β + = 0.05 \beta_{+}{=}0.05 , w − = m − w^{-}{=}m^{-} , c = 0.25 c{=}0.25 . For each seed, we report the mean over the final three checkpoints; full hyperparameters and compute budget are in Appendix F.
+
+ Benchmark | 
+ Split | 
+ GRPO | 
+ IAPO | 
+ Δ \Delta | 
+
+ τ 2 \tau^{2} | 
+ Airline | 
+ 22.78 22.78 | 
+ 29.72 29.72 | 
+ + 6.94 +6.94 | 
+
+ Retail | 
+ 44.31 44.31 | 
+ 56.88 56.88 | 
+ + 12.57 +12.57 | 
+
+ Telecom | 
+ 21.74 21.74 | 
+ 39.93 39.93 | 
+ + 18.19 \mathbf{+18.19} | 
+
+ UserBench | 
+ T22 | 
+ 20.68 20.68 | 
+ 25.65 25.65 | 
+ + 4.97 +4.97 | 
+
+ T33 | 
+ 19.41 19.41 | 
+ 24.50 24.50 | 
+ + 5.09 \mathbf{+5.09} | 
+
+ T44 | 
+ 19.10 19.10 | 
+ 22.55 22.55 | 
+ + 3.45 +3.45 | 
+
+ AgentChange | 
+ Banking | 
+ 28.23 28.23 | 
+ 32.67 32.67 | 
+ + 4.44 \mathbf{+4.44} | 
+
+ Education | 
+ 23.82 23.82 | 
+ 28.22 28.22 | 
+ + 4.40 +4.40 | 
+
+ Table 2: Per-split results at 8B (three-seed mean). 
+
+ Main Results
+
+ Table 1 shows IAPO’s largest improvement on τ 2 \tau^{2} -Bench: at 8B, it raises domain-macro pass 1 from 29.61 % 29.61\% to 42.18 % 42.18\% , a + 12.57 +12.57 pp gain over matched GRPO. The same update improves UserBench by + 4.61 +4.61 pp and AgentChangeBench by + 4.41 +4.41 pp, while BFCL-MT remains comparable ( 39.36 % 39.36\% vs. 39.04 % 39.04\% ). Crucially, these in-domain gains do not come at the cost of out-of-distribution behavior: BFCL-MT stays effectively flat relative to GRPO at both scales, indicating that IAPO’s service-agent advantage reflects sharper credit assignment rather than overfitting away function-calling ability (Table 1 ).
+
+ Delayed state use yields the largest gain. Table 2 resolves the aggregate results by split. On τ 2 \tau^{2} -Bench, IAPO improves airline from 22.78 22.78 to 29.72 29.72 ( + 6.94 +6.94 pp), retail from 44.31 44.31 to 56.88 56.88 ( + 12.57 +12.57 pp), and telecom from 21.74 21.74 to 39.93 39.93 ( + 18.19 +18.19 pp). Telecom requires account or line state to persist until a later clarification determines its use; this is the setting in which a flat rollout advantage provides the least specific feedback about earlier actions.
+
+ Generalization. IAPO is trained only on τ 2 \tau^{2} -Bench, yet the same table shows it improving every out-of-domain split. UserBench requires accumulating preferences that arrive turn by turn: IAPO gains + 4.97 +4.97 , + 5.09 +5.09 , and + 3.45 +3.45 pp across the three travel splits. AgentChangeBench changes the desired outcome mid-interaction: IAPO gains + 4.44 +4.44 pp on banking and + 4.40 +4.40 pp on education, remaining ahead where account state must survive the goal shift. The higher success also comes with less redundant tool use: at 4B, IAPO lowers macro tool-call redundancy from GRPO’s 46.00 46.00 to 29.74 29.74 (Appendix F), so the gain reflects reuse of acquired state instead of repeated queries.
+
+ The router is far from flat. The improvement comes from a routing map that departs substantially from uniform credit. Across the audited action steps, the positive weight w + w^{+} has standard deviation 0.222 0.222 and spans 0.637 0.637 – 1.505 1.505 , and 86.5 % 86.5\% of steps move by more than 10 % 10\% from flat credit (Appendix E). The negative branch is deliberately sparser, with 27.1 % 27.1\% of steps exceeding the same threshold, consistent with ϕ − \phi^{-} activating only after an observable error. IAPO changes the per-action advantage while departing substantially from the flat GRPO update.
+
+ Ablation and Sensitivity
+
+ Axis | 
+ Setting | 
+ τ 2 \tau^{2} | 
+ UB | 
+ AC | 
+
+ Ref. | 
+ GRPO | 
+ 29.61  ± \pm  3.56 | 
+ 19.83  ± \pm  0.19 | 
+ 26.03  ± \pm  1.79 | 
+
+ β + \beta_{+} | 
+ 0 0 | 
+ 32.50 | 
+ 20.92 | 
+ 27.58 | 
+
+ | 
+ .05 .05 def. | 
+ 42.18   ± \pm  2.55 | 
+ 24.44  ± \pm  0.15 | 
+ 30.44  ± \pm  2.20 | 
+
+ | 
+ .1 .1 | 
+ 33.96 | 
+ 25.33 | 
+ 30.92 | 
+
+ | 
+ .3 .3 | 
+ 31.39 | 
+ 24.08 | 
+ 28.83 | 
+
+ c c | 
+ .125 .125 | 
+ 32.92 | 
+ 19.11 | 
+ 30.17 | 
+
+ | 
+ .25 .25 def. | 
+ 42.18  ± \pm  2.55 | 
+ 24.44   ± \pm  0.15 | 
+ 30.44   ± \pm  2.20 | 
+
+ | 
+ .5 .5 | 
+ 42.29 | 
+ 17.78 | 
+ 25.67 | 
+
+ w − w^{-} | 
+ cons. def. | 
+ 42.18   ± \pm  2.55 | 
+ 24.44   ± \pm  0.15 | 
+ 30.44   ± \pm  2.20 | 
+
+ | 
+ proj. 0 0 | 
+ 41.88 | 
+ 23.87 | 
+ 28.33 | 
+
+ | 
+ proj. .05 .05 | 
+ 41.46 | 
+ 23.16 | 
+ 28.58 | 
+
+ Annot. | 
+ Q3-32B def. | 
+ 42.18   ± \pm  2.55 | 
+ 24.44   ± \pm  0.15 | 
+ 30.44  ± \pm  2.20 | 
+
+ | 
+ Gemma4-31B | 
+ 40.90 | 
+ 24.45 | 
+ 33.25 | 
+
+ Table 3: Ablation of routing hyperparameters and the frozen annotator on Qwen3-8B (%).
+
+ Each panel in Table 3 isolates one routing decision, either by disabling it or by sweeping its value: β + \beta_{+} controls how repaired errors affect positive-advantage rollouts, c c bounds the weight spread, w − w^{-} determines whether failure credit begins from support or observed error, and the annotator swap tests transfer across model families.
+
+ Support and error each carry useful signal. With β + = 0 \beta_{+}{=}0 , positive-advantage rollouts route credit by support use and negative-advantage ones route it by error propagation. This stripped rule already raises τ 2 \tau^{2} from 29.61 29.61 to 32.50 32.50 . A small positive-branch gate ( β + = 0.05 \beta_{+}{=}0.05 ) reaches 42.18 42.18 by reducing positive credit on actions whose earlier errors were repaired downstream. Within the β + \beta_{+} sweep, larger gates yield 33.96 33.96 and 31.39 31.39 on τ 2 \tau^{2} , indicating that error evidence refines support routing without taking its place.
+
+ Clipping prevents hubs from dominating the update. At c = 0.125 c{=}0.125 , routing stays near flat credit and reaches 32.92 32.92 on τ 2 \tau^{2} . Increasing the bound to c = 0.5 c{=}0.5 raises the in-domain score to 42.29 42.29 , but UserBench and AgentChangeBench fall to 17.78 17.78 and 25.67 25.67 . The default c = 0.25 c{=}0.25 gives the strongest joint in-domain and transfer profile.
+
+ Failure routing follows error propagation, not support centrality. The conservative branch begins from observable error and reaches 42.18 42.18 on τ 2 \tau^{2} and 30.44 30.44 on AgentChangeBench. Both projected variants start from the support prior and are lower on these measures. The two panels rule out degree-based explanations: positive and negative advantage follow different evidence.
+
+ The gain transfers across annotator families. Replacing Qwen3-32B with Gemma4-31B yields 40.90 40.90 on τ 2 \tau^{2} , 24.45 24.45 on UserBench, and 33.25 33.25 on AgentChangeBench. This transfer and the routing correlations in Table 4 indicate that IAPO does not rely on the default Qwen annotator’s particular outputs.
+
+ Annotator | 
+ Edge agreement | 
+ Routing agreement | 
+
+ | 
+ F1 e | 
+ Jaccard | 
+ Cohen’s κ \kappa | 
+ ρ ⁡ ( m + ) \rho(m^{+}) | 
+ ρ ⁡ ( m − ) \rho(m^{-}) | 
+ Sign agreement | 
+
+ Qwen3-32B (ref.) | 
+ 0.852 | 
+ 0.822 | 
+ 0.812 | 
+ – | 
+ – | 
+ – | 
+
+ Qwen3.5-27B | 
+ 0.875 | 
+ 0.846 | 
+ 0.833 | 
+ 0.769 | 
+ 1.000 | 
+ 0.858 | 
+
+ Gemma4-31B | 
+ 0.878 | 
+ 0.857 | 
+ 0.849 | 
+ 0.745 | 
+ 0.996 | 
+ 0.858 | 
+
+ DeepSeek-V4-Flash | 
+ 0.879 | 
+ 0.852 | 
+ 0.843 | 
+ 0.758 | 
+ 0.975 | 
+ 0.877 | 
+
+ Qwen3-235B-A22B | 
+ 0.860 | 
+ 0.836 | 
+ 0.809 | 
+ 0.732 | 
+ 0.984 | 
+ 0.848 | 
+
+ Qwen3.5-397B-A17B | 
+ 0.852 | 
+ 0.818 | 
+ 0.805 | 
+ 0.726 | 
+ 0.962 | 
+ 0.834 | 
+
+ Mean | 
+ 0.869 | 
+ 0.842 | 
+ 0.828 | 
+ 0.746 | 
+ 0.983 | 
+ 0.855 | 
+
+ Table 4: Cross-model annotation consistency. Edge agreement reports F1, Jaccard, and Cohen’s κ \kappa ; routing agreement reports Spearman correlations with the Qwen3-32B reference and sign agreement of the routed advantages.
+
+ Annotator Stability and Behavioral Analysis
+
+ Cross-annotator stability. We audit all 178 178 τ 2 \tau^{2} -Bench training tasks by rolling out the untrained Qwen3-8B policy once per task, yielding 2,349 2{,}349 annotated action nodes across airline, retail, and telecom. Six frozen annotators achieve 100 % 100\% parse rate. Their canonical edge sets show substantial set-level agreement (mean edge-typed F1 0.87 0.87 , source Jaccard 0.84 0.84 , mean pairwise Cohen’s κ = 0.83 \kappa{=}0.83 ). The routing quantities used by IAPO are also stable: against the Qwen3-32B reference, m + m^{+} has Spearman ρ = 0.73 \rho=0.73 – 0.77 0.77 , while m − m^{-} has ρ = 0.96 \rho=0.96 – 1.00 1.00 (Table 4 ). We further audit the lowest-agreement nodes in Appendix E. Disagreements fall mainly into benign, interpretable sources: interchangeable boilerplate turns (greetings, closings) where annotators pick different but near-identical preceding turns, and attribution breadth on already-failed steps (e.g., hallucinated tool calls) where annotators differ in attribution breadth, while generally agreeing that a fault exists. Neither source changes the routing multipliers, so agreement holds at both the edge and induced-routing levels.
+
+ Behavioral case study. Figure 3 illustrates a banking episode in AgentChangeBench ( Rana et al., 2025 ) whose goals shift from authentication to transaction review and fraud response. Before receiving identity information, GRPO uses the example phone exposed in the tool schema, obtains Maria Santos ( cust_101 ), and propagates the resulting account state ( acc_101 ) into its first transaction query. When the user later supplies the actual phone number, GRPO does not re-ground the customer and instead transfers to a human. IAPO first grounds Jordan Smith from the supplied name and date of birth, then retains the linked state ( cust_202 , acc_202 , and card_202 ) across goal shifts, eventually locking card_202 . The case study isolates state grounding and cross-goal reuse.
+
+ Figure 3: Banking case study with three successive goal shifts. (Left) GRPO anchors on a schema-example identity and propagates the wrong account state. (Right) IAPO grounds the correct customer from supplied credentials and retains the linked state across goals.
+
+ Function-calling retention evaluation. We use BFCL-v4 Multi-Turn ( Patil et al., 2024 ) as a function-calling retention check. Table 5 reports BFCL sub-splits at both scales. Relative to the untrained base, IAPO’s BFCL-MT score is essentially unchanged at 8B ( 39.36 39.36 vs. 39.38 39.38 ) and higher at 4B ( 31.89 31.89 vs. 31.38 31.38 ), so interactive training leaves out-of-distribution function calling intact.
+
+ Model | 
+ Method | 
+
+ Multi- 
+ Turn 
+ | 
+ Base | 
+
+ Multi- 
+ Function 
+ | 
+
+ Multi- 
+ Parameter 
+ | 
+ Long | 
+
+ 4B | 
+ Base (w/) | 
+ 31.38 | 
+ 43.50 | 
+ 27.00 | 
+ 28.50 | 
+ 26.50 | 
+
+ | 
+ GRPO | 
+ 31.69 | 
+ 39.61 | 
+ 30.67 | 
+ 28.28 | 
+ 28.22 | 
+
+ | 
+ GiGPO | 
+ 32.42 | 
+ 31.83 | 
+ 32.33 | 
+ 32.67 | 
+ 32.83 | 
+
+ | 
+ InfoPO | 
+ 29.94 | 
+ 37.94 | 
+ 29.00 | 
+ 26.50 | 
+ 26.33 | 
+
+ | 
+ IAPO | 
+ 31.89 | 
+ 40.06 | 
+ 30.78 | 
+ 28.28 | 
+ 28.44 | 
+
+ 8B | 
+ Base (w/) | 
+ 39.38 | 
+ 49.00 | 
+ 37.50 | 
+ 41.50 | 
+ 29.50 | 
+
+ | 
+ MUA-RL † | 
+ 24.75 | 
+ 35.50 | 
+ 21.50 | 
+ 22.00 | 
+ 20.00 | 
+
+ | 
+ GRPO | 
+ 39.04 | 
+ 48.94 | 
+ 40.67 | 
+ 34.78 | 
+ 31.78 | 
+
+ | 
+ GiGPO | 
+ 40.00 | 
+ 40.17 | 
+ 39.67 | 
+ 40.33 | 
+ 39.83 | 
+
+ | 
+ InfoPO | 
+ 38.01 | 
+ 49.39 | 
+ 37.44 | 
+ 30.78 | 
+ 34.44 | 
+
+ | 
+ IAPO | 
+ 39.36 | 
+ 48.33 | 
+ 39.61 | 
+ 36.00 | 
+ 33.50 | 
+
+ Table 5: BFCL-v4 Multi-Turn sub-split accuracy (%).
+
+ Conclusion
+
+ In this work, we proposed IAPO, a novel RL algorithm to tackle the credit assignment challenge in evolving-state multi-turn service-agent training. IAPO introduces a typed influence-dependency graph that enables fine-grained per-step credit assignment while retaining the original trajectory-level outcome signal. By extracting support-use and failed-use dependencies from completed rollouts, it achieves this without replacing the final outcome with an independently learned local reward or requiring counterfactual continuations. Across three interactive service-agent benchmarks, IAPO consistently improves over GRPO and competitive credit-assignment baselines. The gains are largest in interactions with rich user and tool exchanges, consistent with the intuition that dense dependencies among actions are where uniform trajectory-level credit is least informative. These results establish within-rollout dependency structure as a practical source of selective credit for sparse-outcome multi-turn agent training.
+
+ References
+
+ Arjona-Medina et al. (2019) 
+
+Arjona-Medina, J. A.; Gillhofer, M.; Widrich, M.; Unterthiner, T.;
+Brandstetter, J.; and Hochreiter, S. 2019.
+
+ RUDDER: Return Decomposition for Delayed Rewards.
+
+ In Advances in Neural Information Processing Systems ,
+volume 32.
+
+ Barres et al. (2025) 
+
+Barres, V.; Dong, H.; Ray, S.; Si, X.; and Narasimhan, K. 2025.
+
+ τ 2 \tau^{2} -Bench: Evaluating Conversational Agents in a Dual-Control
+Environment.
+
+ arXiv:2506.07982.
+
+ BitAgent (2025) 
+
+BitAgent. 2025.
+
+ BitAgent-8B.
+
+ https://huggingface.co/BitAgent/BitAgent-8B .
+
+ Commit hash ca31a77.
+
+ Budzianowski et al. (2018) 
+
+Budzianowski, P.; Wen, T.-H.; Tseng, B.-H.; Casanueva, I.; Ultes, S.; Ramadan,
+O.; and Gasic, M. 2018.
+
+ MultiWOZ – A Large-Scale Multi-Domain Wizard-of-Oz Dataset for
+Task-Oriented Dialogue Modelling.
+
+ In Proceedings of the 2018 conference on empirical methods in
+natural language processing , 5016–5026.
+
+ Cui et al. (2025) 
+
+Cui, G.; Yuan, L.; Wang, Z.; Wang, H.; Zhang, Y.; Chen, J.; Li, W.; He, B.;
+Fan, Y.; Yu, T.; et al. 2025.
+
+ Process reinforcement through implicit rewards.
+
+ arXiv:2502.01456.
+
+ DeepSeek-AI et al. (2025) 
+
+DeepSeek-AI; Liu, A.; Feng, B.; Xue, B.; Wang, B.; Wu, B.; Lu, C.; Zhao, C.;
+Deng, C.; Zhang, C.; Ruan, C.; et al. 2025.
+
+ DeepSeek-V3 Technical Report.
+
+ arXiv:2412.19437.
+
+ Deng et al. (2023) 
+
+Deng, X.; Gu, Y.; Zheng, B.; Chen, S.; Stevens, S.; Wang, B.; Sun, H.; and Su,
+Y. 2023.
+
+ Mind2web: Towards a generalist agent for the web.
+
+ In Advances in Neural Information Processing Systems ,
+volume 36, 28091–28114.
+
+ Ding et al. (2026) 
+
+Ding, Y.; Le, H.; Han, S.; Ruan, K.; Jin, Z.; Kumar, V.; Wang, Z.; and Deoras,
+A. 2026.
+
+ Empowering multi-turn tool-integrated agentic reasoning with group
+turn policy optimization.
+
+ In Proceedings of the 64th Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers) , 42409–42423.
+
+ Feng et al. (2026) 
+
+Feng, L.; Xue, Z.; Liu, T.; and An, B. 2026.
+
+ Group-in-group policy optimization for llm agent training.
+
+ Advances in Neural Information Processing Systems , 38:
+46375–46408.
+
+ Harutyunyan et al. (2019) 
+
+Harutyunyan, A.; Dabney, W.; Mesnard, T.; Azar, M. G.; Piot, B.; Heess, N.; van
+Hasselt, H.; Wayne, G.; Singh, S.; Precup, D.; et al. 2019.
+
+ Hindsight Credit Assignment.
+
+ In Advances in Neural Information Processing Systems .
+
+ Ji et al. (2025) 
+
+Ji, Y.; Ma, Z.; Wang, Y.; Chen, G.; Chu, X.; and Wu, L. 2025.
+
+ Tree Search for LLM Agent Reinforcement Learning.
+
+ arXiv:2509.21240.
+
+ Kong et al. (2026) 
+
+Kong, F.; Zhang, J.; Deng, M.; Wu, C.; Luo, Y.; and Liu, B. 2026.
+
+ InfoPO: Information-Driven Policy Optimization for User-Centric
+Agents.
+
+ In Forty-third International Conference on Machine Learning .
+
+ Lai et al. (2024) 
+
+Lai, X.; Tian, Z.; Chen, Y.; Yang, S.; Peng, X.; and Jia, J. 2024.
+
+ Step-DPO: Step-Wise Preference Optimization for Long-Chain
+Reasoning of LLMs.
+
+ arXiv:2406.18629.
+
+ Li et al. (2023) 
+
+Li, M.; Zhao, Y.; Yu, B.; Song, F.; Li, H.; Yu, H.; Li, Z.; Huang, F.; and Li,
+Y. 2023.
+
+ API-Bank: A Comprehensive Benchmark for Tool-Augmented LLMs.
+
+ In Proceedings of the 2023 conference on empirical methods in
+natural language processing , 3102–3116.
+
+ Li et al. (2026) 
+
+Li, Z.; Kang, L.; Xiao, F.; Xing, L.; Si, Q.; Li, Z.; Gong, W.; Yang, D.; Xiao,
+Y.; and Guo, H. 2026.
+
+ Outcome-Grounded Advantage Reshaping for Fine-Grained Credit
+Assignment in Mathematical Reasoning.
+
+ arXiv:2601.07408.
+
+ Lightman et al. (2024) 
+
+Lightman, H.; Kosaraju, V.; Burda, Y.; Edwards, H.; Baker, B.; Lee, T.; Leike,
+J.; Schulman, J.; Sutskever, I.; and Cobbe, K. 2024.
+
+ Let’s Verify Step by Step.
+
+ In International Conference on Learning Representations ,
+volume 2024, 39578–39601.
+
+ Liu et al. (2025a) 
+
+Liu, W.; Huang, X.; Zeng, X.; Hao, X.; Yu, S.; Li, D.; Wang, S.; Gan, W.; Liu,
+Z.; Yu, Y.; Wang, Z.; Wang, Y.; Ning, W.; Hou, Y.; Wang, B.; Wu, C.; Wang,
+X.; Liu, Y.; Wang, Y.; Tang, D.; Tu, D.; Shang, L.; Jiang, X.; Tang, R.;
+Lian, D.; Liu, Q.; and Chen, E. 2025a.
+
+ ToolACE: Winning the Points of LLM Function Calling.
+
+ In The Thirteenth International Conference on Learning
+Representations .
+
+ Liu et al. (2024) 
+
+Liu, X.; Yu, H.; Zhang, H.; Xu, Y.; Lei, X.; Lai, H.; Gu, Y.; Ding, H.; Men,
+K.; Yang, K.; et al. 2024.
+
+ Agentbench: Evaluating llms as agents.
+
+ In International Conference on Learning Representations ,
+volume 2024, 52989–53046.
+
+ Liu et al. (2025b) 
+
+Liu, Z.; Chen, C.; Li, W.; Qi, P.; Pang, T.; Du, C.; Lee, W. S.; and Lin, M.
+2025b.
+
+ Understanding r1-zero-like training: A critical perspective.
+
+ arXiv:2503.20783.
+
+ Mesnard et al. (2021) 
+
+Mesnard, T.; Weber, T.; Viola, F.; Thakoor, S.; Saade, A.; Harutyunyan, A.;
+Dabney, W.; Stepleton, T.; Heess, N.; Guez, A.; et al. 2021.
+
+ Counterfactual Credit Assignment in Model-Free Reinforcement
+Learning.
+
+ In International Conference on Machine Learning .
+
+ Mialon et al. (2024) 
+
+Mialon, G.; Fourrier, C.; Wolf, T.; LeCun, Y.; and Scialom, T. 2024.
+
+ GAIA: A Benchmark for General AI Assistants.
+
+ In International Conference on Learning Representations ,
+volume 2024, 9025–9049.
+
+ Ng, Harada, and Russell (1999) 
+
+Ng, A. Y.; Harada, D.; and Russell, S. 1999.
+
+ Policy invariance under reward transformations: Theory and
+application to reward shaping.
+
+ In International Conference on Machine Learning , volume 99,
+278–287. Citeseer.
+
+ OpenAI et al. (2024) 
+
+OpenAI; Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.; Aleman,
+F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.; Anadkat, S.; et al. 2024.
+
+ GPT-4 Technical Report.
+
+ arXiv:2303.08774.
+
+ Parthasarathi et al. (2025) 
+
+Parthasarathi, P.; Reymond, M.; Chen, B.; Cui, Y.; and Chandar, S. 2025.
+
+ GRPO- λ \lambda : Credit Assignment improves LLM Reasoning.
+
+ arXiv:2510.00194.
+
+ Patil et al. (2024) 
+
+Patil, S. G.; Zhang, T.; Wang, X.; and Gonzalez, J. E. 2024.
+
+ Gorilla: Large language model connected with massive apis.
+
+ In Advances in Neural Information Processing Systems ,
+volume 37, 126544–126565.
+
+ Qian et al. (2025a) 
+
+Qian, C.; Liu, Z.; Prabhakar, A.; Liu, Z.; Zhang, J.; Chen, H.; Ji, H.; Yao,
+W.; Heinecke, S.; Savarese, S.; Xiong, C.; and Wang, H. 2025a.
+
+ UserBench: An Interactive Gym Environment for User-Centric Agents.
+
+ arXiv:2507.22034.
+
+ Qian et al. (2025b) 
+
+Qian, C.; Liu, Z.; Prabhakar, A.; Qiu, J.; Liu, Z.; Chen, H.; Kokane, S.; Ji,
+H.; Yao, W.; Heinecke, S.; et al. 2025b.
+
+ UserRL: Training Interactive User-Centric Agent via Reinforcement
+Learning.
+
+ arXiv:2509.19736.
+
+ Qin et al. (2023) 
+
+Qin, Y.; Liang, S.; Ye, Y.; Zhu, K.; Yan, L.; Lu, Y.; Lin, Y.; Cong, X.; Tang,
+X.; Qian, B.; et al. 2023.
+
+ ToolLLM: Facilitating Large Language Models to Master 16000+
+Real-World APIs.
+
+ In The twelfth international conference on learning
+representations .
+
+ Rana et al. (2025) 
+
+Rana, M.; Man, C.; Msiiwa, A. E.; Paine, J.; Zhu, K.; Dev, S.; Sharma, V.; and
+R, A. M. 2025.
+
+ AgentChangeBench: A Multi-Dimensional Evaluation Framework for
+Goal-Shift Robustness in Conversational AI.
+
+ arXiv:2510.18170.
+
+ Samanta et al. (2026) 
+
+Samanta, A.; Magesh, A.; Jain, A.; Yu, Y.; Jiang, D.; Asadi, K.; Hassani, K.;
+Sajda, P.; Bhandari, J.; and Efroni, Y. 2026.
+
+ Credit Assignment with Resets in Language Model Reasoning.
+
+ arXiv:2605.25507.
+
+ Schick et al. (2023) 
+
+Schick, T.; Dwivedi-Yu, J.; Dessì, R.; Raileanu, R.; Lomeli, M.; Hambro,
+E.; Zettlemoyer, L.; Cancedda, N.; and Scialom, T. 2023.
+
+ Toolformer: Language Models Can Teach Themselves to Use Tools.
+
+ In Advances in Neural Information Processing Systems ,
+volume 36, 68539–68551.
+
+ Schulman et al. (2017) 
+
+Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017.
+
+ Proximal policy optimization algorithms.
+
+ arXiv:1707.06347.
+
+ Shao et al. (2024) 
+
+Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.;
+Li, Y.; Wu, Y.; et al. 2024.
+
+ DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open
+Language Models.
+
+ arXiv:2402.03300.
+
+ Sheng et al. (2025) 
+
+Sheng, G.; Zhang, C.; Ye, Z.; Wu, X.; Zhang, W.; Zhang, R.; Peng, Y.; Lin, H.;
+and Wu, C. 2025.
+
+ HybridFlow: A Flexible and Efficient RLHF Framework.
+
+ In Proceedings of the Twentieth European Conference on Computer
+Systems , EuroSys ’25, 1279–1297. New York, NY, USA: Association for
+Computing Machinery.
+
+ ISBN 9798400711961.
+
+ Shridhar et al. (2021) 
+
+Shridhar, M.; Yuan, X.; Côté, M.-A.; Bisk, Y.; Trischler, A.; and
+Hausknecht, M. 2021.
+
+ ALFWorld: Aligning Text and Embodied Environments for Interactive
+Learning.
+
+ In Proceedings of the International Conference on Learning
+Representations .
+
+ Tan et al. (2026) 
+
+Tan, H.-Z.; Yang, X.-W.; Chen, H.; Shao, J.-J.; Wen, Y.; Shen, Y.; Luo, W.; Du,
+X.; Guo, L.-Z.; and Li, Y.-F. 2026.
+
+ Hindsight credit assignment for long-horizon llm agents.
+
+ arXiv:2603.08754.
+
+ Team et al. (2023) 
+
+Team, G.; Anil, R.; Borgeaud, S.; Alayrac, J.-B.; Yu, J.; Soricut, R.;
+Schalkwyk, J.; Dai, A. M.; Hauth, A.; Millican, K.; et al. 2023.
+
+ Gemini: a family of highly capable multimodal models.
+
+ arXiv:2312.11805.
+
+ Ultes et al. (2017) 
+
+Ultes, S.; Barahona, L. M. R.; Su, P.-H.; Vandyke, D.; Kim, D.; Casanueva, I.;
+Budzianowski, P.; Mrkšić, N.; Wen, T.-H.; Gasic, M.; et al. 2017.
+
+ PyDial: A Multi-Domain Statistical Dialogue System Toolkit.
+
+ In Proceedings of the Annual Meeting of the Association for
+Computational Linguistics, System Demonstrations , 73–78.
+
+ Wang et al. (2023) 
+
+Wang, X.; Wang, Z.; Liu, J.; Chen, Y.; Yuan, L.; Peng, H.; and Ji, H. 2023.
+
+ Mint: Evaluating llms in multi-turn interaction with tools and
+language feedback.
+
+ arXiv:2309.10691.
+
+ Wang et al. (2025) 
+
+Wang, Z.; Wang, K.; Wang, Q.; Zhang, P.; Li, L.; Yang, Z.; Jin, X.; Yu, K.;
+Nguyen, M. N.; Liu, L.; et al. 2025.
+
+ RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn
+Reinforcement Learning.
+
+ arXiv:2504.20073.
+
+ Wei et al. (2025) 
+
+Wei, Q.; Zeng, S.; Li, C.; Brown, W.; Frunza, O.; Deng, W.; Schneider, A.;
+Nevmyvaka, Y.; Zhao, Y. K.; Garcia, A.; et al. 2025.
+
+ Reinforcing multi-turn reasoning in llm agents via turn-level reward
+design.
+
+ arXiv:2505.11821.
+
+ Xie et al. (2026) 
+
+Xie, Y.; Thomas, N.; Hansen, N.; Fu, Y.; Li, L. E.; and Wang, X. 2026.
+
+ Tips: Turn-level information-potential reward shaping for
+search-augmented llms.
+
+ arXiv:2603.22293.
+
+ Yang et al. (2025) 
+
+Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.;
+Huang, C.; Lv, C.; et al. 2025.
+
+ Qwen3 Technical Report.
+
+ arXiv:2505.09388.
+
+ Yao et al. (2022a) 
+
+Yao, S.; Chen, H.; Yang, J.; and Narasimhan, K. 2022a.
+
+ WebShop: Towards Scalable Real-World Web Interaction with Grounded
+Language Agents.
+
+ In Advances in Neural Information Processing Systems ,
+volume 35, 20744–20757.
+
+ Yao et al. (2024) 
+
+Yao, S.; Shinn, N.; Razavi, P.; and Narasimhan, K. 2024.
+
+ τ \tau -bench: A Benchmark for Tool-Agent-User Interaction in
+Real-World Domains.
+
+ arXiv:2406.12045.
+
+ Yao et al. (2022b) 
+
+Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y.
+2022b.
+
+ ReAct: Synergizing Reasoning and Acting in Language Models.
+
+ arXiv:2210.03629.
+
+ Yu et al. (2026) 
+
+Yu, Q.; Zhang, Z.; Zhu, R.; Yuan, Y.; Zuo, X.; Yue, Y.; Dai, W.; Fan, T.; Liu,
+G.; Liu, L.; et al. 2026.
+
+ Dapo: An open-source llm reinforcement learning system at scale.
+
+ Advances in Neural Information Processing Systems , 38:
+113222–113244.
+
+ Zhang et al. (2026a) 
+
+Zhang, Y.; Tang, S.; Li, Z.; Han, Z.; and Tresp, V. 2026a.
+
+ WebArbiter: A Principle-Guided Reasoning Process Reward Model for
+Web Agents.
+
+ arXiv:2601.21872.
+
+ Zhang et al. (2026b) 
+
+Zhang, Z.; Zhao, F.; Wang, R.; Wang, Z.; Liang, B.; Wang, J.; Hu, Y.; Cao, S.;
+and Wong, K.-F. 2026b.
+
+ Robust Tool Use via Fission-GRPO: Learning to Recover from
+Execution Errors.
+
+ In Proceedings of the Conference of the Association for
+Computational Linguistics .
+
+ Zhao et al. (2025) 
+
+Zhao, W.; Wang, X.; Ma, C.; Kong, L.; Yang, Z.; Tuo, M.; Shi, X.; Zhai, Y.; and
+Cai, X. 2025.
+
+ MUA-RL: Multi-Turn User-Interacting Agent Reinforcement Learning
+for Agentic Tool Use.
+
+ arXiv:2508.18669.
+
+ Zhao et al. (2023) 
+
+Zhao, Y.; Gu, A.; Varma, R.; Luo, L.; Huang, C.-C.; Xu, M.; Wright, L.;
+Shojanazeri, H.; Ott, M.; Shleifer, S.; et al. 2023.
+
+ PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel.
+
+ arXiv:2304.11277.
+
+ Zheng et al. (2025) 
+
+Zheng, C.; Liu, S.; Li, M.; Chen, X.-H.; Yu, B.; Gao, C.; Dang, K.; Liu, Y.;
+Men, R.; Yang, A.; et al. 2025.
+
+ Group sequence policy optimization.
+
+ arXiv:2507.18071.
+
+ Zhou et al. (2024a) 
+
+Zhou, S.; Xu, F. F.; Zhu, H.; Zhou, X.; Lo, R.; Sridhar, A.; Cheng, X.; Ou, T.;
+Bisk, Y.; Fried, D.; et al. 2024a.
+
+ Webarena: A realistic web environment for building autonomous agents.
+
+ In International Conference on Learning Representations ,
+volume 2024, 15585–15606.
+
+ Zhou et al. (2025) 
+
+Zhou, Y.; Jiang, S.; Tian, Y.; Weston, J.; Levine, S.; Sukhbaatar, S.; and Li,
+X. 2025.
+
+ SWEET-RL: Training Multi-Turn LLM Agents on Collaborative
+Reasoning Tasks.
+
+ arXiv:2503.15478.
+
+ Zhou et al. (2024b) 
+
+Zhou, Y.; Zanette, A.; Pan, J.; Levine, S.; and Kumar, A. 2024b.
+
+ Archer: Training language model agents via hierarchical multi-turn
+rl.
+
+ arXiv:2402.19446.
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

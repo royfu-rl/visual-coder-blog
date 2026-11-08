@@ -1,0 +1,1041 @@
+SimWorlds: A Multi-Agent System for Dynamic 3D Scene Creation 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+ Code-Driven and Procedural 3D Scene Generation. 
+ Render-Inspect Loops and Editing Benchmarks. 
+ Neural Text-to-3D and Text-to-4D. 
+ LLM Agents and Long-Horizon Execution. 
+ 3 Method 
+ 3.1 Staged Construction Pipeline 
+ Scene Plan. 
+ Per-Stage Execution Loop. 
+ Final Render and Review. 
+ Edit Mode. 
+ 3.2 Scene Protocol and Verifier 
+ Protocol structure. 
+ Bipartite plan graph. 
+ Rule families. 
+ 3.3 Tool Suite 
+ 3.4 Knowledge 
+ 4 Experiments 
+ 4.1 Setup 
+ Benchmark. 
+ Evaluation Metrics. 
+ Baseline. 
+ 4.2 Results 
+ Quantitative Results. 
+ Qualitative Results. 
+ Scene Editing. 
+ 4.3 Ablations 
+ 5 Limitations 
+ 6 Conclusion 
+ References 
+ A Implementation Details 
+ Stack. 
+ Scene Plan. 
+ Per-Stage Loop Implementation. 
+ Agents. 
+ MCP tool server. 
+ Knowledge base. 
+ Asset Licences. 
+ B Scene Protocol and Verifier Ruleset 
+ Protocol structure. 
+ Ruleset. 
+ C Evaluation Protocol: Engine-State Audit and VLM Judge 
+ C.1 Engine-state audit 
+ Ground truth. 
+ Predicate library. 
+ Aggregates. 
+ SPR cross-system fairness. 
+ C.2 Itemized VLM judge 
+ D Benchmark Details 
+ Composition. 
+ Example prompts. 
+ Authoring protocol. 
+ VIGA run protocol. 
+ E BlenderBench Setup 
+ Task structure. 
+ Difficulty levels. 
+ Evaluation metrics. 
+ License: CC BY 4.0
+arXiv:2607.01766v1 [cs.AI] 02 Jul 2026
+ SimWorlds: A Multi-Agent System for Dynamic 3D Scene Creation
+ Chunjiang Liu   Xiaoyuan Wang   Haoyu Chen   Yizhou Zhao
+ Ming-Hsuan Yang   László A. Jeni
+ Affiliation: Carnegie Mellon University   Harvard University   University of California, Merced https://dynsimworlds.github.io 
+ Abstract
+ LLM agents are increasingly used to translate natural language into 3D scenes in a procedural way, but existing systems focus on static output. Dynamic 4D scenes from text alone, in which liquids flow, particles emit, rigid bodies cascade, and articulated mechanisms move, remain largely unexplored despite their value as editable content and as physics-grounded training data for video generation and embodied AI.
+Two challenges set the dynamic case apart from static text-to-scene work: an agent must jointly coordinate spatial layout, multiple physics solvers, temporal sequencing, camera, and lighting in a single coherent scene, and verifying motion correctness from rendered video is fundamentally harder than judging a single image. We present SimWorlds: a multi-agent framework that produces dynamic, editable 4D scenes from text, with Blender-specific procedural knowledge, a planner–coder–reviewer workflow driving a fixed ordered sequence of construction stages, a layered scene protocol enforced by a deterministic verifier, and a runtime-state inspection tool suite that catches mechanism failures the rendered image cannot reveal. We also introduce 4DBuildBench, a benchmark for assessing both visual fidelity and physical consistency of the procedural dynamic 3D scenes generated from text prompts. Experiments show that SimWorlds outperforms prior dynamic Blender generation baselines.
+ Figure 1 : SimWorlds turns text into dynamic, editable 3D Blender scenes. Given a natural-language prompt, a planner, coder, and reviewer cooperate to emit a .blend whose geometry, materials, lighting, camera, and motion all remain controllable for downstream editing and reuse. 
+ 1 Introduction
+ A modern 3D generative system is increasingly expected to produce more than a visually plausible render.
+For downstream graphics, simulation, and content-creation workflows, the desired output is an editable scene artifact: a Blender project in which geometry, materials, lighting, cameras, animation, and physics solvers remain explicit and controllable.
+Recent text-to-3D methods have made rapid progress on object-level assets [ 1 , 2 , 3 ] , and LLM agents have begun to construct static scenes from natural language [ 4 , 5 , 6 , 7 , 8 ] .
+Generating a dynamic 3D scene from text alone is substantially harder: a dynamic scene must not only look correct in rendered frames but be produced through the correct underlying mechanisms, drawing on rigid-body simulation, cloth, fluids, particles, force fields, deformers, and keyframed control, often combined within a single shot.
+ This distinction exposes a failure mode largely absent in static generation. In a static scene, visual inspection is a reasonable proxy for correctness; in a dynamic scene, the same rendered video can correspond to very different underlying states: a tablecloth that drapes via a cloth solver, via hand-authored shape keys, or via keyframed mesh edits renders identically, yet only the solver version stays editable, composable, and physically meaningful as the scene changes. Text-to-dynamic-scene generation therefore demands mechanism correctness, not just visual plausibility.
+ Existing LLM-agent pipelines for Blender are not designed around this requirement. Most render the scene, ask a vision-language model to critique the image, and revise the code, which catches missing objects and obvious material errors but cannot tell whether a fluid domain, properly configured flow and effector objects, and a baked cache exist, or whether the geometry is merely animated. As objects, interactions, and temporal phases multiply, these unchecked failures compound, and the final scene approximates the prompt visually while remaining unusable as a 4D asset.
+ We formulate dynamic 3D scene generation as plan-grounded, mechanism-aware program synthesis. A text prompt is first converted into an explicit scene plan specifying objects, spatial composition, physical roles and motion phases.
+Generation then proceeds through an ordered sequence of typed subtasks, each with its own context, acceptance criteria, and verification.
+Crucially, review is not limited to rendered images: the agent inspects the live Blender state, checking whether the expected modifiers are attached, whether physics caches are baked, whether simulated actors move over the intended temporal phase, and whether collision and effector relationships are present.
+ We instantiate this formulation as SimWorlds, a multi-agent framework for text-to-4D scene generation in Blender. A planner compiles the prompt into a structured scene plan; a coder then builds the scene through a fixed ordered sequence of typed stages, each closed by a deterministic verifier that checks the assembled state against a layered scene protocol and a reviewer that judges per-stage criteria, with failed checks triggering localised retries that keep early errors from contaminating later behaviour. Engine-level tools let both the coder and the reviewer read Blender’s runtime state: modifier stacks, physics caches, animation channels, and multi-angle previews. A knowledge base auto-derived from upstream Blender sources supplies procedural detail on demand. The result is an editable .blend file whose geometry, materials, lighting, camera, and dynamics remain available for downstream editing, resimulation, and reuse.
+ We evaluate SimWorlds on text-only dynamic scene generation and on multi-step Blender editing via BlenderBench [ 8 ] .
+Compared with visual-only agent baselines, SimWorlds improves both scene-level correctness and physical integrity, with the gap widening sharply on complex inputs: generation prompts that require multiple interacting objects, long temporal structure, or nontrivial solver configuration, and edit instructions that span several objects or modify physics simultaneously.
+ Our contributions are:
+ • 
+ We present SimWorlds, an LLM-agent system that turns text into an editable 4D Blender project: geometry, materials, lighting, cameras, animation, and physics, all controllable.
+ • 
+ We build a controllable, physics-grounded generation pipeline that combines a scene protocol and deterministic verifier, render-based review, and an engine-level tool suite.
+ • 
+ We introduce 4DBuildBench, 50 scenes across five solver categories (cloth, fluid, rigid body, particle, soft body) and three difficulty levels plus a static category, paired with a two-track evaluation: a deterministic engine-state audit for mechanism correctness, and an itemized VLM judge for whether the prompt’s content is visually delivered.
+ 2 Related Work
+ Code-Driven and Procedural 3D Scene Generation.
+ A growing line of work treats Blender as the runtime for an LLM agent that synthesises scene-construction code. SceneCraft [ 4 ] and 3D-GPT [ 5 ] translate text into Blender scripts coordinated through relational scene graphs. BlenderAlchemy [ 9 ] iteratively refines materials under VLM feedback. LL3M [ 6 ] composes planner, retrieval, and coder agents over a BlenderRAG knowledge base, and reports object-level results at high quality. A complementary thread bypasses learned generation entirely: procedural pipelines such as Infinigen [ 10 ] hand-craft generators for Blender-rendered nature scenes, and ProcTHOR [ 11 , 12 , 13 ] programmatically synthesises indoor environments for embodied agents. Layout-generation methods predict object placements from text, scene graphs, or partial context [ 14 , 15 , 16 , 17 , 18 , 19 ] , typically retrieving furniture from large asset libraries [ 20 , 21 ] . These systems share our artifact target, an editable, code-defined Blender file, but their headline results target static objects or single-room layouts; the dynamic regime, in which motion and physics are first-class outputs, has not been demonstrated end-to-end from text.
+ Render-Inspect Loops and Editing Benchmarks.
+ A parallel thread closes the verification loop by rendering the in-progress scene and asking a VLM to identify discrepancies. VIGA [ 8 ] formalises this as a code-render-inspect loop and is the closest published system to ours; it conditions on a reference image of the target and reports a 4D mode through qualitative figures only. Alongside its system, VIGA introduces BlenderBench, an open-ended editing suite of 27 tasks spanning spatial adjustments, progressive editing, and compositional generation, on which existing one-shot baselines remain far below human performance. A separate effort, BlenderGym [ 22 ] , contributes 245 handcrafted editing tasks and explicitly identifies a class of failures uncaught by its own photometric and CLIP-based metrics: scenes that match the goal pixels through the wrong mechanism. SimWorlds retains the iterative-verification design but drives it with both rendered previews and mechanism-level signals (bake state, modifier stack, fcurves, motion deltas) read from the engine itself, and extends the loop to text-only 4D. Our edit mode runs unchanged on BlenderBench, enabling a direct comparison with VIGA on the benchmark it introduced.
+ Neural Text-to-3D and Text-to-4D.
+ A separate paradigm produces 3D and 4D content as neural representations rather than as graphics-engine code. Object-level methods distil 2D priors into NeRFs or 3D Gaussians [ 1 , 23 , 24 , 25 , 2 , 3 , 26 , 27 , 28 , 29 , 30 , 31 ] , with multi-view and image-conditioned variants resolving Janus-like inconsistencies [ 32 , 33 , 34 ] . Scene-level optimisation extends this to layouts, rooms, and gallery environments [ 35 , 36 , 37 , 38 , 39 , 40 ] . 4D variants animate the representation with video priors [ 41 , 42 , 43 , 44 , 45 , 46 , 47 , 48 , 49 ] , themselves drawing on text-to-image and text-to-video diffusion [ 50 , 51 , 52 , 53 , 54 , 55 , 56 ] . Physics-aware methods attach material parameters to existing fields [ 57 , 58 ] , while system-identification methods recover per-object physical parameters from video through differentiable simulation or learned neural constitutive models [ 59 , 60 ] . This output is visually compelling but is not our target artifact: it cannot be opened in Blender, resimulated, or composed with downstream tools, and its motion is learned rather than solved. Kubric [ 61 ] renders programmatic Blender physics but is configured by code, not natural language; none of these produce the editable, physics-driven scenes in Blender that our system targets.
+ LLM Agents and Long-Horizon Execution.
+ Outside graphics, a parallel line of work studies what makes LLM agents reliable on long-horizon tasks. ReAct [ 62 ] and Reflexion [ 63 ] alternate reasoning with environment feedback; Self-Refine [ 64 ] formalises iterative revision, while Huang and others [65] caution that LLMs cannot reliably self-correct without external grounding; Voyager [ 66 ] , Toolformer [ 67 ] , CRITIC [ 68 ] , and CodeAct [ 69 ] ground critique and action in tool calls and code; AutoGen [ 70 ] , MetaGPT [ 71 ] , and ChatDev [ 72 ] factorise tasks across role-specialised agents. Recent perspectives crystallise the load-bearing components as context engineering [ 73 , 74 ] , tool design [ 75 ] , and plan-grounded execution [ 76 , 77 ] . SimWorlds adopts these as its spine; the contribution is not the principles but their instantiation for 4D scene generation in Blender: context scoped to typed stages, tools that read runtime state alongside previews, and a plan whose physics commitments are reconciled against the engine after every step.
+ 3 Method
+ SimWorlds is organised around one idea: a correct render does not guarantee a correctly built scene, so every construction step is validated against Blender’s engine state rather than its rendered image, and the scene is assembled through a fixed, checkable sequence of stages so that structural and mechanism errors are caught deterministically and early. Concretely, SimWorlds turns a text prompt into a dynamic, editable scene by separating one-shot planning from a stage-by-stage execute–verify–review loop (Alg. 1 ).
+The planner first converts the prompt into a global scene plan that specifies objects, their spatial layout as a typed relation graph, physical properties, motion phases, and rendering intent.
+Generation then proceeds through a fixed ordered sequence of construction stages (modeling, UV, texture, deformation setup, motion, camera, light, render); for each, the planner emits a tactical plan against the scene plan, and may opt a stage out for scenes that do not need it.
+At each stage the coder writes a bpy script that extends a running scene, an orchestrator-side verifier mechanically checks the resulting Blender state against a fixed protocol, and a reviewer agent then judges per-stage acceptance criteria from rendered previews and runtime readouts before the pipeline advances.
+Figure 2 sketches the full loop, which rests on two core mechanisms (each validated by its own ablation, § 4.3 ) and two enabling components.
+The first core mechanism is a staged construction pipeline (§ 3.1 ) that anchors every coder turn to a single structured specification rather than to an open-ended task list, so retries and reviews are well-scoped.
+The second is a scene protocol layered on Blender’s natives and the orchestrator-side verifier that enforces it (§ 3.2 ); together they turn assembly correctness into a deterministic check, catching structural failures (e.g. missing parent chains, ungrounded objects, undeclared interpenetrations) before any visual verification runs.
+Two enabling components complete the loop: a tool suite (§ 3.3 ) that gives the verifier and reviewer direct runtime-state readouts and multi-angle previews, and an auto-derived knowledge base (§ 3.4 ) that supplies Blender-specific procedural knowledge per stage.
+ Figure 2 : Pipeline overview. The planner compiles the prompt into a single scene plan; construction then proceeds through a fixed stage sequence, each stage running the coder, a deterministic verifier (scene protocol, § 3.2 ), and a reviewer, with failed checks triggering bounded local retries. Once all stages close, the scene is rendered as a frame-sequence video. 
+ 3.1 Staged Construction Pipeline
+ SimWorlds builds on a fixed pipeline of construction stages $\mathcal{S}$ : modeling, UV, texture, deformation setup, motion, camera, light, and render, applied in the same order to every scene. The order follows the dependency structure of a Blender scene: materials depend on UVs, deformers on geometry, motion on rigging, and lighting and camera on the assembled scene. The planner emits a single global scene plan once, then a per-stage tactical plan at each stage entry, and may opt a stage out when a scene does not need it (e.g. UV/texture for primitive geometry, deformation setup for fully rigid scenes). Staging this way keeps retries, checkpoints, and reviewer scope well-defined per stage, while the global scene plan stays immutable across the run (Alg. 1 ).
+ SimWorlds staged construction loop. 
+ 1: 
+ prompt $q$ ; fixed stage sequence $\mathcal{S}=(s^{1},\ldots,s^{N})$ ; initial scene state $\sigma_{0}=\emptyset$ 
+ 2: 
+ $\mathcal{P}\leftarrow\textsc{StrategicPlanner}(q)$ $\triangleright$ scene plan: scene specification + relation graph + motion phases + per-stage opt-outs
+ 3: 
+ for $k=1$ to $N{-}1$ do $\triangleright$ construction stages (render handled separately)
+ 4: 
+    if $s^{k}\in\mathcal{P}.\texttt{opt\_out}$ then $\sigma_{k}\leftarrow\sigma_{k-1}$ ; continue $\triangleright$ skipped stage carries state forward    
+ 5: 
+    $f\leftarrow\emptyset$ $\triangleright$ feedback: verifier + reviewer reports
+ 6: 
+    repeat 
+ 7: 
+     $\tau_{k}\leftarrow\textsc{TacticalPlanner}(s^{k},\mathcal{P},\sigma_{k-1})$ 
+ 8: 
+     $\sigma_{k}\leftarrow\textsc{Exec}(\textsc{Coder}(\tau_{k},\sigma_{k-1},f))$ 
+ 9: 
+     $v_{k}\leftarrow\textsc{Verifier}(\sigma_{k},\mathcal{P})$ $\triangleright$ deterministic: scene protocol (§ 3.2 )
+ 10: 
+     $\rho_{k}\leftarrow\textsc{Reviewer}(\tau_{k},\mathcal{P},\sigma_{k})$ $\triangleright$ perceptual: per-stage criteria
+ 11: 
+     $f\leftarrow(v_{k},\rho_{k})$ ; $d\leftarrow\textsc{Planner}(v_{k},\rho_{k})$ $\triangleright$ advance / retry / replan
+ 12: 
+    until $d=\texttt{advance}$ or retries/replans exhausted ( $\Rightarrow$ abort ) $\triangleright$ retries/replans bounded; see App A 
+ 13: 
+    $\textsc{Checkpoint}(\sigma_{k},s^{k})$ 
+ 14: 
+ $\mathcal{O}\leftarrow\textsc{Render}(\sigma_{N-1})$ $\triangleright$ frame sequence
+ 15: 
+ $\rho^{\star}\leftarrow\textsc{FinalReviewer}(\mathcal{P},\mathcal{O})$ 
+ 16: 
+ if $\rho^{\star}=\texttt{needs\_fix}$ then 
+ 17: 
+    $\sigma_{N-1}\leftarrow\textsc{Exec}(\textsc{Coder}(\rho^{\star},\sigma_{N-1}))$ ; $\mathcal{O}\leftarrow\textsc{Render}(\sigma_{N-1})$ 
+ 18: 
+ return $(\mathcal{O},\sigma_{N-1})$ 
+ Algorithm 1 The strategic planner emits one global scene plan; construction then runs the fixed stage sequence. Each stage repeats coder, deterministic verifier (scene protocol, § 3.2 ), and reviewer until the planner advances it, so a hard verifier or reviewer failure cannot pass; the stage aborts once its retry and replan budgets are exhausted. After all stages close, the scene is rendered and a final reviewer judges the output. 
+ Scene Plan.
+ The scene plan consists of three parts: a scene specification (objects with dimensions, PBR material, position, and physics role; a typed relation graph over objects encoding spatial assembly; coordinated groups; lighting; camera; render), a motion plan for dynamic scenes, and a list of stages to opt out for the current scene. Full field schemas are listed in Appendix A .
+ Per-Stage Execution Loop.
+ At stage $s^{k}$ , the orchestrator opens a fresh coder and reviewer session, while the planner persists across the whole run, and drives a per-stage state machine. The tactical planner first emits a plan $\tau_{k}$ specifying the assets to realise, the relations to satisfy, the per-stage acceptance criteria, and the perceptual judgments the reviewer should answer. The coder extends the live scene with a bpy script; the verifier of § 3.2 checks the assembled state; and the reviewer judges $\tau_{k}$ ’s perceptual criteria from rendered previews and the structured scene readout, additionally consuming per-phase motion evidence on motion stages. On this evidence the planner chooses one of four transitions: it can advance to the next stage; retry, having the coder reuse its session to fix the current attempt from the verifier and reviewer feedback; replan, revising the tactical plan itself; or abort. A hard verifier failure or a blocking review can never advance: the orchestrator forces a retry, so the stage loops through coder, verifier, reviewer, and decision until it passes, and retries and replans stay bounded.
+ Final Render and Review.
+ Once every construction stage closes, the runner renders the scene as a single frame for static scenes or a frame-sequence video for dynamic ones, and a separate final reviewer judges the rendered result against the plan. A failed verdict rolls back to the last stage checkpoint, re-invokes the coder once with consolidated fix instructions, and re-renders.
+ Edit Mode.
+ The same loop accommodates edit-style prompts at no architectural cost.
+Given an existing .blend file, a natural-language instruction, and an optional reference image of the target, the runner loads the file, populates $s_{0}$ from the file’s scene state, attaches the reference image as additional planner context, and asks the planner to decompose the request into edit-only tasks (additions, modifications, removals) rather than redoing static elements that already exist correctly.
+ 3.2 Scene Protocol and Verifier
+ Blender’s native scene graph (parent–child, collections, modifiers, drivers, constraints) expresses transform inheritance, organisation, and runtime dependencies, but it does not express assembly correctness. There is no native primitive for “these meshes form one logical object,” “surface $A$ touches surface $B$ ,” or “this object is grounded.” Without these notions every coder turn must be re-validated by visual inspection, and the failure modes the rendered image cannot show (a chair leg floating 5 mm above the floor, a tabletop interpenetrating a wall, an object never parented to anything) silently accumulate. SimWorlds layers a small, declarative protocol on top of Blender’s natives and enforces it with an orchestrator-side verifier that runs automatically after every coder turn, catching structural and mechanism errors before they ever reach a render.
+ Protocol structure.
+ The protocol imposes a strict three-level containment hierarchy, built entirely from Blender’s native collections, custom properties, and parenting. L1 is the scene as a whole. Each L2 inside it is a system grouping: a named set of related objects, such as one room, or a holder of scene-level state, such as the lights and cameras. Each L3 inside an L2 is a single logical object, however many meshes it is built from: it gathers all of those meshes under one root Empty, a geometry-free anchor object, and parents every mesh to it, so the object moves and is checked as a unit. Since a Blender collection carries no inherent role, a custom property tags each one as an L2 or an L3; collections left untagged are ordinary organisational collections that lie outside the protocol.
+ On top of this hierarchy the protocol makes explicit two object-to-object relations that Blender’s scene graph leaves implicit. The first is surface contact, where one object rests on or against another, such as a chair leg on the floor; it is declared on either of the two objects and the verifier later confirms that the surfaces actually meet. The second is co-movement, where one object must travel with another, such as a sword carried in a hand; it is expressed through Blender’s native parent–child constraints.
+ Bipartite plan graph.
+ The planner commits the scene’s intended assembly up front as a bipartite plan graph: one set of nodes for the objects, another for the relations among them. Each relation node carries a typed spatial relation and the objects it relates, spanning support, containment, orientation, and regular arrangement, such as one object resting on another or several arranged in a ring (the full vocabulary and its rules are in Appendix B ). Because relations are nodes, not edges, one relation can span several objects at once. The coder realises this graph as the collection tree and the contact declarations above, giving the verifier a stated assembly intent to check.
+ Rule families.
+ The verifier runs four families of deterministic rules against the live Blender state. Structural rules C1–C6 check the collection layout, and G1–G3 check the anchor-and-parent chains within each object. Geometric rules V1–V2 are BVH distance tests confirming that every declared contact pair actually touches and that no undeclared pair interpenetrates, which catches floating contacts and accidental punch-through. Soft rules W1–W5 raise warnings about grounding, within-object connectivity, and missing cameras or lights. Plan-vs-state rules R1–R18, with seven further motion-timing rules, re-check the planner’s relation graph and motion phases against the realised geometry, for example that a declared circular leg arrangement is realised to tolerance and that a settle phase comes to rest in its final frames. The full catalogue and BVH-test details are in Appendix B .
+ 3.3 Tool Suite
+ Verification in prior Blender-agent systems [ 4 , 5 , 6 , 8 ] reduces to visual critique: render, feed to a VLM, request issues.
+This is often enough for static scenes but cannot tell whether a dynamic effect uses the right mechanism or is merely faked to look identical.
+SimWorlds replaces visual self-critique with direct inspection of Blender’s runtime state, through a tool suite (full inventory in Appendix Table 4 ) grouped into state observation, modification, and knowledge access. Three tools supply the evidence frames cannot: blender_scene_state returns a structured readout of the live scene (collections, modifier stacks, physics caches, fcurve channels), showing what was actually built rather than rendered; a multi-granularity preview family renders a mesh, an L3 object, an L2 system, or the whole scene from fixed multi-angle presets; and blender_motion_sheet_preview samples a per-actor frame strip annotated with phase boundaries and bake state.
+ 3.4 Knowledge
+ 4D Blender content draws on too many subsystems (meshes, PBR shaders, the rigid-body world, cloth and fluid solvers, particle systems, keyframe animation, the compositor) for any single system prompt to cover. SimWorlds therefore exposes knowledge through a single tool, blender_docs(query), backed by a knowledge base auto-derived per Blender version from upstream sources: the bl_rna schemas of every bpy.types class, every bpy.ops operator’s signature, the official Python API guides, and the full Blender manual. A query resolves to an exact schema, a manual page, or a ranked candidate list; the base regenerates automatically when the Blender version changes, with no LLM in the build except a content-addressed page-summary step.
+ 4 Experiments
+ 4.1 Setup
+ Benchmark.
+ We evaluate SimWorlds on 4DBuildBench, a 50-scene benchmark of self-contained prompts for text-to-4D Blender scene generation. 4DBuildBench is organised along two axes: the mechanism an artifact must use, and the difficulty of authoring it correctly. The mechanism axis covers the five core Blender physics solvers (cloth, fluid, rigid body, particle systems, and soft body), each as a category of 9 prompts, plus a static category of 5 furnished-scene prompts that exercise object inventory and spatial layout. The difficulty axis defines three levels per dynamic category, three prompts each, escalating from a single solver actor (D1) to within-category complexity (D2, e.g. self-collision or force fields) to cross-category interaction in one shot (D3, e.g. a rigid block crushing a soft-body slab); per-level definitions and example prompts are in Appendix D . Editing is evaluated separately on the BlenderBench [ 8 ] via our edit mode (§ 3.1 ).
+ Evaluation Metrics.
+ The central failure mode in dynamic-scene generation is a scene that looks right but is built through the wrong mechanism. A purely visual judge cannot see this while an engine-state check cannot see whether the prompt’s objects and motions are visually delivered. 4DBuildBench therefore scores each scene on two complementary tracks, detailed in Appendix C .
+ (1) Engine-state audit. A deterministic audit runs in headless Blender and reads the scene’s runtime state directly: solver modifiers, baked caches, collision partners, constraints, force fields, and the keyframe density that betrays faked motion. It checks this state against a per-scene ground-truth mechanism specification drawn from a library of 42 typed predicates (e.g. cloth modifier present and cache baked ; static scene carries no baked physics caches ). We report two aggregates: MPR (Mechanism Pass Rate), the per-scene mean over actors of the fraction of each actor’s predicates satisfied; and SPR (Structural Pass Rate), the per-scene fraction of declared spatial relations that hold geometrically under a BVH surface-distance test. The audit shares no code with SimWorlds’s in-loop verifier and reads the .blend alone; where a baseline emits no logical-object grouping, SPR infers each object’s assembly geometrically, scoring all systems on identical terms.
+ (2) Itemized VLM judge. Building on VLM- and LLM-as-judge evaluation for generative vision [ 78 , 79 , 80 , 81 ] , a GPT-5.5 judge receives the prompt and five frames sampled uniformly across the clip ( $t\in\{0,25,50,75,100\}\%$ ) and scores five dimensions: objects present, spatial relations, actions visible, visual quality, and aesthetics. Rather than emit numeric scores, it enumerates atomic items from the prompt (one per named object, relation, and action) and returns a binary verdict per item; the dimension score is the fraction that hold, giving partial credit and a concrete evidence trail. Mechanism realism is left to the audit track, since vision models judge it unreliably [ 82 ] .
+ Baseline.
+ We compare against VIGA [ 8 ] , the only prior published system with a dedicated dynamic-scene mode for from-scratch 4D scene generation in Blender. VIGA exposes a dynamic-scene mode alongside its static-scene mode, runs a dual-agent generator--verifier loop, and emits an editable Blender file, which makes it directly runnable on 4DBuildBench prompts. It also shares the dual-agent shape with SimWorlds, so the comparison isolates the contributions of the staged construction pipeline, the scene protocol and verifier, and the engine-level tool suite. 1 1 
+ 1 
+ Other recent LLM-driven 3D scene systems target adjacent settings and are not directly runnable on 4DBuildBench. LL3M [ 6 ] routes generation through a closed cloud server with no code or model release. SceneCraft [ 4 ] produces static layouts only, with no physics or temporal output. Holodeck [ 7 ] outputs AI2-THOR rooms, a different artifact type. BlenderGym [ 22 ] methods operate in editing mode against reference images. Concurrent VoxelCodeBench [ 83 ] targets static voxel construction in Unreal. 
+ 4.2 Results
+ Quantitative Results.
+ We evaluate SimWorlds and VIGA on 4DBuildBench, and score both with the engine-state audit and the itemized VLM judge. The results are reported in Table 1 .
+ | 
+ MPR $\uparrow$ | 
+ SPR $\uparrow$ | 
+ VLM score $\uparrow$ | 
+ Category | 
+ SimWorlds | 
+ VIGA | 
+ SimWorlds | 
+ VIGA | 
+ SimWorlds | 
+ VIGA | 
+ Cloth | 
+ 0.92 | 
+ 0.85 | 
+ 0.78 | 
+ 0.72 | 
+ 0.82 | 
+ 0.81 | 
+ Fluid | 
+ 0.95 | 
+ 0.56 | 
+ 1.00 | 
+ 0.89 | 
+ 0.75 | 
+ 0.75 | 
+ Rigid body | 
+ 0.83 | 
+ 0.61 | 
+ 0.83 | 
+ 0.67 | 
+ 0.80 | 
+ 0.82 | 
+ Particle | 
+ 0.79 | 
+ 0.62 | 
+ 0.89 | 
+ 0.67 | 
+ 0.84 | 
+ 0.70 | 
+ Soft body | 
+ 0.87 | 
+ 0.72 | 
+ 0.89 | 
+ 0.72 | 
+ 0.89 | 
+ 0.87 | 
+ Static | 
+ – | 
+ – | 
+ 0.98 | 
+ 0.42 | 
+ 0.79 | 
+ 0.67 | 
+ Overall | 
+ 0.87 | 
+ 0.67 | 
+ 0.89 | 
+ 0.70 | 
+ 0.82 | 
+ 0.78 | 
+ Table 1: Per-category results on 4DBuildBench. Overall is the macro average over cells: 15 dynamic cells for MPR and all 17 for SPR and VLM score. 
+ The results show that MPR is where SimWorlds and VIGA diverge most decisively ( $0.87$ vs $0.67$ ), while VLM stays comparable ( $0.82$ vs $0.78$ ). The reason is that the VLM judge scores only a few frames sampled at fixed intervals, which cannot reveal whether the motion across them is correct, so a keyframed or shape-key scene can be wrong yet score well when each sampled frame looks right on its own; the engine-state audit instead reads the solver state behind those frames and rejects it. The same blind spot is what lets VIGA’s visual-only verifier accept such fakes during generation. SPR moves in the same direction ( $+0.19$ ), but because it scores spatial structure against object groupings that SimWorlds emits and baselines do not, its cross-system fairness is limited; we mitigate the confound geometrically (Appendix C ) and read SPR as supporting evidence.
+ Qualitative Results.
+ As shown in Fig 3 , across all four sequences SimWorlds realises the correct mechanism while VIGA fails it. The common cause is architectural: VIGA closes its loop with a VLM verifier that inspects sampled frames, which is insufficient to tell whether motion or physics is actually correct, so a scene whose sampled frames look right is accepted however its dynamics were produced. SimWorlds instead verifies each stage against engine state through its protocol verifier (§ 3.2 ), so that a faked keyframe is caught at construction.
+ Figure 3 : Qualitative comparison across four dynamic sequences: (a) a domino cascade in a child’s bedroom; (b) a paper airplane landing on a cluttered desk; (c) a wind-blown curtain billowing over a desk; (d) a glass hourglass pouring sand from its upper to its lower bulb. 
+ Scene Editing.
+ SimWorlds runs in edit mode (§ 3.1 ) on VIGA’s BlenderBench [ 8 ] without architectural change, at a matched 6-iteration budget on Opus 4.7 and scored by VIGA’s own PL, N-CLIP, and VLM metrics (Table 2 ; full setup in Appendix E ). Both systems receive the same input, an existing scene with a text instruction and a target image. VIGA edits through a single generator-verifier loop that re-examines the whole scene each iteration; SimWorlds instead decomposes the request and routes it through the staged pipeline. This precise localisation, together with the planning-coding-reviewing loop carried over from the generation pipeline (§ 3.1 , § 3.3 ), leads to SimWorlds’s improved performance over VIGA across all difficulty levels on BlenderBench.
+ | 
+ VIGA [ 8 ] | 
+ SimWorlds | 
+ | 
+ PL $\downarrow$ 
+ | 
+ N-CLIP $\downarrow$ 
+ | 
+ VLM $\uparrow$ 
+ | 
+ PL $\downarrow$ 
+ | 
+ N-CLIP $\downarrow$ 
+ | 
+ VLM $\uparrow$ 
+ | 
+ Level 1 | 
+ 7.60 
+ | 
+ 6.06 
+ | 
+ 2.97 
+ | 
+ 6.53 
+ | 
+ 5.91 
+ | 
+ 3.56 
+ | 
+ Level 2 | 
+ 2.44 
+ | 
+ 3.27 
+ | 
+ 2.97 
+ | 
+ 0.97 
+ | 
+ 3.07 
+ | 
+ 3.84 
+ | 
+ Level 3 | 
+ 7.63 
+ | 
+ 6.27 
+ | 
+ 2.36 
+ | 
+ 5.99 
+ | 
+ 5.23 
+ | 
+ 2.89 
+ | 
+ Overall | 
+ 6.02 
+ | 
+ 5.28 
+ | 
+ 2.76 
+ | 
+ 4.63 
+ | 
+ 4.80 
+ | 
+ 3.41 
+ | 
+ Table 2: Scene-editing results on BlenderBench. 
+ 4.3 Ablations
+ We ablate the two mechanisms SimWorlds adds to a plain planner–coder–reviewer loop, the scene protocol and deterministic verifier (§ 3.2 ), and the staged construction pipeline (§ 3.1 ). Experiments are conducted on a 15-scene subset, whose absolute scores sit above the full-50 numbers of Table 1 .
+ Configuration | 
+ MPR $\uparrow$ | 
+ SPR $\uparrow$ | 
+ VLM $\uparrow$ | 
+ SimWorlds (full) | 
+ 0.97 | 
+ 0.97 | 
+ 0.87 | 
+    Ab1: no verifier | 
+ 0.93 | 
+ 0.87 | 
+ 0.84 | 
+    Ab2: no stages | 
+ 0.94 | 
+ 0.92 | 
+ 0.76 | 
+ Table 3: Ablations results on a fixed 15-scene subset of 4DBuildBench: one scene per mechanism category $\times$ difficulty level. 
+ On this 15-scene subset the two ablations show a double dissociation. Removing the verifier hurts SPR most: without the deterministic gate, structural breaks reach the final scene uncorrected instead of triggering a retry, most visibly on the multi-object D3 scenes, two of which drop to zero SPR. Removing staged construction hurts VLM most: a single pass still assembles the right objects but loses the per-stage review that keeps materials, lighting, and composition on track. MPR is robust to both, since the solver setup itself is authored reliably regardless. Each mechanism thus guards a different axis, structural correctness and visual polish, and neither is redundant with the other.
+ 5 Limitations
+ SimWorlds grounds mechanism and geometry against the engine, but its perceptual judgments, such as whether the plan follows the prompt, whether objects are arranged sensibly, and whether the scene composes well, still rest on the LLM and VLM rather than the deterministic checks, and are correspondingly less reliable. SimWorlds is also text-only; conditioning on a reference image to supervise layout and appearance is a promising direction for future work.
+ 6 Conclusion
+ We presented SimWorlds, a multi-agent framework for text-to-4D scene generation in Blender that emits editable .blend files whose dynamics are realised by physics solvers rather than imitated by hand-authored animation, together with 4DBuildBench, a benchmark that scores generated scenes on both visual quality and mechanism correctness. SimWorlds structures generation as a fixed staged pipeline that builds and verifies the scene one stage at a time, so errors are caught and repaired locally instead of accumulating across the build. A lightweight scene protocol keeps the generated assets well-organised and verifiable, leaving the VLM reviewer the perceptual judgments, such as aesthetic composition and prompt alignment, that deterministic checks cannot make. We see SimWorlds as a step toward procedural agents whose output is not a piece of media but an editable, physics-driven asset that others can pick up, perturb, and build on.
+ Acknowledgements
+ YZ was supported in part by the SoftBank Group–ARM Fellowship.
+ References
+ [1] 
+ B. Poole, A. Jain, J. T. Barron, and B. Mildenhall (2023) 
+ DreamFusion: text-to-3d using 2d diffusion .
+ In ICLR ,
+ Cited by: §1 ,
+ §2 .
+ [2] 
+ Y. Hong, K. Zhang, J. Gu, S. Bi, Y. Zhou, D. Liu, F. Liu, K. Sunkavalli, T. Bui, and H. Tan (2024) 
+ LRM: large reconstruction model for single image to 3d .
+ In ICLR ,
+ Cited by: §1 ,
+ §2 .
+ [3] 
+ J. Tang, Z. Chen, X. Chen, T. Wang, G. Zeng, and Z. Liu (2024) 
+ LGM: large multi-view Gaussian model for high-resolution 3d content creation .
+ In ECCV ,
+ Cited by: §1 ,
+ §2 .
+ [4] 
+ Z. Hu, A. Iscen, A. Jain, T. Kipf, Y. Yue, D. A. Ross, C. Schmid, and A. Fathi (2024) 
+ SceneCraft: an LLM agent for synthesizing 3d scene as Blender code .
+ arXiv:2403.01248 .
+ Cited by: §1 ,
+ §2 ,
+ §3.3 ,
+ footnote 1 .
+ [5] 
+ C. Sun et al. (2023) 
+ 3D-GPT: procedural 3d modeling with large language models .
+ arXiv:2310.12945 .
+ Cited by: §1 ,
+ §2 ,
+ §3.3 .
+ [6] 
+ S. Lu, G. Chen, N. A. Dinh, I. Lang, A. Holtzman, and R. Hanocka (2025) 
+ LL3M: large language 3D modelers .
+ arXiv:2508.08228 .
+ Cited by: §1 ,
+ §2 ,
+ §3.3 ,
+ footnote 1 .
+ [7] 
+ Y. Yang, F. Sun, L. Weihs, E. VanderBilt, A. Herrasti, W. Han, J. Wu, N. Haber, R. Krishna, L. Liu, C. Callison-Burch, M. Yatskar, A. Kembhavi, and C. Clark (2024) 
+ Holodeck: language guided generation of 3d embodied AI environments .
+ In CVPR ,
+ Cited by: §1 ,
+ footnote 1 .
+ [8] 
+ S. Yin, J. Ge, Z. Z. Wang, C. Wang, X. Li, M. J. Black, T. Darrell, A. Kanazawa, and H. Feng (2026) 
+ VIGA: vision-as-inverse-graphics agent via interleaved multimodal reasoning .
+ arXiv:2601.11109 .
+ Cited by: Appendix A ,
+ Appendix E ,
+ Appendix E ,
+ §1 ,
+ §1 ,
+ §2 ,
+ §3.3 ,
+ §4.1 ,
+ §4.1 ,
+ §4.2 ,
+ Table 2 .
+ [9] 
+ I. Huang, G. Yang, and L. Guibas (2024) 
+ BlenderAlchemy: editing 3d graphics with vision-language models .
+ arXiv:2404.17672 .
+ Cited by: §2 .
+ [10] 
+ A. Raistrick et al. (2023) 
+ Infinite photorealistic worlds using procedural generation .
+ In CVPR ,
+ Cited by: §2 .
+ [11] 
+ M. Deitke, E. VanderBilt, A. Herrasti, L. Weihs, K. Ehsani, J. Salvador, W. Han, E. Kolve, A. Kembhavi, and R. Mottaghi (2022) 
+ ProcTHOR: large-scale embodied AI using procedural generation .
+ In NeurIPS ,
+ Cited by: §2 .
+ [12] 
+ X. Ge, Y. Pan, Y. Zhang, X. Li, W. Zhang, D. Zhang, Z. Wan, X. Lin, X. Zhang, J. Liang, J. Li, W. Jiang, B. Du, M. Yang, and L. Qi (2026) 
+ AirSim360: a panoramic simulation platform within drone view .
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+ Cited by: §2 .
+ [13] 
+ X. Lin, M. Song, D. Zhang, W. Lu, H. Li, B. Du, M. Yang, T. Nguyen, and L. Qi (2026) 
+ Depth any panoramas: a foundation model for panoramic depth estimation .
+ In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+ Cited by: §2 .
+ [14] 
+ D. Paschalidou et al. (2021) 
+ ATISS: autoregressive transformers for indoor scene synthesis .
+ In NeurIPS ,
+ Cited by: §2 .
+ [15] 
+ C. Fang et al. (2023) 
+ Ctrl-Room: controllable text-to-3d room meshes generation with layout constraints .
+ arXiv:2310.03602 .
+ Cited by: §2 .
+ [16] 
+ W. Feng, W. Zhu, T. Fu, V. Jampani, A. Akula, X. He, S. Basu, X. E. Wang, and W. Y. Wang (2023) 
+ LayoutGPT: compositional visual planning and generation with large language models .
+ In NeurIPS ,
+ Cited by: §2 .
+ [17] 
+ C. Lin et al. (2024) 
+ InstructScene: instruction-driven 3d indoor scene synthesis with semantic graph prior .
+ In ICLR ,
+ Cited by: §2 .
+ [18] 
+ B. M. Öcal et al. (2024) 
+ SceneTeller: language-to-3d scene generation .
+ In ECCV ,
+ Cited by: §2 .
+ [19] 
+ J. Tang et al. (2024) 
+ DiffuScene: denoising diffusion models for generative indoor scene synthesis .
+ In CVPR ,
+ Cited by: §2 .
+ [20] 
+ M. Deitke, D. Schwenk, J. Salvador, L. Weihs, O. Michel, E. VanderBilt, L. Schmidt, K. Ehsani, A. Kembhavi, and A. Farhadi (2023) 
+ Objaverse: a universe of annotated 3d objects .
+ In CVPR ,
+ Cited by: §2 .
+ [21] 
+ M. Deitke, R. Liu, M. Wallingford, H. Ngo, et al. (2023) 
+ Objaverse-XL: a universe of 10M+ 3d objects .
+ In NeurIPS ,
+ Cited by: §2 .
+ [22] 
+ Y. Gu, I. Huang, J. Je, G. Yang, and L. Guibas (2025) 
+ BlenderGym: benchmarking foundational model systems for graphics editing .
+ In CVPR ,
+ Note: Highlight 
+ Cited by: §2 ,
+ footnote 1 .
+ [23] 
+ C. Lin, J. Gao, L. Tang, T. Takikawa, X. Zeng, X. Huang, K. Kreis, S. Fidler, M. Liu, and T. Lin (2023) 
+ Magic3D: high-resolution text-to-3d content creation .
+ In CVPR ,
+ Cited by: §2 .
+ [24] 
+ R. Chen, Y. Chen, N. Jiao, and K. Jia (2023) 
+ Fantasia3D: disentangling geometry and appearance for high-quality text-to-3d content creation .
+ In ICCV ,
+ Cited by: §2 .
+ [25] 
+ Z. Wang, C. Lu, Y. Wang, F. Bao, C. Li, H. Su, and J. Zhu (2023) 
+ ProlificDreamer: high-fidelity and diverse text-to-3d generation with variational score distillation .
+ In NeurIPS ,
+ Cited by: §2 .
+ [26] 
+ J. Xu, W. Cheng, Y. Gao, X. Wang, S. Gao, and Y. Shan (2024) 
+ InstantMesh: efficient 3d mesh generation from a single image with sparse-view large reconstruction models .
+ arXiv:2404.07191 .
+ Cited by: §2 .
+ [27] 
+ B. Kerbl, G. Kopanas, T. Leimkühler, and G. Drettakis (2023) 
+ 3D Gaussian Splatting for real-time radiance field rendering .
+ In SIGGRAPH ,
+ Cited by: §2 .
+ [28] 
+ J. Tang, J. Ren, H. Zhou, Z. Liu, and G. Zeng (2024) 
+ DreamGaussian: generative Gaussian Splatting for efficient 3d content creation .
+ In ICLR ,
+ Cited by: §2 .
+ [29] 
+ T. Yi, J. Fang, J. Wang, G. Wu, L. Xie, X. Zhang, W. Liu, Q. Tian, and X. Wang (2024) 
+ GaussianDreamer: fast generation from text to 3d Gaussians by bridging 2d and 3d diffusion models .
+ In CVPR ,
+ Cited by: §2 .
+ [30] 
+ Z. Chen, F. Wang, Y. Wang, and H. Liu (2024) 
+ Text-to-3d using Gaussian Splatting .
+ In CVPR ,
+ Cited by: §2 .
+ [31] 
+ G. Gao et al. (2024) 
+ GraphDreamer: compositional 3d scene synthesis from scene graphs .
+ In CVPR ,
+ Cited by: §2 .
+ [32] 
+ R. Liu, R. Wu, B. Van Hoorick, P. Tokmakov, S. Zakharov, and C. Vondrick (2023) 
+ Zero-1-to-3: zero-shot one image to 3d object .
+ In ICCV ,
+ Cited by: §2 .
+ [33] 
+ Y. Shi, P. Wang, J. Ye, M. Long, K. Li, and X. Yang (2024) 
+ MVDream: multi-view diffusion for 3d generation .
+ In ICLR ,
+ Cited by: §2 .
+ [34] 
+ X. Long, Y. Guo, C. Lin, Y. Liu, Z. Dou, L. Liu, Y. Ma, S. Zhang, M. Habermann, C. Theobalt, et al. (2024) 
+ Wonder3D: single image to 3d using cross-domain diffusion .
+ In CVPR ,
+ Cited by: §2 .
+ [35] 
+ D. Cohen-Bar et al. (2023) 
+ Set-the-scene: global-local training for generating controllable NeRF scenes .
+ In ICCV ,
+ Cited by: §2 .
+ [36] 
+ Q. Zhang et al. (2024) 
+ SceneWiz3D: towards text-guided 3d scene composition .
+ In CVPR ,
+ Cited by: §2 .
+ [37] 
+ L. Höllein et al. (2023) 
+ Text2Room: extracting textured 3d meshes from 2d text-to-image models .
+ In ICCV ,
+ Cited by: §2 .
+ [38] 
+ R. Fridman et al. (2023) 
+ SceneScape: text-driven consistent scene generation .
+ In NeurIPS ,
+ Cited by: §2 .
+ [39] 
+ X. Zhou et al. (2024) 
+ GALA3D: towards text-to-3d complex scene generation via layout-guided generative Gaussian Splatting .
+ In ICML ,
+ Cited by: §2 .
+ [40] 
+ X. Li et al. (2024) 
+ Director3D: real-world camera trajectory and 3d scene generation from text .
+ In NeurIPS ,
+ Cited by: §2 .
+ [41] 
+ U. Singer, S. Sheynin, A. Polyak, O. Ashual, I. Makarov, F. Kokkinos, N. Goyal, A. Vedaldi, D. Parikh, J. Johnson, and Y. Taigman (2023) 
+ Text-to-4d dynamic scene generation .
+ In ICML ,
+ Cited by: §2 .
+ [42] 
+ S. Bahmani et al. (2024) 
+ 4D-fy: text-to-4d generation using hybrid score distillation sampling .
+ In CVPR ,
+ Cited by: §2 .
+ [43] 
+ J. Ren et al. (2024) 
+ DreamGaussian4D: generative 4d Gaussian Splatting .
+ arXiv:2312.17142 .
+ Cited by: §2 .
+ [44] 
+ D. Xu et al. (2024) 
+ Comp4D: LLM-guided compositional 4d scene generation .
+ arXiv:2403.16993 .
+ Cited by: §2 .
+ [45] 
+ J. Ren et al. (2024) 
+ L4GM: large 4d Gaussian reconstruction model .
+ In NeurIPS ,
+ Cited by: §2 .
+ [46] 
+ S. Bahmani et al. (2024) 
+ TC4D: trajectory-conditioned text-to-4d generation .
+ In ECCV ,
+ Cited by: §2 .
+ [47] 
+ H. Liang et al. (2024) 
+ Diffusion4D: fast spatial-temporal consistent 4d generation via video diffusion models .
+ In ECCV ,
+ Cited by: §2 .
+ [48] 
+ Y. Xie et al. (2024) 
+ SV4D: dynamic 3d content generation with multi-frame and multi-view consistency .
+ arXiv:2407.17470 .
+ Cited by: §2 .
+ [49] 
+ X. Wang, Y. Zhao, B. Ye, X. Shan, W. Lyu, L. Qi, K. C. K. Chan, Y. Li, and M. Yang (2025) 
+ HoliGS: holistic gaussian splatting for embodied view synthesis .
+ In Advances in Neural Information Processing Systems (NeurIPS) ,
+ Cited by: §2 .
+ [50] 
+ R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer (2022) 
+ High-resolution image synthesis with latent diffusion models .
+ In CVPR ,
+ Cited by: §2 .
+ [51] 
+ J. Ho, T. Salimans, A. Gritsenko, W. Chan, M. Norouzi, and D. J. Fleet (2022) 
+ Video diffusion models .
+ In NeurIPS ,
+ Cited by: §2 .
+ [52] 
+ A. Blattmann, T. Dockhorn, S. Kulal, D. Mendelevitch, M. Kilian, D. Lorenz, Y. Levi, Z. English, V. Voleti, A. Letts, V. Jampani, and R. Rombach (2023) 
+ Stable video diffusion: scaling latent video diffusion models to large datasets .
+ arXiv:2311.15127 .
+ Cited by: §2 .
+ [53] 
+ U. Singer, A. Polyak, T. Hayes, X. Yin, J. An, S. Zhang, Q. Hu, H. Yang, O. Ashual, O. Gafni, et al. (2023) 
+ Make-a-video: text-to-video generation without text-video data .
+ In ICLR ,
+ Cited by: §2 .
+ [54] 
+ T. Brooks, B. Peebles, C. Holmes, et al. (2024) 
+ Video generation models as world simulators .
+ Note: OpenAI Technical Report 
+ Cited by: §2 .
+ [55] 
+ Y. Liu, X. Lin, X. Li, B. Yang, C. Wang, K. Sunkavalli, Y. Hold-Geoffroy, H. Tan, K. Zhang, X. Xie, Z. Shi, and Y. Hu (2026) 
+ OmniRoam: world wandering via long-horizon panoramic video generation .
+ In ACM SIGGRAPH ,
+ Cited by: §2 .
+ [56] 
+ C. Wang, X. Lin, J. Liu, Y. Liu, Z. Wang, D. Qi, Y. Yan, and X. Chen (2026) 
+ PanoWorld: towards spatial supersensing in 360 ${}^{\circ}$ panorama world .
+ arXiv preprint arXiv:2605.13169 .
+ Cited by: §2 .
+ [57] 
+ T. Zhang et al. (2024) 
+ PhysDreamer: physics-based interaction with 3d objects via video generation .
+ arXiv:2404.13026 .
+ Cited by: §2 .
+ [58] 
+ T. Xie et al. (2024) 
+ PhysGaussian: physics-integrated 3d Gaussians for generative dynamics .
+ In CVPR ,
+ Cited by: §2 .
+ [59] 
+ C. Liu, X. Wang, Q. Lin, A. Xiao, H. Chen, S. Wen, H. Zhang, L. Qi, M. Yang, L. A. Jeni, M. Xu, and Y. Zhao (2026) 
+ MOSIV: multi-object system identification from videos .
+ In International Conference on Learning Representations (ICLR) ,
+ Cited by: §2 .
+ [60] 
+ Y. Zhao, H. Chen, C. Liu, Z. Li, C. Herrmann, J. Hur, Y. Li, M. Yang, B. Raj, and M. Xu (2025) 
+ MASIV: toward material-agnostic system identification from videos .
+ In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+ Cited by: §2 .
+ [61] 
+ K. Greff, F. Belletti, L. Beyer, C. Doersch, Y. Du, D. Duckworth, D. J. Fleet, D. Gnanapragasam, F. Golemo, C. Herrmann, et al. (2022) 
+ Kubric: a scalable dataset generator .
+ In CVPR ,
+ Cited by: §2 .
+ [62] 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao (2023) 
+ ReAct: synergizing reasoning and acting in language models .
+ In ICLR ,
+ Cited by: §2 .
+ [63] 
+ N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S. Yao (2023) 
+ Reflexion: language agents with verbal reinforcement learning .
+ In NeurIPS ,
+ Cited by: §2 .
+ [64] 
+ A. Madaan et al. (2023) 
+ Self-refine: iterative refinement with self-feedback .
+ In NeurIPS ,
+ Cited by: §2 .
+ [65] 
+ J. Huang et al. (2024) 
+ Large language models cannot self-correct reasoning yet .
+ In ICLR ,
+ Cited by: §2 .
+ [66] 
+ G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar (2023) 
+ Voyager: an open-ended embodied agent with large language models .
+ In NeurIPS ,
+ Cited by: §2 .
+ [67] 
+ T. Schick et al. (2023) 
+ Toolformer: language models can teach themselves to use tools .
+ In NeurIPS ,
+ Cited by: §2 .
+ [68] 
+ Z. Gou et al. (2024) 
+ CRITIC: large language models can self-correct with tool-interactive critiquing .
+ In ICLR ,
+ Cited by: §2 .
+ [69] 
+ X. Wang et al. (2024) 
+ Executable code actions elicit better LLM agents .
+ In ICML ,
+ Cited by: §2 .
+ [70] 
+ Q. Wu et al. (2023) 
+ AutoGen: enabling next-gen LLM applications via multi-agent conversation .
+ arXiv:2308.08155 .
+ Cited by: §2 .
+ [71] 
+ S. Hong et al. (2024) 
+ MetaGPT: meta programming for a multi-agent collaborative framework .
+ In ICLR ,
+ Cited by: §2 .
+ [72] 
+ C. Qian et al. (2024) 
+ ChatDev: communicative agents for software development .
+ In ACL ,
+ Cited by: §2 .
+ [73] 
+ Anthropic (2025) 
+ Effective context engineering for AI agents .
+ External Links: Link 
+ Cited by: §2 .
+ [74] 
+ L. Mei J. Yao et al. (2025) 
+ A survey of context engineering for large language models .
+ arXiv:2507.13334 .
+ Cited by: §2 .
+ [75] 
+ Anthropic (2025) 
+ Writing tools for agents .
+ External Links: Link 
+ Cited by: §2 .
+ [76] 
+ L. Weng (2023) 
+ LLM powered autonomous agents .
+ Note: lilianweng.github.io 
+ External Links: Link 
+ Cited by: §2 .
+ [77] 
+ J. S. Park, J. C. O’Brien, C. J. Cai, M. R. Morris, P. Liang, and M. S. Bernstein (2023) 
+ Generative agents: interactive simulacra of human behavior .
+ In UIST ,
+ Cited by: §2 .
+ [78] 
+ L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica (2023) 
+ Judging LLM-as-a-judge with MT-Bench and chatbot arena .
+ In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track ,
+ Cited by: §4.1 .
+ [79] 
+ Y. Hu, B. Liu, J. Kasai, Y. Wang, M. Ostendorf, R. Krishna, and N. A. Smith (2023) 
+ TIFA: accurate and interpretable text-to-image faithfulness evaluation with question answering .
+ In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+ Cited by: §4.1 .
+ [80] 
+ X. He, D. Jiang, G. Zhang, et al. (2024) 
+ VideoScore: building automatic metrics to simulate fine-grained human feedback for video generation .
+ In Proceedings of the Conference on Empirical Methods in Natural Language Processing (EMNLP) ,
+ Cited by: §4.1 .
+ [81] 
+ H. Chen, K. Zhou, H. Hua, K. Zhang, J. Qian, W. Ma, H. Chen, C. Liu, Y. Zhao, X. Wang, W. Li, A. Yuille, P. P. Liang, and Y. Du (2026) 
+ MemoBench: benchmarking world modeling in dynamically changing environments .
+ In European Conference on Computer Vision (ECCV) ,
+ Cited by: §4.1 .
+ [82] 
+ H. Bansal, Z. Lin, T. Xie, Z. Zong, M. Yarom, Y. Bitton, C. Jiang, Y. Sun, K. Chang, and A. Grover (2024) 
+ VideoPhy: evaluating physical commonsense for video generation .
+ arXiv:2406.03520 .
+ Cited by: §C.2 ,
+ §4.1 .
+ [83] 
+ Y. Zheng and F. Bordes (2026) 
+ VoxelCodeBench: benchmarking 3d world modeling through code generation .
+ arXiv:2604.02580 .
+ Cited by: footnote 1 .
+ Appendix A Implementation Details
+ Stack.
+ SimWorlds uses claude-opus-4-7 as the underlying model for all three agent roles (planner, coder, and reviewer). Evaluation uses two independent scorers (Appendix C ): a deterministic engine-state audit that runs inside headless Blender with no LLM in the loop, and an itemized VLM judge on gpt-5.5 run in a separate session; the BlenderBench editing comparison instead uses a gpt-4o judge (Appendix E ). Each judge scores every scene once at the provider’s default temperature, with no multi-seed averaging, and the judge prompts are released verbatim under src/bench/ . The audit’s predicate scoring uses no LLM; only an optional actor-matching fallback uses claude-sonnet-4-6 . Blender 5.1 is exposed through an MCP server that provides the tool-use APIs of § 3.3 . End-to-end runtime is approximately 70–120 minutes per scene on a single workstation (Apple M4, 16 GB unified memory), dominated by Blender bake time on dynamic prompts; the LLM is consumed via API and contributes negligible local compute.
+ Scene Plan.
+ The planner writes a structured plan in JSON and never operates Blender directly: it emits one strategic plan at the start of a run and a per-stage tactical plan at each stage entry, then issues an advance/retry/replan/abort decision after each stage. The plan’s load-bearing commitments are declared as custom properties on each logical object’s L3 collection: a deformation_kind $\in$ { rig , sim_cloth , sim_fluid , sim_rigid , none }, set at the deformation_setup stage, and a motion_kind $\in$ { keyframe , bake , none }, set at the motion stage. These, together with the spatial-relation graph of Appendix B , fix what the verifier’s R and T rules check. A stage left undeclared is a zero-cost no-op (the R/T rules self-gate on the declaration), so a static scene passes through deformation_setup and motion cleanly. The planner sets no bpy implementation specifics, which API call to use or which value to tune; that is the coder’s job. The full plan schema and planner prompt are in the released repository ( prompts/ ).
+ Per-Stage Loop Implementation.
+ Each stage runs the coder, the deterministic verifier, and the per-stage reviewer until the planner advances it. The coder is allowed up to MAX_RETRIES_PER_STAGE $=10$ coder retries and MAX_REPLANS_PER_STAGE $=5$ tactical replans per stage before the stage aborts. Each blender_execute call runs in a fresh Python namespace; persistent state lives in the live Blender scene ( bpy.data ), which later stages build on rather than rebuild. Every closed stage writes a checkpoint checkpoints/<stage>.blend , so a coder failure rolls the scene back to the previous stage’s checkpoint.
+ Agents.
+ The pipeline runs four roles: a planner (one persistent session across the run, reasoning over plans in JSON with no Blender tools), a coder (fresh session per stage, persisting across that stage’s retries), a per-stage reviewer (fresh session per stage), and a final reviewer (one-shot, on the rendered output). Each role prompt is composed at runtime from the role file plus the shared scene-protocol documentation ( src/agent/prompts/scene_protocol.md and docs/scene_protocol.md ). The role files are provided verbatim in the released repository ( prompts/ ).
+ MCP tool server.
+ Blender 5.1 runs as a long-lived process; an MCP server exposes the tool-use APIs of § 3.3 (Table 4 ) over a local TCP port. blender_execute runs arbitrary bpy Python in the live process; the inspect and preview tools wrap deterministic Python helpers that read scene state without re-rendering. Checkpointing saves the live .blend after every closed stage, so a coder failure on stage $s_{i+1}$ rolls back to the checkpoint written at the close of $s_{i}$ .
+ Category 
+ | 
+ Tools 
+ | 
+ Purpose 
+ | 
+ State Observation | 
+ Scene Snapshot 
+ | 
+ blender_scene_state 
+ | 
+ Structured readout of the live scene: objects, materials, modifier stacks, f-curves, and physics/cache state. 
+ | 
+ Visual Preview 
+ | 
+ blender_single_mesh_preview
+ blender_object_preview
+ blender_system_layout_preview
+ blender_scene_layout_preview 
+ | 
+ Targeted multi-angle preview renders at mesh, object, system, and whole-scene granularity. 
+ | 
+ Motion Audit 
+ | 
+ blender_motion_sheet_preview 
+ | 
+ Samples a per-actor frame strip with phase boundaries and bake state to surface motion-mechanism failures. 
+ | 
+ State Modification | 
+ Code Execution 
+ | 
+ blender_execute 
+ | 
+ Runs bpy code in the live Blender process; fresh namespace per call. 
+ | 
+ Protocol Tagging 
+ | 
+ blender_tag_object 
+ | 
+ Writes the scene-protocol custom properties ( protocol_role , is_object_root , contact_with ) that make state checkable by the verifier. 
+ | 
+ Checkpoint 
+ | 
+ blender_save 
+ | 
+ Saves the live .blend as the per-stage checkpoint. 
+ | 
+ Render 
+ | 
+ blender_render 
+ | 
+ Renders the final frame sequence (or still) for the scene. 
+ | 
+ Knowledge & Reference | 
+ API Lookup 
+ | 
+ blender_docs 
+ | 
+ Queries the auto-derived Blender API knowledge base. 
+ | 
+ Table 4 : Tool suite exposed to SimWorlds agents, grouped by category. Bolded tools are the engine-state inspection tools that supply the mechanism-level evidence the rendered image cannot. 
+ Knowledge base.
+ blender_docs(query) is backed by knowledge/blender_docs/ , an auto-generated reference compiled per Blender version by src/knowledge/build_knowledge_base.py (it extracts class hierarchies, property signatures, and enum values, and serves curated markdown pages with raw JSON fallback). Consistent with § 3.4 , this is the only knowledge source: no hand-curated reference material is shipped. The coder queries it on demand with blender_docs(topic) for the stage at hand.
+ Asset Licences.
+ Third-party assets used: Blender 5.1 (GPLv2+); Anthropic Claude Opus 4.7 (agent LLM, consumed via the Anthropic API under its Terms of Service); OpenAI GPT-5.5 (evaluation VLM judge, consumed via the OpenAI API under its Terms of Service); BlenderBench [ 8 ] (used for editing evaluation only; license per the BlenderBench repository).
+ Appendix B Scene Protocol and Verifier Ruleset
+ This appendix gives the full ruleset for the in-loop verifier introduced in § 3.2 . It is part of the SimWorlds system (the deterministic gate the generation loop runs after every stage) and is separate from the external benchmark audit of Appendix C , which scores any method’s output and shares no code with it.
+ Protocol structure.
+ Objects are organised into a three-level collection tree: the scene root (L1); system collections (L2, protocol_role = system ) that group logical objects or hold scene-level state, including a mandatory ground and the conventional lighting / cameras / physics collections; and object collections (L3, protocol_role = object ), each holding the meshes of one logical object plus exactly one Empty root to which they are parented. Surface contact, absent from Blender’s native vocabulary, is declared via the contact_with custom property and the protocol-graph relations SupportedBy , StableAgainst , FixedAttachment , and Aperture ; a pair counts as declared if either side names the other. The verifier accepts the declaration only if the surfaces actually meet (rule V1).
+ Ruleset.
+ The verifier reports ok =false if any hard rule fails; warnings are listed separately and do not flip ok . Rules fall in four families: structural (C, G), geometric (V), soft (W), and plan-vs-state (R, T).
+ Structural, collection layout (C, cheap pure-data): 
+ • 
+ C1 every L3 sits in $\geq 1$ system L2; C2 every protocol L2 sits directly under the scene root; C3 every mesh sits in exactly one object L3; C4 every L3 has exactly one is_object_root Empty; C5 all protocol collections are explicitly named (no Collection.001 debris); C6 a ground system L2 exists with $\geq 1$ L3 inside. All hard fails.
+ Structural, Empty and parent–child (G, cheap pure-data): 
+ • 
+ G1 every mesh’s parent chain ends at its L3’s root Empty; G2 every root Empty has parent=None ; G3 every root Empty is in its own L3. All hard fails.
+ Geometric (V, BVH-based, heavy): 
+ • 
+ V1 every declared contact relation ( contact_with and the protocol-graph relations, cross-object and within-object) must resolve to a nearest-surface distance $\leq\epsilon_{m}$ , measured by BVH on the evaluated meshes. Declaring an attachment never exempts the parts from touching: declared contact $\Rightarrow$ measured contact at every level. Hard fail.
+ • 
+ V2 any AABB-overlapping mesh pair with penetration depth above a numerical-noise tolerance must be declared on at least one side, else it is flagged as an undeclared penetration. Hard fail.
+ Soft (W, warnings): 
+ • 
+ W1 every L3 reachable from a ground L3 via contact edges (promoted to hard fail under strict_grounding ); W2 meshes within an L3 form one connected component (skipped for L3s flagged allows_disconnected ); W3 no light/camera/force-field inside an object L3; W4 scene has $\geq 1$ camera; W5 scene has a light or an emissive world.
+ Plan-vs-state (R, T): 
+ • 
+ R1–R18 re-check the planner’s protocol_graph relations against the realised geometry (e.g. a Distributed(circle, 4-fold) layout is actually a 4-fold circular arrangement to tolerance); seven motion-timing rules (the T family; T1 and T5 are folded into the motion-sheet preview and R15) re-check the realised motion against the planned phases (e.g. a settle phase has near-zero velocity in its final frames). The full per-rule catalogue and tolerances are in the released code.
+ Together V1 and V2 catch the geometric failure mode that naive structural checks miss: V1 rejects a declared contact that does not hold (a chair leg floating above the floor), and V2 rejects an undeclared interpenetration (a mesh punching through another), so a scene cannot pass by being merely well-organised while being geometrically broken.
+ Appendix C Evaluation Protocol: Engine-State Audit and VLM Judge
+ 4DBuildBench scores each scene on two independent tracks (§ 4 ): a deterministic engine-state audit that measures mechanism correctness from Blender’s runtime state, and an itemized VLM judge that measures whether the prompt’s content is visually delivered. The two are deliberately disjoint (the audit never looks at a pixel, the judge never inspects a modifier) so that a scene which looks right but is built the wrong way (the dominant failure mode of § 4 ) scores high on one track and low on the other rather than passing both.
+ C.1 Engine-state audit
+ The audit runs inside a headless Blender process and reads the generated scene’s runtime state directly. It is system-agnostic : it inspects bpy data (modifier stacks, physics caches, rigid-body world, collision settings, constraints, force fields, and the per-channel keyframe density on location/rotation) and depends on no SimWorlds-specific protocol, so it scores any method’s .blend file on identical terms.
+ Ground truth.
+ Each scene carries a hand-authored specification (a YAML file) listing the expected actors , each with a role ( cloth , fluid_domain , rigid_active , …), a set of must_have predicates, and a set of must_not_have predicates; the expected spatial relations between actors ( SupportedBy , Inside , OnTopOf , …); and scene-level anti-cheat assertions. Actors are resolved to objects in the generated scene by name and by matching hints (AABB size band, topology hint, expected collection role).
+ Predicate library.
+ Predicates are drawn from a typed library of 42 checks, grouped by mechanism:
+ • 
+ Universal (2): actor is renderable; solver modifiers are enabled in both viewport and render.
+ • 
+ Cloth (5): CLOTH modifier present; cache baked over the frame range; self-collision; pin vertex group; collision partners carry COLLISION.
+ • 
+ Fluid (9): FLUID modifier and type (DOMAIN/FLOW/EFFECTOR); a domain exists; required flow count; domain cache baked; dynamic effector on a moving actor; guiding velocity; minimum domain resolution; liquid mesh output.
+ • 
+ Rigid body (9): rigid-body settings and type (ACTIVE/PASSIVE); collision shape; populated rigid-body world; world cache baked; constraint type and resolved partner; disabled collisions on constraint; collision modifier when interacting with a deformable; positive mass.
+ • 
+ Particle (7): particle system present; type (EMITTER/HAIR); emission source; cache baked; collision partners; emission from a deformed surface (modifier-stack order); force fields present.
+ • 
+ Soft body (5): SOFT_BODY modifier; cache baked; collision partners; goal vertex group; rigid interaction partners carry both rigid-body and collision.
+ • 
+ Anti-cheat (5, must_not_have ): solver actor does not carry dense location/rotation keyframes (caps faked animation); cloth/soft do not use shape keys as a motion source; static scenes carry no baked caches, no populated rigid-body world, and no spurious solver modifiers.
+ Aggregates.
+ For each actor the audit computes the fraction of its must_have / must_not_have predicates that pass; MPR (Mechanism Pass Rate) is the per-scene mean of these per-actor fractions. SPR (Structural Pass Rate) is the per-scene fraction of declared spatial relations that hold, each checked geometrically by nearest-surface distance via BVH on the evaluated meshes, sampled at start/mid/end frames. Both are reported in Tables 1 – 3 .
+ SPR cross-system fairness.
+ SPR scores spatial relations against the live .blend state, which a naive implementation would let advantage SimWorlds: its contact checks expand a logical object to its full set of meshes through the scene protocol’s grouping, which baselines do not emit (VIGA produces hundreds of ungrouped primitive meshes). We remove this confound by inferring an object’s assembly geometrically when no protocol grouping is present: the 3D connected component of meshes in mutual axis-aligned-bounding-box contact, grown from the matched mesh and stopped at the support surface so it cannot trivially absorb its target. This inference is a strict no-op on protocol-compliant scenes (every SimWorlds mesh is already grouped, so SimWorlds’s SPR is unchanged) and only relaxes the score for baselines: VIGA’s macro SPR rises from $0.62$ to the reported $0.70$ , every cell monotonically non-decreasing, while MPR is unaffected by the re-match (a shift under $0.01$ ). The recovered points concentrate in static scenes where objects were correctly placed but ungrouped (e.g. static_L1 , $0.22\to 0.74$ ), whereas scenes whose objects genuinely float or interpenetrate stay low (e.g. static_L2 , unchanged at $0.10$ , a furniture cluster suspended $\sim$ 0.8 m above the floor). Even so, structural scoring across systems with different grouping conventions is hard to make fully fair, so we treat the $+0.19$ SPR gap as supporting evidence and lead with MPR.
+ C.2 Itemized VLM judge
+ A GPT-5.5 judge receives the user prompt and five frames sampled uniformly from the rendered video at $t\in\{0,25,50,75,100\}\%$ of the clip (a single still for static scenes); it sees neither the planner’s intent nor the audit. Instead of numeric scores, it enumerates atomic items from the prompt and returns a binary verdict per item, which yields item-level partial credit and a concrete evidence trail. The five dimensions:
+ • 
+ objects_present : one item per object the prompt names; present / absent (a disassembled object that no longer reads as its class counts absent ).
+ • 
+ spatial_relations : one item per stated relation; holds / violated (floating where support is implied, interpenetration, wrong side).
+ • 
+ actions_visible (dynamic only): one item per described motion; happened / missing , judged by comparing the first and last frame; empty for static scenes (the dimension is then excluded).
+ • 
+ visual_quality : fixed three-item technical checklist (materials assigned, exposure/lighting, no render artifacts); ok / broken .
+ • 
+ aesthetics : fixed four-item artistic checklist (material fidelity, colour palette, lighting mood, composition); good / poor .
+ Each dimension’s score is the fraction of its items with a positive verdict; the reported VLM score is the mean over the dimensions a scene exercises. Mechanism realism (whether motion is a real simulation or keyframed) is explicitly excluded from the judge’s remit, since vision models are unreliable on it [ 82 ] ; the audit covers it instead. The full judge prompt, including the per-item output schema and anchor examples, is provided in the released code repository ( src/bench/vlm_judge_rubric.md ).
+ Appendix D Benchmark Details
+ Composition.
+ 4DBuildBench contains 50 scenes (Section 4 ): 45 dynamic scenes across five solver categories (cloth, fluid, rigid body, particle, soft body), each split into three difficulty levels with three prompts per level, plus 5 static scenes (three single-room interiors, two scene-scale layouts). The difficulty axis is defined by mechanism complexity rather than by clip length or raw object count:
+ • 
+ D1 (single actor): a single solver actor in its default configuration: one cloth draping, one fluid pouring, one stack of rigid bodies settling.
+ • 
+ D2 (within-category): multiple instances of the category, or internal solver complexity within it: self-collision, pinning and goal vertex groups, rigid-body constraints, force fields, multiple flow sources.
+ • 
+ D3 (cross-category): cross-category interaction realised in a single shot (a rigid block crushing a soft-body slab, particles emitted from a deforming cloth surface, a fluid effector riding an animated rigid body), each requiring two or more solvers to be configured and to interact correctly.
+ Static scenes carry no solver at all; they exercise object inventory, material assignment, and spatial layout (15–20 named objects per single-room scene), and their anti-cheat predicates assert the absence of any physics state.
+ Example prompts.
+ One prompt per difficulty tier (the canonical ground-truth IDs are <category>_<level>_<nn> ):
+ • 
+ cloth_D1_01 (cloth, single actor): “A red tablecloth drapes over a small round wooden table in a quiet dining room.”
+ • 
+ rigid_D2_01 (rigid body, within-category): twelve wooden dominoes arranged in a chain on a table; the first is tipped and the cascade runs to the end (multiple interacting rigid bodies with a baked rigid-body world).
+ • 
+ soft_D3_01 (soft body $\times$ rigid body, cross-category): “A thick green jelly slab on a wooden board is crushed under a falling heavy stone block, the jelly squashing flat under the block as it settles.”
+ • 
+ static_D1_01 (static, single-room): “A furnished living room interior: a three-seat sofa against the back wall with two cushions, a coffee table on a large rug, a framed picture and a round wall clock, a floor lamp, a tall bookshelf holding rows of books and a small potted plant, a television on a low media console, a side armchair near the window, and a basket of magazines on the floor.”
+ Authoring protocol.
+ Each scene is specified by a hand-authored ground-truth YAML (Appendix C ) that fixes the expected actors, their required solver predicates, the spatial-relation graph, and the motion phases, alongside the natural-language prompt. Prompts use domain-specific nouns (no ball / object placeholders) with place, time, and material anchors, and each is validated to exercise its category’s solver. The difficulty level is fixed by the authored predicate set (the number of interacting actors and whether the required predicates cross a category boundary) rather than inferred from prompt text.
+ VIGA run protocol.
+ VIGA is run from its open-source release in dynamic-scene mode on the 4DBuildBench prompts. Each scene receives the prompt text only, with no target or reference image, matching SimWorlds’s text-only setting. VIGA uses its own generator–verifier loop and Claude Opus 4.7 backend, capped at its native budget of 15 rounds; SimWorlds instead runs the per-stage bounded-retry loop of § 3.1 , so the two budgets are reported as configured rather than forced equal. Both systems’ final .blend files are then scored by the identical external audit and VLM judge of Appendix C .
+ Appendix E BlenderBench Setup
+ BlenderBench [ 8 ] is reused unchanged from VIGA for the editing comparison in Section 4 . We summarise its structure and metrics here for transparency, and defer to the VIGA paper and the BlenderBench dataset card for the canonical definitions.
+ Task structure.
+ Each of the 27 tasks contains:
+ • 
+ a Blender scene .blend file (the “start” scene);
+ • 
+ a $512\times 512$ reference render of the post-edit scene (the “goal” render);
+ • 
+ a one- to two-sentence natural-language task description ( task.txt );
+ • 
+ the reference Python edit script used by the dataset authors to produce the goal render ( goal.py ); not exposed to the agent.
+ The agent receives the start .blend file, the goal render, and the task description, and emits Python that, when executed against the start scene, should produce a render approximating the goal.
+ Difficulty levels.
+ The 27 tasks split evenly across three difficulty levels (9 tasks each):
+ • 
+ Level 1: Camera adjustment. Scene contents and lighting are held fixed; only the camera pose differs between start and goal. Example task description: “Adjust the camera position so that the viewing angle is consistent with the target image.” 
+ • 
+ Level 2: Multi-step attribute editing. The camera is held fixed; the agent must change two or more lighting, material, or object-geometry attributes within the same task. Example task description: “First adjust the room brightness, then adjust the size of the character’s belly so that it looks like the target image.” 
+ • 
+ Level 3: Compositional editing. The same attribute changes as Level 2 plus a Level-1 camera change in the same task. Example task description: “First adjust the room brightness, then adjust the size of the character’s belly so that it looks like the target image. You need to adjust the camera angle so that you can see the object you want to modify.” 
+ Evaluation metrics.
+ We report VIGA’s three reference-comparing metrics, computed by a re-evaluation pass that mirrors the open-source VIGA implementation [ 8 ] :
+ • 
+ PL $\downarrow$ (photometric loss). Mean squared error between the agent’s final render and the goal render, after both are converted to RGB, normalised to $[0,1]$ , and resized to the goal-render resolution. Reported on the paper’s $\times 100$ scale.
+ • 
+ N-CLIP $\downarrow$ (CLIP distance). $(1-\cos\langle\phi(\text{render}),\phi(\text{goal})\rangle)\times 100$ , where $\phi$ is the image embedding from the openai/clip-vit-base-patch32 model, the same CLIP variant VIGA uses.
+ • 
+ VLM $\uparrow$ (judge score). A GPT-4o judge is shown the goal render, the agent’s final render, and the task description, and assigns four 0–5 integer scores along VIGA’s four criteria (task completion, visual quality, spatial accuracy, detail accuracy) using VIGA’s verbatim instruction template. We report the per-task mean of the four scores.
+ For both methods, the final renders produced by the sweep were re-scored end-to-end through this implementation, so the head-to-head means in Table 2 are computed against identical metric code rather than against per-method scoring pipelines.
+ The per-level head-to-head numbers are reported in Table 2 in the main text.
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

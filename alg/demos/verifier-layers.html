@@ -1,0 +1,96 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+*{margin:0;box-sizing:border-box}
+html,body{height:100%;background:#0f1115;color:#c9d1dc;font:13px/1.55 -apple-system,system-ui,"PingFang SC",sans-serif;overflow:hidden}
+.wrap{height:100%;display:flex;flex-direction:column;padding:10px 12px;gap:8px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.bar b{color:#8b94a3;font-weight:500;margin-right:2px}
+button{border:1px solid #2c3340;background:#181c24;color:#c9d1dc;border-radius:7px;padding:4px 9px;font:inherit;cursor:pointer}
+button.on{background:#2f6bff;border-color:#2f6bff;color:#fff}
+button.good.on{background:#1f8a52;border-color:#1f8a52}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.cell{position:relative}
+.cell img{width:100%;display:block;border-radius:6px;background:#1a1d23}
+.cap{position:absolute;left:4px;top:4px;background:rgba(15,17,21,.78);padding:1px 6px;border-radius:5px;font-size:11px;color:#9aa3af}
+.cell.page .cap{color:#f0b429}
+.row{display:flex;gap:6px;align-items:stretch}
+.row>div{flex:1}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #222731}
+th{color:#8b94a3;font-weight:500}
+td.v{font-variant-numeric:tabular-nums}
+.ok{color:#5fd39a}.bad{color:#ff7a7a}
+.note{color:#9aa3af;font-size:12px}
+.note b{color:#fff}
+@media (max-width:760px){
+  html,body{overflow:auto}
+  .grid{grid-template-columns:repeat(3,1fr)}
+  .row{flex-direction:column}
+}
+</style></head><body>
+<div class="wrap">
+  <div class="bar"><b>该判挂</b><span id="f"></span></div>
+  <div class="bar"><b>该放行</b><span id="p"></span></div>
+  <div class="grid" id="g"></div>
+  <div class="row">
+    <div><table id="t"></table></div>
+    <div class="note" id="n"></div>
+  </div>
+</div>
+<script>
+const VIEWS = [[0,'页面相机'],[1,'正面'],[3,'侧面'],[5,'背面'],[9,'俯视']];
+const LABEL = {
+  'wheel-axis-x':'轮子轴向转 90 度', 'wheel-three':'少一个轮子',
+  'windshield-rear':'风挡挪到车尾', 'lamps-one':'前灯少一个',
+  'wheel-seg-10':'轮子网格变粗', 'sun-dim':'主光调暗',
+  'cam-other-side':'换一个机位', 'wheel-r-plus4pct':'轮子半径加 4%',
+};
+const LAYER = {L1:'多视角剪影', L2:'体素占据', L3:'部件与拓扑'};
+const WHY = {
+  'wheel-axis-x':'外轮廓直接变了，第一层就拦下。',
+  'wheel-three':'全局剪影 0.903 刚好在阈值之上，分块后最差的那一块是 0.0。',
+  'windshield-rear':'剪影 0.992，外轮廓几乎没动；但玻璃那个颜色的体素重合度是 0。',
+  'lamps-one':'剪影、分块、按色体素全部在阈值之上，只有连通块数从 2 变 1 抓到。',
+  'wheel-seg-10':'网格精细度变了，形状没变，四层都放行。',
+  'sun-dim':'光照只改外观不改状态，剪影和体素都用不到材质与光照。',
+  'cam-other-side':'页面自己的机位变了，所以第一张图差别最大；而 verifier 用自己的九个相机，不受影响。',
+  'wheel-r-plus4pct':'最接近误杀的一例，分块最差块 0.727，阈值 0.5，还留着余量。',
+};
+// 这个 demo 既要能单独打开，也会被构建器内联成 srcdoc（那时相对路径按站点根解析），所以前缀要在运行时定
+const A = location.pathname.includes('/alg/demos/') ? 'assets/' : 'alg/demos/assets/';
+let S = {}, cur = 'wheel-axis-x';
+
+function render() {
+  document.getElementById('g').innerHTML = VIEWS.map(([i, t]) =>
+    `<div class="cell ${i === 0 ? 'page' : ''}"><img src="${A}${cur}_${i}.jpg" alt="${t}"><span class="cap">${t}</span></div>`).join('');
+  const d = S[cur], fail = d.verdict === 'fail';
+  const r = (name, v, th, worse) => {
+    const bad = worse ? v < th : v > th;
+    return `<tr><td>${name}</td><td class="v ${bad ? 'bad' : 'ok'}">${v.toFixed(3)}</td><td class="v">${th}</td></tr>`;
+  };
+  document.getElementById('t').innerHTML =
+    '<tr><th>信号</th><th>这一例</th><th>阈值</th></tr>'
+    + r('页面单张截图相似度', d.page, '无（对照）', false)
+    + r('多视角剪影最差视角', d.mv, 0.9, true)
+    + r('分块体素最差一块', d.blk, 0.5, true)
+    + r('按色体素最低一色', d.vox, 0.5, true);
+  document.getElementById('n').innerHTML =
+    `判定：<b class="${fail ? 'bad' : 'ok'}">${fail ? '挂' : '过'}</b>`
+    + (fail ? `，挂在<b>${LAYER[d.layer] || d.layer}</b>` : '')
+    + `。人工标注：<b>${d.should === 'fail' ? '该挂' : '该放行'}</b>。<br>${WHY[cur] || ''}`
+    + `<br><br>五张图里第一张是页面自带相机，其余四张是 verifier 自己摆的机位。`
+    + `注意第一张在所有例子里都几乎一样（相似度 0.996 以上），<b>单看它分不出对错</b>。`;
+  document.querySelectorAll('.bar button').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
+}
+
+fetch(A + 'signals.json').then(r => r.json()).then(j => {
+  S = j;
+  const mk = (k) => `<button data-k="${k}" class="${S[k].should === 'pass' ? 'good' : ''}">${LABEL[k] || k}</button>`;
+  document.getElementById('f').innerHTML = Object.keys(S).filter(k => S[k].should === 'fail').map(mk).join(' ');
+  document.getElementById('p').innerHTML = Object.keys(S).filter(k => S[k].should === 'pass').map(mk).join(' ');
+  document.querySelectorAll('.bar button').forEach(b => b.onclick = () => { cur = b.dataset.k; render(); });
+  render();
+});
+</script></body></html>
+

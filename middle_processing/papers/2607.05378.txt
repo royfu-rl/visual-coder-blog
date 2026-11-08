@@ -1,0 +1,1053 @@
+CompactionRL: Reinforcement Learning with Context Compaction for Long-Horizon Agents 
+ Report GitHub Issue 
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+ Context Compaction for Long-Horizon Agents. 
+ Reinforcement Learning for Language Models. 
+ 3 The CompactionRL Method 
+ 3.1 Trainable Context Compaction 
+ Compaction during Rollout Sampling. 
+ Training Segments. 
+ Effect of Summarization Quality. 
+ 3.2 Optimization under Compacted Rollouts 
+ Single-Rollout Optimization. 
+ Token-Level Loss for Length Imbalance. 
+ Cross-Segment Generalized Advantage Estimation. 
+ 4 Experiments 
+ 4.1 Experimental Setup 
+ 4.2 Main Results 
+ 4.3 Ablation Studies 
+ Effect of PPO. 
+ Effect of Token-Level Loss and Cross-Segment GAE. 
+ Effect of Extended-Context. 
+ 4.4 Analysis 
+ Compaction Behavior. 
+ Training Dynamics. 
+ 5 Conclusion 
+ Limitations. 
+ References 
+ A Experimental Details 
+ A.1 SWE-bench Verified Subset 
+ A.2 Training and Compute Details 
+ Model and compute configurations. 
+ A.3 Compaction Prompt Templates 
+ B Analysis on Hyperparameter Sensitivity 
+ C Summary Quality Analysis 
+ Judge setup. 
+ Failure modes. 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2607.05378v2 [cs.LG] 01 Oct 2026
+ CompactionRL: Reinforcement Learning with Context Compaction for Long-Horizon Agents
+ Yujiang Li
+ Zhenyu Hou
+ Yi Jing
+ Jie Tang
+ Yuxiao Dong
+ Affiliation:  Tsinghua University
+ Abstract 
+ Long-horizon agentic LLMs are increasingly limited by finite context windows, as extended interaction trajectories can exceed the maximum context length before a task is completed.
+Context compaction offers a natural solution by summarizing previous interaction states and continuing the rollout under a compressed context, but incorporating compaction into reinforcement learning remains underexplored.
+We propose CompactionRL, a reinforcement learning strategy to train long-horizon agentic LLMs with context compaction.
+Our approach jointly optimizes task execution and summary generation with token-level loss normalization and cross-segment generalized advantage estimation.
+This design enables the LLM agents to learn from compacted long-horizon trajectories.
+We train CompactionRL on top of open models and observe consistent performance gains on agentic coding tasks.
+CompactionRL enables the open GLM-4.5-Air model (106B-A12B) to achieve Pass@1 scores of 66.4% on SWE-bench Verified and 26.2% on Terminal-Bench 2.0, exceeding the base model under inference-time compaction by 6.6 and 4.9 points, respectively.
+Built upon GLM-4.7-Flash (30B-A3B), CompactionRL improves Pass@1 by 5.5 and 6.7 points against the base model, reaching 56.0% on SWE-bench Verified and 20.2% on Terminal-Bench 2.0.
+CompactionRL is thus deployed in the RL pipeline for training the open GLM-5.2 model (750B-A40B).
+ | 
+ 1 1 footnotetext: Equal Contribution. 2 2 footnotetext: Work done while YL, ZH, and YJ interned at Z.AI. 
+ 1 Introduction
+ Large language model (LLM) agents are increasingly applied to long-horizon interactive tasks, such as software engineering, terminal-based problem solving, and web interaction  ( Yao et al., 2023 ; Nakano and others, 2021 ; Jimenez et al., 2023 ) . These tasks require agents to repeatedly reason, act, observe environment feedback, and revise their plans over many steps. As the interaction proceeds, the accumulated history, including tool outputs, intermediate reasoning, error messages, and partial solutions, can exceed the model’s finite context window. Although longer-context models alleviate this issue, scaling context length alone is costly and does not fully solve degraded utilization over long sequences  ( Beltagy et al., 2020 ; Dao et al., 2022 ; Liu et al., 2024 ; Hsieh et al., 2024 ) . Thus, long-horizon RL for LLM agents requires mechanisms that allow training to proceed under a fixed context budget.
+ Context compaction provides a natural way to address this limitation. When the history approaches the context limit, earlier interaction history can be summarized into a shorter state, after which the agent resumes from the compacted summary and a small amount of recent context. Related ideas have been explored in language-agent memory, reflection, and long-horizon interaction systems  ( Shinn et al., 2023 ; Park et al., 2023 ; Sun et al., 2025 ) . However, prior uses of compaction are mostly treated as inference-time heuristics or external memory operations. In RL training, compaction has a more fundamental role: once a summary replaces the original history, it determines what information is available for all subsequent actions. Therefore, task success depends not only on the execution policy, but also on the quality of the compaction policy.
+ Context compaction introduces additional challenges for asynchronous agentic RL. First, differences in compaction frequency and subsequent execution length increase variation in rollout generation time. Group-relative methods such as GRPO must wait for the slowest rollout in each group to finish before computing advantages, increasing policy lag and off-policy effects  ( Hou et al., 2026 ) . Second, jointly optimizing task execution and summarization requires including both execution and summary segments in training despite summary segments being substantially shorter, creating a severe length imbalance that can lead to disproportionate weighting under segment-level loss. Third, computing GAE independently within each segment places the shared terminal reward at local segment boundaries, artificially shortening its temporal distance from earlier actions and summaries and distorting temporal credit assignment.
+ In this work, we propose CompactionRL, a PPO-based reinforcement learning framework for building long-horizon agentic LLMs with trainable context compaction, as shown in Figure  1 .
+CompactionRL incorporates compaction into rollout sampling, reconstructing the agent context from a summary once context budget is exhausted.
+Its core strategy is to jointly optimize task execution actions and summarization actions under the same final task reward.
+This enables RL training horizon to extend beyond the peak context length while keeping the actual working context budget fixed. Our contributions are summarized as follows:
+ Figure 1: 
+Left: Context compaction allows execution to continue under a fixed context window by initiating a new trace from a compressed summary once the context budget is exhausted. Without compaction, execution terminates upon exhaustion of the context budget.
+Right: Performance on SWE-bench Verified and Terminal-Bench 2.0 across the base model with inference compaction, standard no-compaction RL, RL with inference compaction, and CompactionRL. “Base Model + Infer. Comp.” denotes the base model evaluated with context compaction. “RL” denotes standard RL trained and evaluated without compaction, while “RL + Infer. Comp.” uses the same RL checkpoint but enables context compaction during evaluation.
+ • 
+ We bring context compaction into long-horizon agentic RL training. We adopt single-rollout PPO to avoid waiting for rollout groups, which is a problem more severe in compaction-aware training, and reduce the associated policy lag in asynchronous training, while using a learned critic to estimate token-level advantages for execution and summarization segments.
+ • 
+ We develop CompactionRL to jointly train trajectory generation and summary generation with a shared task-level reward, making summarization a learned part of the model rather than an inference-time heuristic.
+To handle compacted rollouts, we use token-level loss normalization to reduce length-induced weighting bias and cross-segment GAE to preserve temporal credit assignment across compaction boundaries.
+ • 
+ CompactionRL achieves consistent gains on long-horizon agentic coding tasks. Compared with the base model with inference-time compaction, CompactionRL improves GLM-4.7-Flash by 5.5 points on SWE-bench Verified and 6.7 points on Terminal-Bench 2.0.
+It also improves GLM-4.5-Air by 6.6 and 4.9 points on the two coding benchmarks, respectively.
+These results show that RL-trained compaction can extend the effective training horizon of agentic LLMs without increasing the maximum working context length.
+ 2 Related Work
+ Context Compaction for Long-Horizon Agents.
+ Long-horizon language agents must maintain task-relevant state across extended sequences of reasoning, tool calls, and environment feedback. A standard ReAct-style agent appends the full interaction history to the prompt  ( Yao et al., 2023 ) , but this makes the context grow with the trajectory and can reduce both efficiency and effective information use in long contexts  ( Liu et al., 2024 ) . Prior work has addressed this issue through longer-context modeling and evaluation  ( Bai et al., 2024 ; Hsieh et al., 2024 ) , prompt or observation compression  ( Jiang et al., 2023b ; Jiang et al., 2023a ) , and explicit memory or reflection mechanisms  ( Packer et al., 2023 ; Shinn et al., 2023 ; Park et al., 2023 ; Zhou et al., 2025 ) , showing that compressing or externalizing history can extend the effective horizon of LLM agents.
+Recent work has begun to incorporate context management into agent training. SUPO   ( Lu et al., 2025 ) and Memex(RL)  ( Wang et al., 2026 ) introduce context management into multi-turn RL and optimize with GRPO, without considering context state differences across compaction segments for advantage calculation; ReSum  ( Wu et al., 2025 ) trains on segmented trajectories
+without optimizing the summarizer while Yi et al. (2026) and Wu et al. (2026) train only the context manager.
+However, how to jointly train long-horizon coding agents with both execution and compaction segments remains underexplored.
+ Reinforcement Learning for Language Models.
+ Reinforcement learning has become a central technique for improving language models with outcome feedback ( Uesato et al., 2022 ) . Early RLHF systems commonly adopt PPO with an explicit value function  ( Schulman et al., 2017 ; Ouyang and others, 2022 ) , while recent reasoning-oriented LLM training often favors critic-free or group-relative objectives such as RLOO, GRPO, and DAPO  ( Ahmadian and others, 2024 ; Shao and others, 2024 ; DeepSeek-AI, 2025 ; Hou et al., 2025b ; Yu et al., 2025 ; Zheng et al., 2025 ) that have shown strong performance on verifiable-reward tasks such as mathematical reasoning and coding ( Hou et al., 2025a ; Wei et al., 2025 ; Xu et al., 2025 ) .
+At the same time, recent studies show that critic-based methods can still be highly effective when value learning is carefully designed. VC-PPO  ( Yuan et al., 2025 ) improves PPO through value pretraining and modified advantage estimation and VAPO  ( Yue et al., 2025 ) demonstrates that a value-based RL framework can achieve strong and stable reasoning performance. SAO  ( Hou et al., 2026 ) adopts single-rollout sampling to reduce policy lag caused by waiting for complete rollout groups in asynchronous agentic RL. These studies motivate critic-based optimization for long-horizon agents, supporting both state-dependent advantage estimation and training without group-relative baselines.
+ 3 The CompactionRL Method
+ We present CompactionRL, a reinforcement learning framework for long-horizon language agents under a fixed context budget. The central idea is to make context compaction part of rollout sampling: when the interaction history approaches the context limit, the agent produces a compact summary of the previous trajectory and then resumes from a reconstructed context containing the summary and a short history tail of recent interaction. The summary is generated by the trainable policy and is optimized together with ordinary task-execution actions under the final task reward. Figure  2 gives an overview of the framework.
+ Figure 2: Overview of CompactionRL. During rollout collection, the agent interacts with the environment under a fixed context budget. When the remaining context budget falls below a compaction threshold T_{\mathrm{comp}} , the policy generates a summary and resumes from the summary and recent turns. All execution and summary segments are optimized and share the trajectory reward R . During training, we propagate this reward across segment boundaries by correcting the local GAE advantage A^{\mathrm{loc}}_{s,i} with the number of optimized tokens in subsequent segments, N_{>s} , yielding the cross-segment advantage \widehat{A}_{s,i} . Standard RL without compaction optimizes each rollout as a single execution segment.
+ 3.1 Trainable Context Compaction
+ Compaction during Rollout Sampling.
+ We represent the interaction history as
+ | 
+ h_{t}=(s,u,z_{1},\ldots,z_{t}),\qquad z_{i}=(a_{i},o_{i}), | 
+ | 
+ (1) | 
+ where s is the system prompt, u is the original user instruction, a_{i} is the assistant response at step i , and o_{i} is the corresponding environment observation. We treat each assistant-observation pair z_{i} as an atomic step, so that tool calls and their feedback are not separated by compaction.
+ Let C denote the context budget and |h_{t}| the token length of the current history, Compaction is triggered when the remaining context budget falls below a threshold T_{\mathrm{comp}} :
+ | 
+ C-|h_{t}| | 
+ (2) | 
+ Once triggered, we append a fixed summarization instruction q_{\mathrm{sum}} to the current history and sample a summary S_{t} from the policy,
+where q_{\mathrm{sum}} asks the model to preserve information necessary for continuing the task, including the original goal, completed actions, important observations, unresolved errors, current state, and plausible next steps.
+ After summary generation, the rollout continues from a reconstructed context
+ | 
+ \bar{h}_{t}=s\oplus u_{\mathrm{resume}}(S_{t})\oplus(z_{t-k+1},\ldots,z_{t}), | 
+ | 
+ (3) | 
+ where u_{\mathrm{resume}}(S_{t}) is a fixed template containing the generated summary. The final term keeps the most recent k turns while the summary covers only the history preceding the k turns. We use k=2 by default and reduce k when necessary to ensure that \bar{h}_{t} fits within the context budget. This reconstruction preserves long-range information through S_{t} while retaining the most recent environment state exactly.
+ Training Segments.
+ Compaction naturally partitions a rollout into a sequence of trainable segments,
+ | 
+ \tau=(\sigma_{1},\ldots,\sigma_{K}), | 
+ | 
+ (4) | 
+ where each segment is either an execution segment or a summarization segment. An execution segment contains tokens produced for solving the task, while a summarization segment contains the summary tokens generated before context reconstruction. Summary tokens are sampled from the same trainable policy and are included in the RL objective.
+ Each rollout receives a final task reward R(\tau) determined by task correctness. We assign this rollout-level reward to all trainable segments from the same rollout. We do not introduce a separate summary-quality reward, since hand-designed summary metrics may not reflect which details are useful for continuation.
+ Effect of Summarization Quality.
+ Compaction makes task success sensitive to the quality of the summary. A summary that omits a crucial file path, error message, failed command, or partial solution can make subsequent actions ineffective even when the execution policy itself is strong. To quantify this effect, we fix the execution agent and vary only the summary agent.
+ Table 1: Effect of summarization quality under context compaction. The execution agent is fixed to GLM-4.7-Flash, while tested with various summary agents including Qwen3.5-27B ( Qwen Team, 2026 ) and Qwen3-30B-A3B ( Yang et al., 2025 ) . SWE-Verified Acc. denotes pass@1(%) on SWE-bench Verified; Summary Count / Trace reports the average number of summaries triggered per trace. 
+ Execution Agent | 
+ Summary Agent | 
+ SWE-Verified Acc. | 
+ Summary Count / Trace | 
+ GLM-4.7-Flash | 
+ Qwen3.5-27B | 
+ 55.5 | 
+ 1.010 | 
+ GLM-4.7-Flash | 
+ GLM-4.7-Flash | 
+ 50.5 | 
+ 1.075 | 
+ GLM-4.7-Flash | 
+ Qwen3-30B-A3B | 
+ 49.0 | 
+ 1.126 | 
+ Table  1 shows that changing only the summary agent leads to a large difference in final task performance. The best summarizer improves SWE-Verified accuracy from 49.0 to 55.5 , a gain of 6.5 absolute points, while also triggering slightly fewer compactions per trace. This result suggests that compaction is a performance-critical decision process rather than a passive preprocessing step. We therefore train summary generation jointly with task execution.
+ 3.2 Optimization under Compacted Rollouts
+ Single-Rollout Optimization.
+ Compaction increases variation in rollout generation time since rollouts differ in compaction frequency and subsequent execution length. Group-relative advantage estimation requires completed rollouts to wait for the slowest member of the group, while asynchronous policy updates increase the mismatch between rollout and training policies during this waiting period. Following SAO  ( Hou et al., 2026 ) , we adopt PPO with one rollout per prompt to avoid this additional waiting and reduce the associated off-policy effects.
+ Moreover, resumed segments condition on different compacted histories. A learned critic provides context-dependent value estimates for token-level advantage estimation, whereas rollout-level group normalization does not explicitly account for these intermediate states differences.
+ Token-Level Loss for Length Imbalance.
+ Since the length of agent trajectories and summarization varies significantly, we choose to use token-level loss instead of sequence-level loss to overcome the severe imbalance.
+Let \mathcal{M} denote the set of optimized assistant-token positions in a training batch. For token y_{s,i} in segment \sigma_{s} , conditioned on context x_{s,i} , let \rho_{s,i}(\theta) denote the importance sampling ratio of the current policy \pi_{\theta} to the rollout policy \pi_{\theta_{\mathrm{old}}} . We optimize the clipped PPO objective
+ | 
+ \mathcal{L}_{\pi}=-\frac{1}{|\mathcal{M}|}\sum_{(s,i)\in\mathcal{M}}\min\left(\rho_{s,i}(\theta)\widehat{A}_{s,i},\mathrm{clip}\left(\rho_{s,i}(\theta),1-\epsilon,1+\epsilon\right)\widehat{A}_{s,i}\right), | 
+ | 
+ (5) | 
+ where \epsilon is the clipping threshold and \widehat{A}_{s,i} is the advantage estimate described below.
+ The loss computation is performed over generated tokens rather than over samples. This is important because compaction introduces heterogeneity in both segment count and segment length. Segment-level averaging would make a rollout with more compaction events contribute more strongly than a rollout with fewer segments, even when both receive the same task reward. Token-level normalization removes this segment-count bias and gives each trainable token equal weight.
+ Cross-Segment Generalized Advantage Estimation.
+ PPO  ( Schulman et al., 2017 ) uses a learned critic V_{\phi} to estimate expected discounted returns. The temporal-difference (TD) residual measures the discrepancy between the one-step bootstrapped return and the current value estimate:
+ | 
+ \delta_{t}=r_{t}+\gamma V_{\phi}(x_{t+1})-V_{\phi}(x_{t}), | 
+ | 
+ (6) | 
+ where x_{t} is the current context, r_{t} is the reward, and \gamma is the discount factor. Generalized advantage estimation (GAE)  ( Schulman et al., 2015 ) computes token-level advantages by accumulating subsequent TD residuals:
+ | 
+ A_{t}^{\mathrm{GAE}}=\sum_{\ell=0}^{T-t}(\gamma\lambda)^{\ell}\delta_{t+\ell}, | 
+ | 
+ (7) | 
+ where T is the number of optimized tokens and \lambda is the trace parameter. This accumulation propagates delayed task feedback to earlier tokens while discounting more distant residuals.
+ Compacted rollouts also create a temporal credit-assignment issue. Since each segment is optimized independently, a naive segment-level GAE computation places the shared terminal reward at the end of every segment. For earlier segments, this makes the final task outcome appear artificially closer than it is in the original rollout, over-crediting actions or summaries that occur far before task completion.
+ For a segment \sigma_{s} with n_{s} optimized tokens, the local GAE estimator is
+ | 
+ A^{\mathrm{loc}}_{s,i}=\sum_{\ell=0}^{n_{s}-i}(\gamma\lambda)^{\ell}\delta_{s,i+\ell},\qquad\delta_{s,i}=r_{s,i}+\gamma V_{\phi}(x_{s,i+1})-V_{\phi}(x_{s,i}), | 
+ | 
+ (8) | 
+ where i indexes tokens within the segment. Let
+ N_{>s}=\sum_{j>s}n_{j} 
+be the number of optimized tokens generated after segment \sigma_{s} in the same rollout. We apply a trajectory-position correction
+ | 
+ \widehat{A}_{s,i}=(\gamma\lambda)^{N_{>s}}A^{\mathrm{loc}}_{s,i}. | 
+ | 
+ (9) | 
+ This correction discounts earlier segments according to the number of subsequent trainable tokens before rollout termination. In particular, if the terminal task reward appears at the last token of each independently optimized segment, then the reward term for token (s,i) receives discount
+ | 
+ (\gamma\lambda)^{N_{>s}+n_{s}-i}, | 
+ | 
+ (10) | 
+ which matches its distance to the final outcome in the concatenated compacted rollout.
+ Note that this is an approximation rather than an exact reconstruction of full-trajectory GAE. Since an exact reconstruction of full-trajectory GAE would require recursively propagating TD residuals from later to earlier compaction segments, introducing cross-segment dependencies that preclude parallel processing within a batch, we use the trajectory-position correction above instead of exact reconstruction to preserve training efficiency.
+ 4 Experiments
+ 4.1 Experimental Setup
+ Training Details. 
+We conduct experiments with two models at different parameter scales: GLM-4.7-Flash and GLM-4.5-Air-SFT. The latter is obtained by supervised fine-tuning GLM-4.5-Air ( GLM et al., 2025 ) on trajectories generated by GLM-4.7. For each model, we initialize the corresponding critic from the same model checkpoint and perform 50 steps of value pretraining on the training dataset before reinforcement learning. We use open-source training data from SWE-Dev ( Wang et al., 2025 ) . For the training of CompactionRL, we use slime ( Zhu et al., 2025 ) , an open-source asynchronous RL framework, for reinforcement learning training.
+ For RL training, we employ a global batch size of 128, sample one rollout per prompt, and use context budgets of 64k for GLM-4.7-Flash and 80k for GLM-4.5-Air-SFT. The policy is optimized with Adam using a learning rate of 2\times 10^{-6} , while the critic is trained with a learning rate of 3\times 10^{-6} . For advantage estimation, we set the reward discount factor \gamma=1 and adopt length-adaptive GAE  ( Yue et al., 2025 ) with \lambda=1-\frac{1}{\alpha l} and \alpha=1.5 , where l denotes the response length. To ensure that the critic keeps pace with policy updates, we perform two value model updates and one policy update for each batch, facilitating accurate advantage estimation. Each assistant response is limited to 10,240 tokens and compaction is triggered when the remaining context budget falls below 10,240 tokens, with at most three compaction operations per rollout.
+Detailed model configurations and compute resources are provided in
+Appendix  A.2 .
+ Evaluation Setting. 
+We evaluate CompactionRL on SWE-bench Verified ( Jimenez et al., 2023 ) and Terminal-Bench 2.0 ( Merrill et al., 2026 ) , using 200 randomly sampled tasks from SWE-bench Verified and the full Terminal-Bench 2.0 set, and report Pass@1 accuracy. The complete list of sampled tasks is provided in
+Appendix  A.1 . All evaluations are conducted in the Harbor ( Harbor Framework Team, 2026 ) environment with the Terminus-KIRA ( KRAFTON AI and Ludo Robotics, 2026 ) agent scaffold. Evaluation hyperparameters include: top- p=1.0 , temperature =1.0 , up to 250 interaction turns and at most three compaction operations per trajectory.
+ 4.2 Main Results
+ Table  2 compares the base models, standard no-compaction PPO , CompactionRL (w/o sum. loss), and the full CompactionRL under single-window or compacted evaluation settings on SWE-bench Verified and Terminal-Bench 2.0. CompactionRL (w/o sum. loss) enables compaction during RL but masks the loss on summary-response turns, separating the effect of training on compacted histories from that of directly optimizing the summarizer.
+ CompactionRL achieves the best performance across both model scales and benchmarks. Inference-time compaction generally improves the base models by extending their effective context budget. Standard PPO improves single-window execution, but this benefit does not transfer consistently to compacted inference, where it either degrades performance or yields smaller gains than CompactionRL. Moreover, the consistent improvements of CompactionRL over CompactionRL (w/o sum. loss) across both model scales and benchmarks demonstrate the benefit of directly optimizing summarization during compaction-aware training. Overall, these results indicate that CompactionRL effectively extends the usable context horizon through trainable compaction.
+ Table 2: 
+Main results on SWE-bench Verified and Terminal-Bench 2.0.
+We report Pass@1 accuracy (%). Results are reported as mean \pm standard deviation over three evaluation runs. Comp. Training and Comp. Infer. indicate whether context compaction is enabled during RL training and evaluation, respectively. For each model, “w/ Inference Compaction” uses the same checkpoint as the preceding row but enables compaction during evaluation. CompactionRL (w/o sum. loss) retains compaction during both training and inference but masks summary-response tokens in the RL loss. Compacted evaluation retains the peak working context length and allows up to three compactions, yielding an effective budget of up to 4\times the peak length.
+ | 
+ Peak Len. | 
+ Comp. 
+ Training 
+ | 
+ Comp. 
+ Infer. 
+ | 
+ SWE-bench 
+ Verified 
+ | 
+ Terminal-Bench 2.0 
+ | 
+ Public reports / baselines | 
+ gpt-oss-120b | 
+ 128k | 
+ – | 
+ ✗ | 
+ 62.0 | 
+ 18.7 | 
+ Qwen3.5-35B-A3B | 
+ 64k | 
+ – | 
+ ✓ | 
+ 58.0 | 
+ 27.0 | 
+ Qwen3-Coder-480B-A35B-Instruct | 
+ 256k | 
+ – | 
+ ✗ | 
+ 66.5 | 
+ 23.9 | 
+ Qwen3-Coder-30B-A3B-Instruct | 
+ 256k | 
+ – | 
+ ✗ | 
+ 51.9 | 
+ 14.6 | 
+ Qwen3-235B-A22B-Instruct-2507 | 
+ 256k | 
+ – | 
+ ✗ | 
+ 45.2 | 
+ 13.5 | 
+ Qwen3-30B-A3B-Instruct-2507 | 
+ 256k | 
+ – | 
+ ✗ | 
+ 25.2 | 
+ 5.34 | 
+ Terminus-KIRA scaffold | 
+ GLM-4.7-Flash (30B-A3B) | 
+ 64k | 
+ – | 
+ ✗ | 
+ 47.3{\scriptstyle\pm 2.7} | 
+ 14.6{\scriptstyle\pm 1.6} | 
+ w/ Inference Compaction | 
+ 64k | 
+ – | 
+ ✓ | 
+ 50.5{\scriptstyle\pm 1.2} | 
+ 13.5{\scriptstyle\pm 0.9} | 
+ + RL (w/o compaction) | 
+ 64k | 
+ ✗ | 
+ ✗ | 
+ 52.5{\scriptstyle\pm 2.5} | 
+ 16.9{\scriptstyle\pm 2.4} | 
+ w/ Inference Compaction | 
+ 64k | 
+ ✗ | 
+ ✓ | 
+ 48.2{\scriptstyle\pm 0.5} | 
+ 12.4{\scriptstyle\pm 0.9} | 
+ + CompactionRL (w/o sum. loss) | 
+ 64k | 
+ ✓ | 
+ ✓ | 
+ 54.5{\scriptstyle\pm 1.2} | 
+ 12.4{\scriptstyle\pm 0.0} | 
+ + CompactionRL (ours) | 
+ 64k | 
+ ✓ | 
+ ✓ | 
+ 56.0{\scriptstyle\pm 0.4} | 
+ 20.2{\scriptstyle\pm 0.9} | 
+ GLM-4.5-Air (106B-A12B) | 
+ 80k | 
+ – | 
+ ✗ | 
+ 57.8{\scriptstyle\pm 2.1} | 
+ 18.0{\scriptstyle\pm 2.8} | 
+ w/ Inference Compaction | 
+ 80k | 
+ – | 
+ ✓ | 
+ 59.8{\scriptstyle\pm 1.9} | 
+ 21.3{\scriptstyle\pm 1.6} | 
+ + RL (w/o compaction) | 
+ 80k | 
+ ✗ | 
+ ✗ | 
+ 58.3{\scriptstyle\pm 0.6} | 
+ 20.2{\scriptstyle\pm 3.7} | 
+ w/ Inference Compaction | 
+ 80k | 
+ ✗ | 
+ ✓ | 
+ 62.5{\scriptstyle\pm 1.1} | 
+ 23.6{\scriptstyle\pm 0.9} | 
+ + CompactionRL (w/o sum. loss) | 
+ 80k | 
+ ✓ | 
+ ✓ | 
+ 64.5{\scriptstyle\pm 2.4} | 
+ 21.7{\scriptstyle\pm 2.8} | 
+ + CompactionRL (ours) | 
+ 80k | 
+ ✓ | 
+ ✓ | 
+ 66.4{\scriptstyle\pm 0.7} | 
+ 26.2{\scriptstyle\pm 2.1} | 
+ Note. In all our results, SWE-bench Verified is evaluated on a random 200-instance subset, while public baselines are reported on the full benchmark. The public baselines are taken from model cards or public reports and are included for reference only, as their agent scaffolds may differ from ours.
+ 4.3 Ablation Studies
+ Effect of PPO.
+ To evaluate the role of PPO in compaction-aware training, we compare CompactionRL with a GRPO-based baseline implemented following SUPO  ( Lu et al., 2025 ) .
+Both methods jointly optimize task execution and summary generation, but SUPO computes group-relative advantages at the rollout level and assigns them uniformly to all compaction segments, whereas CompactionRL uses a learned critic to estimate token-level advantages.
+As shown in Table  3 , CompactionRL outperforms the SUPO baseline by 4.6 and 4.9 percentage points on SWE-bench Verified and Terminal-Bench 2.0, respectively, demonstrating the effectiveness of critic-based PPO training.
+ Effect of Token-Level Loss and Cross-Segment GAE.
+ We further ablate the two optimization components designed for compacted trajectories using GLM-4.5-Air-SFT: token-level loss normalization and cross-segment GAE.
+As shown in Table  3 , removing either component degrades performance, confirming that both loss weighting and cross-segment credit assignment are important for compaction-aware RL. A larger degradation is observed when token-level loss normalization is removed, suggesting that correcting the optimization bias induced by variable segment counts and lengths is particularly critical.
+ Table 3: Ablation study on PPO based RL, token-level loss normalization, and cross-segment GAE using GLM-4.5-Air-SFT. All variants are evaluated under the compaction enabled 80k \times 4 setting. We report Pass@1 accuracy as mean ± standard deviation on SWE-bench Verified and Terminal-Bench 2.0. 
+ | 
+ SWE-bench Verified | 
+ Terminal-Bench 2.0 | 
+ GLM-4.5-Air (106B-A12B) | 
+ 59.8{\scriptstyle\pm 1.9} | 
+ 21.3{\scriptstyle\pm 1.6} | 
+ + SUPO | 
+ 61.8{\scriptstyle\pm 1.8} | 
+ 21.3{\scriptstyle\pm 0.9} | 
+ + CompactionRL | 
+ 66.4{\scriptstyle\pm 0.7} | 
+ 26.2{\scriptstyle\pm 2.1} | 
+     - w/o token-level loss | 
+ 60.0{\scriptstyle\pm 1.2} | 
+ 21.3{\scriptstyle\pm 2.4} | 
+     - w/o cross-segment GAE | 
+ 63.0{\scriptstyle\pm 1.4} | 
+ 22.5{\scriptstyle\pm 2.4} | 
+ Effect of Extended-Context.
+ We further compare CompactionRL with standard no-compaction RL using an extended context window of 160k, which simulates access to a sufficiently long context that can retain the full trajectory without compaction-induced information loss. As shown in Table  4 , under 80k \times 4 compacted evaluation, CompactionRL outperforms the extended-context baseline evaluated with either 80k \times 4 compaction or a 160k non-compacted context on both benchmarks. This demonstrates the effectiveness of trainable compaction relative to directly increasing the training context window.
+ Table 4: Comparison with extended-context no-compaction RL using GLM-4.5-Air (106B-A12B). We report Pass@1 accuracy (%) as mean \pm standard deviation over three evaluation runs. As inference time strategies, Comp.( \times 4 ) enables up to three compaction operations with an 80k peak context, while Long uses a 160k non-compacted context window as a sufficiently long context reference. 
+ | 
+ Train 
+ Budget 
+ | 
+ SWE-bench Verified | 
+ Terminal-Bench 2.0 | 
+ Comp.( \times 4 ) 
+ | 
+ Long | 
+ Comp.( \times 4 ) 
+ | 
+ Long | 
+ GLM-4.5-Air (106B-A12B) | 
+ – | 
+ 59.8{\scriptstyle\pm 1.9} | 
+ 59.5{\scriptstyle\pm 1.6} | 
+ 21.3{\scriptstyle\pm 1.6} | 
+ 20.6{\scriptstyle\pm 2.1} | 
+ + RL (w/o compaction)-160k | 
+ 160k | 
+ 62.8{\scriptstyle\pm 2.8} | 
+ 64.0{\scriptstyle\pm 0.8} | 
+ 23.2{\scriptstyle\pm 2.8} | 
+ 22.1{\scriptstyle\pm 1.4} | 
+ + CompactionRL (ours) | 
+ 80k \times 4 | 
+ 66.4{\scriptstyle\pm 0.7} | 
+ 61.8{\scriptstyle\pm 1.5} | 
+ 26.2{\scriptstyle\pm 2.1} | 
+ 24.2{\scriptstyle\pm 1.4} | 
+ 4.4 Analysis
+ Compaction Behavior.
+ (a) Average compactions
+ (b) Average tool call counts
+ (c) Compacted-task accuracy
+ Figure 3: Behavior comparison on SWE-bench Verified in the GLM-4.5-Air setting under 80k \times 4 compacted evaluation. We compare the base model(GLM-4.5-Air-SFT), standard no-compaction RL, CompactionRL (w/o sum. loss), and CompactionRL. Here, we denote a trace as all compaction segments generated to solve a single task. (a) Average number of compaction operations per trace. (b) Average number of tool calls per trace. (c) Pass@1 accuracy on compaction triggering tasks in each evaluation run. 
+ Figure  3 analyzes compaction behavior in the GLM-4.5-Air setting under 80k \times 4 evaluation. Figure  3 (a,b) shows that CompactionRL requires fewer compactions and tool calls than GLM-4.5-Air and CompactionRL (w/o sum. loss) but more than standard no-compaction RL. This indicates that CompactionRL learns both to exploit the extended context horizon enabled by compaction and a higher interaction efficiency, suggesting that the improvement is not attributable to longer interaction traces alone; rather, trained summaries help retain task-relevant information and reduce redundant re-exploration after compaction. Figure  3 (c) reports pass@1 on tasks that trigger compaction. CompactionRL achieves the highest accuracy on this subset, indicating that jointly training execution and summarization improves reliable continuation from compacted histories.
+ Training Dynamics.
+ (a) Summary length
+ (b) Reasoning tokens per turn
+ (c) Entropy
+ Figure 4: Training dynamics of GLM-4.5-Air CompactionRL. (a) Summary optimization leads to increasingly longer and more detailed summaries. (b) CompactionRL increases reasoning tokens per turn. (c) Policy entropy. 
+ Figure  4 (a) analyzes the change of summary length during GLM-4.5-Air CompactionRL training. Compared with CompactionRL (w/o sum. loss), whose summary length decreases during training, CompactionRL produces increasingly longer and more detailed summaries when summary responses are included in the RL objective. This results in more complete and actionable compacted states that better preserve implementation-relevant context and continuation state. This suggests that optimizing summary responses encourages the model to retain useful detailed information for post-compaction continuation, rather than merely recording high-level task progress. We further quantify summary faithfulness and continuation usefulness in
+Appendix  C , supporting that CompactionRL learns to generate summaries of higher quality. Figure  4 (b) further shows that the reasoning tokens of CompactionRL increase throughout training, whereas those of CompactionRL (w/o sum. loss) and standard no-compaction RL decrease. This indicates that learned compaction effectively expands the usable context window, allowing for more reasoning budget. Figure  4 (c) shows that CompactionRL also exhibits a slower entropy increase, suggesting more controlled policy optimization.
+ Additional analysis of hyperparameter sensitivity is provided in Appendix  B .
+ 5 Conclusion
+ We presented CompactionRL, a PPO-based framework that trains long-horizon agents with context compaction by optimizing execution and summary tokens under the same task reward. With token-level loss normalization and cross-segment GAE, CompactionRL improves SWE-bench Verified and Terminal-Bench 2.0 performance under a fixed peak context budget, while further ablations show that summary training produces more detailed compacted states and is important for these gains. Overall, our results demonstrate the effectiveness of incorporating context compaction into RL training for long-horizon agents, rather than treating it solely as an inference-time heuristic.
+ Limitations.
+ CompactionRL is designed for settings where context compaction is available during both training and inference. Extending its benefits to single-window inference requires further study, as the gains observed under compaction-enabled evaluation do not consistently transfer to this setting. In addition, cross-segment GAE remains an approximation to full-trajectory credit assignment, motivating further investigation into more precise reconstruction.
+ AI use statement
+ We did not use generative AI tools for any tasks with required disclosure. We used generative AI tools only for language polishing and grammar correction. All research ideas, methods, experiments, and analyses were conceived, designed, implemented, and validated by the authors. We reviewed all AI-assisted text and revised it as necessary. We take responsibility for the final content of this work, including text produced with the aid of generative AI.
+ References
+ Ahmadian et al. (2024) 
+ A. Ahmadian et al. 
+ Back to basics: revisiting reinforce style optimization for learning from human feedback in llms .
+ arXiv preprint arXiv:2402.14740 .
+ Cited by: §2 .
+ Bai et al. (2024) 
+ Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, Y. Dong, J. Tang, and J. Li 
+ LongBench: a bilingual, multitask benchmark for long context understanding .
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+ pp. 3119–3137 .
+ External Links: Document ,
+ Link 
+ Cited by: §2 .
+ Beltagy et al. (2020) 
+ I. Beltagy, M. E. Peters, and A. Cohan 
+ Longformer: the long-document transformer .
+ arXiv preprint arXiv:2004.05150 .
+ Cited by: §1 .
+ Dao et al. (2022) 
+ T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré 
+ FlashAttention: fast and memory-efficient exact attention with io-awareness .
+ In Advances in Neural Information Processing Systems ,
+ Vol. 35 , pp. 16344–16359 .
+ Cited by: §1 .
+ DeepSeek-AI (2025) 
+ DeepSeek-AI 
+ DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+ arXiv preprint arXiv:2501.12948 .
+ Cited by: §2 .
+ GLM et al. (2025) 
+ T. GLM, A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, K. Wang, L. Zhong, M. Liu, R. Lu, S. Cao, X. Zhang, X. Huang, Y. Wei, Y. Cheng, Y. An, Y. Niu, Y. Wen, Y. Bai, Z. Du, Z. Wang, Z. Zhu, B. Zhang, B. Wen, B. Wu, B. Xu, C. Huang, C. Zhao, C. Cai, C. Yu, C. Li, C. Ge, C. Huang, C. Zhang, C. Xu, C. Zhu, C. Li, C. Yin, D. Lin, D. Yang, D. Jiang, D. Ai, E. Zhu, F. Wang, G. Pan, G. Wang, H. Sun, H. Li, H. Li, H. Hu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Wang, H. Yang, H. Liu, H. Zhao, H. Liu, H. Yan, H. Liu, H. Chen, J. Li, J. Zhao, J. Ren, J. Jiao, J. Zhao, J. Yan, J. Wang, J. Gui, J. Zhao, J. Liu, J. Li, J. Li, J. Lu, J. Wang, J. Yuan, J. Li, J. Du, J. Du, J. Liu, J. Zhi, J. Gao, K. Wang, L. Yang, L. Xu, L. Fan, L. Wu, L. Ding, L. Wang, M. Zhang, M. Li, M. Xu, M. Zhao, M. Zhai, P. Du, Q. Dong, S. Lei, S. Tu, S. Yang, S. Lu, S. Li, S. Li, Shuang-Li, S. Yang, S. Yi, T. Yu, W. Tian, W. Wang, W. Yu, W. L. Tam, W. Liang, W. Liu, X. Wang, X. Jia, X. Gu, X. Ling, X. Wang, X. Fan, X. Pan, X. Zhang, X. Zhang, X. Fu, X. Zhang, Y. Xu, Y. Wu, Y. Lu, Y. Wang, Y. Zhou, Y. Pan, Y. Zhang, Y. Wang, Y. Li, Y. Su, Y. Geng, Y. Zhu, Y. Yang, Y. Li, Y. Wu, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Zhang, Z. Liu, Z. Yang, Z. Zhou, Z. Qiao, Z. Feng, Z. Liu, Z. Zhang, Z. Wang, Z. Yao, Z. Wang, Z. Liu, Z. Chai, Z. Li, Z. Zhao, W. Chen, J. Zhai, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang 
+ GLM-4.5: agentic, reasoning, and coding (arc) foundation models .
+ External Links: 2508.06471 ,
+ Link 
+ Cited by: §4.1 .
+ Harbor Framework Team (2026) 
+ Harbor: A framework for evaluating and optimizing agents and models in container environments 
+ External Links: Document ,
+ Link 
+ Cited by: §4.1 .
+ Hou et al. (2025a) 
+ Z. Hou, Z. Hu, Y. Li, R. Lu, J. Tang, and Y. Dong 
+ TreeRL: llm reinforcement learning with on-policy tree search .
+ External Links: 2506.11902 ,
+ Link 
+ Cited by: §2 .
+ Hou et al. (2026) 
+ Z. Hou, Y. Li, J. Tang, and Y. Dong 
+ Single-rollout asynchronous optimization for agentic reinforcement learning .
+ External Links: 2607.07508 ,
+ Link 
+ Cited by: §1 ,
+ §2 ,
+ §3.2 .
+ Hou et al. (2025b) 
+ Z. Hou, X. Lv, R. Lu, J. Zhang, Y. Li, Z. Yao, J. Li, J. Tang, and Y. Dong 
+ T1: advancing language model reasoning through reinforcement learning and inference scaling .
+ External Links: 2501.11651 ,
+ Link 
+ Cited by: §2 .
+ Hsieh et al. (2024) 
+ C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg 
+ RULER: what’s the real context size of your long-context language models? .
+ arXiv preprint arXiv:2404.06654 .
+ External Links: Link 
+ Cited by: §1 ,
+ §2 .
+ Jiang et al. (2023a) 
+ H. Jiang, Q. Wu, C. Lin, Y. Yang, and L. Qiu 
+ LongLLMLingua: accelerating and enhancing llms in long context scenarios via prompt compression .
+ arXiv preprint arXiv:2310.06839 .
+ Cited by: §2 .
+ Jiang et al. (2023b) 
+ H. Jiang, Q. Wu, X. Luo, D. Li, C. Lin, Y. Yang, and L. Qiu 
+ LLMLingua: compressing prompts for accelerated inference of large language models .
+ arXiv preprint arXiv:2310.05736 .
+ Cited by: §2 .
+ Jimenez et al. (2023) 
+ C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan 
+ Swe-bench: can language models resolve real-world github issues? .
+ arXiv preprint arXiv:2310.06770 .
+ Cited by: §1 ,
+ §4.1 .
+ KRAFTON AI and Ludo Robotics (2026) 
+ KRAFTON AI and Ludo Robotics 
+ Terminus-kira: boosting frontier model performance on terminal-bench with minimal harness .
+ External Links: Link 
+ Cited by: §4.1 .
+ Liu et al. (2024) 
+ N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang 
+ Lost in the middle: how language models use long contexts .
+ Transactions of the Association for Computational Linguistics 12 , pp. 157–173 .
+ Cited by: §1 ,
+ §2 .
+ Lu et al. (2025) 
+ M. Lu, W. Sun, W. Du, Z. Ling, X. Yao, K. Liu, and J. Chen 
+ Scaling LLM multi-turn RL with end-to-end summarization-based context management .
+ arXiv preprint arXiv:2510.06727 .
+ External Links: Document ,
+ Link 
+ Cited by: §2 ,
+ §4.3 .
+ Merrill et al. (2026) 
+ M. A. Merrill, A. G. Shaw, N. Carlini, B. Li, H. Raj, I. Bercovich, L. Shi, J. Y. Shin, T. Walshe, E. K. Buchanan, J. Shen, G. Ye, H. Lin, J. Poulos, M. Wang, M. Nezhurina, J. Jitsev, D. Lu, O. M. Mastromichalakis, Z. Xu, Z. Chen, Y. Liu, R. Zhang, L. L. Chen, A. Kashyap, J. Uslu, J. Li, J. Wu, M. Yan, S. Bian, V. Sharma, K. Sun, S. Dillmann, A. Anand, A. Lanpouthakoun, B. Koopah, C. Hu, E. Guha, G. H. S. Dreiman, J. Zhu, K. Krauth, L. Zhong, N. Muennighoff, R. Amanfu, S. Tan, S. Pimpalgaonkar, T. Aggarwal, X. Lin, X. Lan, X. Zhao, Y. Liang, Y. Wang, Z. Wang, C. Zhou, D. Heineman, H. Liu, H. Trivedi, J. Yang, J. Lin, M. Shetty, M. Yang, N. Omi, N. Raoof, S. Li, T. Y. Zhuo, W. Lin, Y. Dai, Y. Wang, W. Chai, S. Zhou, D. Wahdany, Z. She, J. Hu, Z. Dong, Y. Zhu, S. Cui, A. Saiyed, A. Kolbeinsson, J. Hu, C. M. Rytting, R. Marten, Y. Wang, A. Dimakis, A. Konwinski, and L. Schmidt 
+ Terminal-bench: benchmarking agents on hard, realistic tasks in command line interfaces .
+ External Links: 2601.11868 ,
+ Link 
+ Cited by: §4.1 .
+ Nakano et al. (2021) 
+ R. Nakano et al. 
+ WebGPT: browser-assisted question-answering with human feedback .
+ arXiv preprint arXiv:2112.09332 .
+ Cited by: §1 .
+ Ouyang et al. (2022) 
+ L. Ouyang et al. 
+ Training language models to follow instructions with human feedback .
+ In Advances in Neural Information Processing Systems ,
+ Vol. 35 , pp. 27730–27744 .
+ Cited by: §2 .
+ Packer et al. (2023) 
+ C. Packer, S. Wooders, K. Lin, V. Fang, S. G. Patil, I. Stoica, and J. E. Gonzalez 
+ MemGPT: towards llms as operating systems .
+ arXiv preprint arXiv:2310.08560 .
+ External Links: Link 
+ Cited by: §2 .
+ Park et al. (2023) 
+ J. S. Park, J. C. O’Brien, C. J. Cai, M. R. Morris, P. Liang, and M. S. Bernstein 
+ Generative agents: interactive simulacra of human behavior .
+ In Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology ,
+ Cited by: §1 ,
+ §2 .
+ Qwen Team (2026) 
+ Qwen Team 
+ Qwen3.5: towards native multimodal agents .
+ External Links: Link 
+ Cited by: Table 1 .
+ Schulman et al. (2015) 
+ J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel 
+ High-dimensional continuous control using generalized advantage estimation .
+ arXiv preprint arXiv:1506.02438 .
+ Cited by: §3.2 .
+ Schulman et al. (2017) 
+ J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov 
+ Proximal policy optimization algorithms .
+ arXiv preprint arXiv:1707.06347 .
+ External Links: Document ,
+ Link 
+ Cited by: §2 ,
+ §3.2 .
+ Shao et al. (2024) 
+ Z. Shao et al. 
+ DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+ arXiv preprint arXiv:2402.03300 .
+ Cited by: §2 .
+ Shinn et al. (2023) 
+ N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao 
+ Reflexion: language agents with verbal reinforcement learning .
+ In Advances in Neural Information Processing Systems ,
+ Cited by: §1 ,
+ §2 .
+ Sun et al. (2025) 
+ W. Sun, M. Lu, Z. Ling, K. Liu, X. Yao, Y. Yang, and J. Chen 
+ Scaling long-horizon llm agent via context-folding .
+ arXiv preprint arXiv:2510.11967 .
+ Cited by: §1 .
+ Uesato et al. (2022) 
+ J. Uesato, N. Kushman, R. Kumar, F. Song, N. Siegel, L. Wang, A. Creswell, G. Irving, and I. Higgins 
+ Solving math word problems with process- and outcome-based feedback .
+ External Links: 2211.14275 ,
+ Link 
+ Cited by: §2 .
+ Wang et al. (2025) 
+ H. Wang, Z. Hou, Y. Wei, J. Tang, and Y. Dong 
+ Swe-dev: building software engineering agents with training and inference scaling .
+ In Findings of the Association for Computational Linguistics: ACL 2025 ,
+ pp. 3742–3761 .
+ Cited by: §4.1 .
+ Wang et al. (2026) 
+ Z. Wang, H. Chen, J. Wang, and W. Wei 
+ Memex(rl): scaling long-horizon llm agents via indexed experience memory .
+ External Links: 2603.04257 ,
+ Link 
+ Cited by: §2 .
+ Wei et al. (2025) 
+ Y. Wei, O. Duchenne, J. Copet, Q. Carbonneaux, L. Zhang, D. Fried, G. Synnaeve, R. Singh, and S. I. Wang 
+ SWE-rl: advancing llm reasoning via reinforcement learning on open software evolution .
+ External Links: 2502.18449 ,
+ Link 
+ Cited by: §2 .
+ Wu et al. (2025) 
+ X. Wu, K. Li, Y. Zhao, L. Zhang, L. Ou, H. Yin, Z. Zhang, X. Yu, D. Zhang, Y. Jiang, P. Xie, F. Huang, M. Cheng, S. Wang, H. Cheng, and J. Zhou 
+ ReSum: unlocking long-horizon search intelligence via context summarization .
+ arXiv preprint arXiv:2509.13313 .
+ External Links: Document ,
+ Link 
+ Cited by: §2 .
+ Wu et al. (2026) 
+ Y. Wu, L. Zhang, Y. Zhou, M. Wang, B. Peng, S. Li, X. Fan, and Z. Zhao 
+ Remember when it matters: proactive memory agent for long-horizon agents .
+ External Links: 2607.08716 ,
+ Link 
+ Cited by: §2 .
+ Xu et al. (2025) 
+ Y. Xu, X. Liu, X. Liu, J. Fu, H. Zhang, B. Jing, S. Zhang, Y. Wang, W. Zhao, and Y. Dong 
+ MobileRL: online agentic reinforcement learning for mobile gui agents .
+ External Links: 2509.18119 ,
+ Link 
+ Cited by: §2 .
+ Yang et al. (2025) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. 
+ Qwen3 technical report .
+ arXiv preprint arXiv:2505.09388 .
+ Cited by: Table 1 .
+ Yao et al. (2023) 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao 
+ ReAct: synergizing reasoning and acting in language models .
+ In International Conference on Learning Representations ,
+ External Links: Link 
+ Cited by: §1 ,
+ §2 .
+ Yi et al. (2026) 
+ L. Yi, R. Lei, L. Yao, Y. Xie, Y. Li, W. Zhang, Z. Wei, Y. Li, and J. Nie 
+ Learning agent-compatible context management for long-horizon tasks .
+ External Links: 2605.30785 ,
+ Link 
+ Cited by: §2 .
+ Yu et al. (2025) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, et al. 
+ DAPO: an open-source llm reinforcement learning system at scale .
+ arXiv preprint arXiv:2503.14476 .
+ Cited by: §2 .
+ Yuan et al. (2025) 
+ Y. Yuan, Y. Yue, R. Zhu, T. Fan, and L. Yan 
+ What’s behind PPO’s collapse in long-CoT? value optimization holds the secret .
+ arXiv preprint arXiv:2503.01491 .
+ External Links: Document ,
+ Link 
+ Cited by: §2 .
+ Yue et al. (2025) 
+ Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, et al. 
+ Vapo: efficient and reliable reinforcement learning for advanced reasoning tasks .
+ arXiv preprint arXiv:2504.05118 .
+ Cited by: §2 ,
+ §4.1 .
+ Zheng et al. (2025) 
+ C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al. 
+ Group sequence policy optimization .
+ arXiv preprint arXiv:2507.18071 .
+ Cited by: §2 .
+ Zhou et al. (2025) 
+ Z. Zhou, A. Qu, Z. Wu, S. Kim, A. Prakash, D. Rus, J. Zhao, B. K. H. Low, and P. P. Liang 
+ MEM1: learning to synergize memory and reasoning for efficient long-horizon agents .
+ External Links: 2506.15841 ,
+ Link 
+ Cited by: §2 .
+ Zhu et al. (2025) 
+ Z. Zhu, C. Xie, X. Lv, and slime Contributors 
+ Slime: an llm post-training framework for rl scaling .
+ Note: https://github.com/THUDM/slime GitHub repository. Corresponding author: Xin Lv 
+ Cited by: §4.1 .
+ Appendix A Experimental Details
+ A.1 SWE-bench Verified Subset
+ All SWE-bench Verified results in our experiments use the same
+200-task subset spanning 10 repositories. For reproducibility,
+Table  5 lists the complete subset grouped by
+repository. We report each repository prefix once and list
+the corresponding numeric instance IDs; for example,
+ astropy__astropy with instance ID 7671 denotes
+ astropy__astropy-7671 .
+ Table 5: The 200-task SWE-bench Verified evaluation subset, grouped by repository. 
+ Repository 
+ | 
+ Instance IDs 
+ | 
+ astropy__astropy 
+ | 
+ 7671, 8707, 13579, 13977, 14365, 14369, 14995 
+ | 
+ django__django 
+ | 
+ 9296, 10097, 10914, 10999, 11095, 11133, 11138, 11163, 11179, 11211, 11276, 11292, 11299, 11400, 11433, 11477, 11490, 11532, 11728, 11734, 11749, 11815, 11880, 11951, 11964, 11999, 12125, 12155, 12193, 12209, 12262, 12273, 12276, 12419, 12708, 13012, 13112, 13128, 13158, 13297, 13343, 13344, 13346, 13363, 13449, 13516, 13551, 13569, 13658, 13741, 13786, 13809, 13810, 13820, 13821, 13837, 13933, 14007, 14089, 14155, 14170, 14238, 14404, 14493, 14539, 14559, 14580, 14672, 14725, 14765, 14771, 14787, 14792, 14999, 15022, 15037, 15098, 15128, 15252, 15278, 15368, 15382, 15467, 15499, 15554, 15563, 15572, 15731, 15741, 15863, 16032, 16100, 16136, 16256, 16263, 16333, 16429, 16485, 16502, 16595, 16612, 16631, 16661, 16662, 16819, 16901 
+ | 
+ matplotlib__matplotlib 
+ | 
+ 20676, 22719, 24149, 24627, 24970, 25311, 25775, 26342 
+ | 
+ psf__requests 
+ | 
+ 1142, 1766, 1921, 2317, 5414 
+ | 
+ pydata__xarray 
+ | 
+ 2905, 3151, 3305, 4094, 4356, 4629, 6461, 7229 
+ | 
+ pylint-dev__pylint 
+ | 
+ 4604, 6903, 7277, 8898 
+ | 
+ pytest-dev__pytest 
+ | 
+ 5631, 5840, 7205, 7236, 7521, 7982, 10051, 10081 
+ | 
+ scikit-learn__scikit-learn 
+ | 
+ 9288, 10297, 11310, 13124, 13439, 14141, 14496, 15100 
+ | 
+ sphinx-doc__sphinx 
+ | 
+ 7440, 7462, 7757, 7889, 7985, 8035, 8056, 8120, 8265, 8459, 8475, 8548, 9258, 9591, 9658, 10435, 10466 
+ | 
+ sympy__sympy 
+ | 
+ 11618, 12096, 12419, 13091, 13372, 13480, 13551, 13757, 13852, 13974, 14248, 14976, 15349, 15875, 15976, 16450, 16597, 17318, 18211, 18698, 19346, 19495, 19637, 22714, 22914, 23262, 23534, 24066, 24539 
+ | 
+ A.2 Training and Compute Details
+ Model and compute configurations.
+ The policy and critic are initialized from the same backbone, with the critic
+augmented by a scalar value head.
+All hyperparameter settings are identical for both the 30B and 106B configurations. Table  6 summarizes the training configurations and compute resources for both models. Table  7 compares the training-resource
+usage of CompactionRL and the GRPO baseline under GLM-4.5-Air(106B-A12B).
+We additionally repeated CompactionRL training with two random seeds under the same configuration and observed similar performance across seeds.
+ Table 6: Training configurations and compute resources for CompactionRL. 
+ Item | 
+ Configuration 
+ | 
+ GLM-4.7-Flash (30B-A3B) | 
+ Model architecture | 
+ 47 layers, hidden size 2,048, 20 attention heads 
+ | 
+ MoE configuration | 
+ 64 routed experts, top-4 routing, 1 shared expert 
+ | 
+ Runtime / compute | 
+ 180 training steps in 15 hours; 960 GPU-hours 
+ | 
+ GLM-4.5-Air (106B-A12B) | 
+ Model architecture | 
+ 46 layers, hidden size 4,096, 96 attention heads 
+ | 
+ MoE configuration | 
+ 128 routed experts, top-8 routing, 1 shared expert 
+ | 
+ Runtime / compute | 
+ 100 training steps in 23 hours; 1,472 GPU-hours 
+ | 
+ Shared training configuration | 
+ Policy optimization | 
+ Adam, constant LR 2\times 10^{-6} ,
+ \beta=(0.9,0.98) , weight decay 0.1 
+ | 
+ Critic optimization | 
+ LR 3\times 10^{-6} , two critic updates per policy update 
+ | 
+ Advantage estimation | 
+ \gamma=1 , length-adaptive GAE with
+ \lambda=1-\frac{1}{\alpha l} and \alpha=1.5 
+ | 
+ KL | 
+ KL coefficient 0 
+ | 
+ Hardware | 
+ 64 NVIDIA H800 GPUs: 32 shared by actor and critic,
+and 32 for rollouts 
+ | 
+ Table 7: Training-resource comparison between CompactionRL and the GRPO baseline. 
+ Method | 
+ Total 
+ prompts 
+ | 
+ Batch size 
+ (segments) 
+ | 
+ Total 
+ rollouts 
+ | 
+ Generated 
+ tokens 
+ | 
+ Wall-clock 
+ time 
+ | 
+ GPU-hours | 
+ CompactionRL | 
+ 1,405 | 
+ 128 | 
+ 11,092 | 
+ 442M | 
+ 23 h | 
+ 1,472 | 
+ SUPO | 
+ 1,405 | 
+ 128 | 
+ 11,484 | 
+ 448M | 
+ 25 h | 
+ 1,600 | 
+ A.3 Compaction Prompt Templates
+ We use fixed templates for summary generation and post-compaction resumption.
+These correspond to q_{\mathrm{sum}} and u_{\mathrm{resume}}(S_{t}) in
+Section  3.1 . The original task instruction is explicitly included in the
+summary-generation prompt, while the most recent k assistant–tool-result
+pairs are retained verbatim after compaction.
+ Summarization Prompt q_{\mathrm{sum}} 
+ Your job is to create a detailed summary of the conversation so far,
+paying close attention to the user’s explicit requests and the work
+already completed. 
+ Original task: 
+ {ORIGINAL_INSTRUCTION} 
+ You are summarizing the earlier portion of the conversation only.
+{RECENT_MESSAGE_NOTE} will remain in the conversation verbatim, so do
+not repeat them in detail unless they are required for continuity. 
+ Do not assume you can read external files or use tools. Work only from
+the conversation provided in this context. 
+ Before providing the summary, think through what matters most to
+preserve. Write the response using exactly these tags: 
+ <analysis>
+Brief internal reasoning about what to preserve.
+</analysis> 
+ <summary>
+Your summary here.
+</summary> 
+ Inside <summary>, organize the content so the next model can continue
+without reading any external files. Include: 
+ 1. Primary Request and Intent 
+ 2. Key Technical Concepts 
+ 3. Files and Code Sections examined or changed 
+ 4. Errors encountered and how they were addressed 
+ 5. Problem Solving and important decisions 
+ 6. All user messages and explicit asks from the summarized portion 
+ 7. Pending Tasks 
+ 8. Current Work 
+ 9. Optional Next Step 
+ Be concrete. Preserve exact commands, outputs, code behavior, and error
+text when those details matter for the work to continue. Do not output JSON. 
+ Post-Compaction Resume Prompt u_{\mathrm{resume}}(S_{t}) 
+ This session is being continued from a previous conversation that
+ran out of context. The summary below covers the earlier portion
+of the conversation. 
+ {SUMMARY_TEXT} 
+ Recent messages are preserved verbatim below and should be treated
+as the source of truth for the latest state. 
+ Continue the conversation from where it left off without asking any
+further questions. Resume directly from this summary and the
+preserved recent messages. 
+ Appendix B Analysis on Hyperparameter Sensitivity
+ We evaluate the hyperparameter sensitivity of CompactionRL on the 200-task SWE-bench Verified subset using the trained CompactionRL checkpoint of GLM-4.5-Air (106B-A12B). We vary the context budget, maximum number of compactions, and retained history length at inference time. The context budget denotes the maximum working context length C , and k denotes the number of recent agent–environment interaction turns retained after compaction.
+ Table 8: Sensitivity to inference-time compaction settings on SWE-bench Verified. Results are Pass@1 accuracy (%) reported as mean \pm standard deviation over evaluation runs. 
+ Factor | 
+ Setting | 
+ SWE-bench Verified | 
+ Context budget | 
+ 32k | 
+ 63.0\pm 0.5 | 
+ 64k | 
+ 65.5\pm 1.7 | 
+ 80k | 
+ 66.4\pm 0.7 | 
+ Maximum compactions | 
+ 0 | 
+ 59.1\pm 2.2 | 
+ 1 | 
+ 65.3\pm 1.5 | 
+ 3 | 
+ 66.4\pm 0.7 | 
+ Retained history length | 
+ k=0 | 
+ 66.0\pm 0.5 | 
+ k=2 | 
+ 66.4\pm 0.7 | 
+ Table  8 shows that CompactionRL maintains stable performance within practical hyperparameter ranges, indicating limited sensitivity to these settings. Removing the recent-history tail causes only a minor performance drop, suggesting that the learned summaries retain most task-relevant state.
+ Appendix C Summary Quality Analysis
+ We evaluate summary quality on SWE-bench Verified trajectories where at least one of CompactionRL and RL trained without compaction, when evaluated with inference-time compaction, triggers at least one compaction. The analysis covers 79 samples from the 200-task SWE-bench Verified subset. When multiple compaction summaries are available within the same trajectory, we first average their scores. To reduce uncertainty from the LLM judge, each evaluation is repeated three times. As shown in Table  9 , CompactionRL obtains a higher average score than RL without compaction training, with an overall mean difference of +0.22 and a 95% bootstrap confidence interval of [0.020,0.420] .
+ Table 9: Summary-quality evaluation of RL without compaction training and CompactionRL. Scores use a 0–5 scale. 
+ Dimension | 
+ Evaluation criterion 
+ | 
+ RL (w/o 
+ compaction training) 
+ | 
+ CompactionRL | 
+ Requirement Fidelity | 
+ Whether the summary accurately preserves task requirements, constraints, and acceptance criteria 
+ | 
+ 3.67 | 
+ 4.00 | 
+ Current-State Fidelity | 
+ Whether the summary accurately records the current repository, patch, test, and completion state 
+ | 
+ 3.28 | 
+ 3.53 | 
+ Failure-History Fidelity | 
+ Whether the summary preserves key failures, diagnoses, and rejected approaches 
+ | 
+ 3.38 | 
+ 3.48 | 
+ Next-Step Validity | 
+ Whether the pending work and next steps are correct, specific, executable, and non-misleading 
+ | 
+ 3.14 | 
+ 3.43 | 
+ Continuation Usefulness | 
+ Whether the summary reduces redundant exploration caused by missing or misleading state and promotes new, verifiable progress 
+ | 
+ 3.05 | 
+ 3.15 | 
+ Total | 
+ – 
+ | 
+ 3.30 | 
+ 3.52 | 
+ The score distribution also shifts away from low-quality summaries: the fraction of scores in the 0–2 range decreases from 22.2% for RL without compaction training to 11.9% for CompactionRL. On the subset where both methods compact, CompactionRL also achieves a higher task success rate, 38.10% versus 28.57%, consistent with its higher summary-quality scores.
+ Judge setup.
+ The judge uses claude-opus-5 with reasoning_effort=medium . The evaluation prompt is shown below.
+ Summary-Quality Judge Prompt 
+ Role. 
+You are a trajectory summary evaluator. Assess a compaction summary for
+ Faithfulness and Continuation Usefulness . 
+ The trace contains: 
+ • 
+ Segment 1: original prompt, pre-summary execution,
+summary prompt, and candidate summary. 
+ • 
+ Segment 2: original prompt, candidate summary,
+and post-summary execution. 
+ Rules. 
+ • 
+ Evaluate whether the summary accurately preserves
+continuation-critical requirements, state, failures, blockers,
+and next steps. 
+ • 
+ Separate summary quality from continuation-policy, execution,
+and environment quality. 
+ • 
+ Cite concrete trace evidence for every score. 
+ • 
+ Judge relevant completeness and information density,
+not length or detail count. 
+ • 
+ The final two pre-summary assistant/tool-result pairs form
+the retained tail. Do not penalize facts already clear there. 
+ • 
+ Use post-summary execution only for continuation usefulness,
+and penalize only summary-caused recovery errors, repetition,
+or detours. 
+ Scores. 
+Use 0–5: 5 nearly perfect; 4 high quality; 3 usable with clear defects;
+2 important defects; 1 core state missing or wrong; 0 unusable;
+“N/A” if there is insufficient evidence. 
+ Dimensions. 
+ • 
+ F1 Requirement Fidelity: Preserves required constraints
+and acceptance criteria. 
+ • 
+ F2 Current-State Fidelity: Accurately preserves repository,
+file, patch, test, environment, and completion state. 
+ • 
+ F3 Failure-History Fidelity: Preserves failures, diagnoses,
+rejected hypotheses, and costly ineffective approaches. 
+ • 
+ F4 Next-Step Validity: Gives correct, specific, executable
+next steps consistent with the current state. 
+ • 
+ U Continuation Efficiency and Progress: Helps recover state,
+avoid summary-induced repetition or detours, and make verifiable progress. 
+ Output. 
+Output exactly one valid JSON object and no other text. 
+ { 
+ "faithfulness": { 
+ "F1_requirement_fidelity": 
+ {"score": 0, "evidence": [], "rationale": "", "key_issues": []}, 
+ "F2_current_state_fidelity": 
+ {"score": 0, "evidence": [], "rationale": "", "key_issues": []}, 
+ "F3_failure_history_fidelity": 
+ {"score": 0, "evidence": [], "rationale": "", "key_issues": []}, 
+ "F4_next_step_validity": 
+ {"score": 0, "evidence": [], "rationale": "", "key_issues": []} 
+ }, 
+ "usefulness": { 
+ "U_continuation_efficiency_and_progress": 
+ {"score": 0, "evidence": [], "rationale": "", "key_issues": []} 
+ } 
+ } 
+ Trace. 
+ <segment_1> 
+ {{SYSTEM_AND_USER_PROMPTS}}{{PRE_SUMMARY_EXECUTION}}{{SUMMARY_PROMPT}} 
+ <candidate_summary>{{CANDIDATE_SUMMARY}}</candidate_summary> 
+ </segment_1> 
+ <segment_2> 
+ {{INITIAL_PROMPT_AND_CANDIDATE_SUMMARY}}{{POST_SUMMARY_EXECUTION}} 
+ </segment_2> 
+ Failure modes.
+ We identify three recurring failure modes in lower-quality summaries: (1) omitted or misdiagnosed failures, where the summary records that tests failed but preserves an incorrect diagnosis; (2) stale or misrepresented repository states, where temporary debugging choices are mistaken for the final solution; and (3) premature completion claims, where passing tests are treated as sufficient even though the implementation still violates an explicit task requirement. In a representative comparison, RL (w/o compaction training) treats an earlier database failure as the current test status despite a later successful test run, causing the post-compaction agent to continue debugging an obsolete issue and ultimately fail. By contrast, CompactionRL preserves a more detailed account of the execution state, including which file-writing attempts failed, how these failures corrupted the source file, and why the task remained incomplete. These details guide the post-compaction agent to recover the file, complete the required modification, and verify the solution.
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

@@ -1,0 +1,46 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*{margin:0;box-sizing:border-box}html,body{height:100%;overflow:hidden;background:#0f1115;font:12px -apple-system,system-ui,sans-serif;color:#c9d1dc}
+canvas{display:block}
+.panel{position:fixed;left:8px;top:8px;right:8px;display:flex;flex-direction:column;gap:6px}
+.code{font:12px ui-monospace,Menlo,monospace;color:#e6e9ef;background:#181c24;border:1px solid #2c3340;border-radius:7px;padding:6px 9px;align-self:flex-start}
+.code .v{color:#7ee2a8;font-weight:700}
+label{display:flex;align-items:center;gap:8px}
+input{width:150px;accent-color:#2f6bff}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+</head><body>
+<div class="panel">
+  <div class="code" id="code"></div>
+  <label>height <input id="h" type="range" min="30" max="110" value="60"></label>
+  <label>radius <input id="rd" type="range" min="18" max="45" value="30"></label>
+</div>
+<script type="module">
+import * as THREE from 'three';
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 1, 1000);
+cam.position.set(0, 170, 240); cam.lookAt(0, 20, 0);
+const r = new THREE.WebGLRenderer({ antialias: true });
+r.setPixelRatio(Math.min(devicePixelRatio, 2)); r.setSize(innerWidth, innerHeight);
+document.body.appendChild(r.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(80, 160, 120); scene.add(sun);
+const mat = new THREE.MeshStandardMaterial({ color: 0x2f6bff, roughness: .35, side: THREE.DoubleSide });
+let cup;
+
+// 一个杯子 = 一条截面轮廓绕中轴旋转一圈；尺寸全由参数决定
+function build(height, radius, wall = 3) {
+  const p = [[0, 0], [radius, 0], [radius, height], [radius - wall, height], [radius - wall, wall], [0, wall]]
+    .map(([x, y]) => new THREE.Vector2(x, y));
+  if (cup) { scene.remove(cup); cup.geometry.dispose(); }
+  cup = new THREE.Mesh(new THREE.LatheGeometry(p, 64), mat);
+  cup.position.y = -10; scene.add(cup);
+  document.getElementById('code').innerHTML =
+    `cup(height=<span class="v">${height}</span>, radius=<span class="v">${radius}</span>, wall=3)  # 单位 mm`;
+}
+const h = document.getElementById('h'), rd = document.getElementById('rd');
+const rebuild = () => build(+h.value, +rd.value);
+h.oninput = rd.oninput = rebuild; rebuild();
+addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); r.setSize(innerWidth, innerHeight); });
+(function loop() { requestAnimationFrame(loop); cup.rotation.y += 0.005; r.render(scene, cam); })();
+</script></body></html>
+

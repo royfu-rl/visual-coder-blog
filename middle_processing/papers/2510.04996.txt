@@ -1,0 +1,1031 @@
+SOURCE: https://arxiv.org/html/2510.04996
+Reinforce-Ada: An Adaptive Sampling Framework under Non-linear RL Objectives 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 The Weighted Objective Framework 
+ 2.1 Prior Approach: Passive Filtering and Large Group Size 
+ 2.2 A Principled Solution: The Weighted Objective Framework 
+ Implementation of Weighted Objective: Explicit vs. Implicit. 
+ Theoretical Connections with GRPO and Variance-reduction Gradient Estimation. 
+ 3 Reinforce-Ada: Reinforce with Adaptive Sampling 
+ 3.1 Reinforce-Ada-Est: Estimation-based Allocation 
+ Adaptive Sampling with Pass Rate Estimation. 
+ 3.2 Reinforce-Ada-Seq: Implicit Allocation via Sequential Sampling 
+ Exit condition. 
+ Practical Implementation via Static Batches. 
+ 3.3 Comparison with the Dynamic Sampling in DAPO 
+ 4 Experiment 
+ 4.1 Experimental Setup 
+ Models and Benchmarks. 
+ Data Curation and Verifier. 
+ RL Training Details. 
+ Sampling Configuration. 
+ 4.2 Main Result 
+ Adaptive Allocation vs. Uniform Scaling. 
+ Comparison with Passive Filtering (DAPO). 
+ Comparison among different adaptive sampling variants. 
+ 4.3 Analysis of Efficiency and Learning Dynamics 
+ Computation vs. Performance Sweet Spot. 
+ Wall-Clock Efficiency. 
+ The Sampling Dynamic of Ada-Seq . 
+ 4.4 Entropy Dynamic and Pass@k 
+ 5 Related Work 
+ Data filtering and selection in online RL training for LLMs. 
+ Addressing signal loss in GRPO. 
+ Learning objective in RLVR. 
+ GRPO variant designs. 
+ 6 Discussion and End Note 
+ References 
+ A Authorship and Credit Attribution 
+ B Variance-Reduction Gradient Estimator under the Log-objective 
+ B.1 Optimal Budget Allocation 
+ Reinforce with baseline. 
+ C Ablation Studies 
+ C.1 Adaptive Sampling Solves More Difficult Prompts 
+ The impact of prompt set difficulty 
+ C.2 Variants of Reinforce-Ada-Est 
+ D Simulation of Sampling Cost of Reinforce-Ada-Seq 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2510.04996v3 [cs.LG] 05 Dec 2025
+ Reinforce-Ada: An Adaptive Sampling Framework under Non-linear RL Objectives
+ Wei Xiong Chenlu Ye *∘ 
+ † † thanks: Equal contribution. A detailed attribution of authorship credits is provided in Appendix˜ A .
+Correspondence to Hanze Dong ( hanzedong@microsoft.com )
+and Wei Xiong ( wx13@illinois.edu ). 
+ Baohao Liao
+ Hanze Dong
+ Xinxing Xu
+ Christof Monz
+ Jiang BianNan Jiang ∘ Tong Zhang ∘ 
+ ∘ University of Illinois Urbana-Champaign
+ Microsoft Research University of Amsterdam
+ Abstract
+ Reinforcement learning (RL) for large language model reasoning is frequently hindered by signal loss , a phenomenon where standard uniform sampling with small group sizes fails to uncover informative learning signals for difficult prompts. We demonstrate that this collapse is a statistical artifact of undersampling rather than an inherent model limitation. To address this systematically, we introduce a theoretical framework based on optimizing a non-linear RL objective (e.g., log-likelihood). We show that this objective naturally induces a weighted gradient estimator that prioritizes difficult prompts, which can be robustly realized through adaptive sampling. Guided by this framework, we propose Reinforce-Ada , a family of algorithms that dynamically allocates inference budgets based on prompt difficulty, effectively scaling up RL compute to where it is needed most. Unlike passive filtering methods that discard low-signal prompts, Reinforce-Ada actively invests compute to recover them. We introduce two efficient realizations: an estimation-based approach and a model-free sequential sampling approach. Extensive experiments across multiple benchmarks show that Reinforce-Ada significantly outperforms uniform baselines like GRPO, recovering lost signals and accelerating convergence by up to 2 × 2\times while maintaining the same total inference budget. Code is available at https://github.com/RLHFlow/Reinforce-Ada .
+ Figure 1: Plug-and-play usage. Left: a direct replacement of the generation API in verl ( generate_sequences → \rightarrow generate_multi_round_adaptive_downsampling ). Right: with no other changes, Reinforce-Ada attains faster reward growth and a higher asymptote than GRPO. 
+ 1 Introduction
+ Reinforcement learning (RL) has become a central paradigm for aligning large language models (LLMs).
+Conceptually, the training objective is to maximise the expected reward of model outputs under a given prompt distribution. The primary challenge is not from the formulation of the objective but from the high variance in gradient estimates, which introduces instability into the optimization process.
+ Formally, for a prompt x ∼ d 0 x\sim d_{0} , the policy π θ \pi_{\theta} produces a response a ∼ π θ ( ⋅ | x ) a\sim\pi_{\theta}(\cdot|x) , and a verifier yields a binary reward r ⋆ ​ ( x , a ) ∈ { 0 , 1 } r^{\star}(x,a)\in\{0,1\} . The learning objective is
+ | 
+ J ( θ ) = 𝔼 x ∼ d 0 [ 𝔼 a ∼ π θ ( ⋅ | x ) r ⋆ ( x , a ) ] = : 𝔼 x ∼ d 0 p θ ( x ) , J(\theta)=\mathbb{E}_{x\sim d_{0}}[\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}r^{\star}(x,a)]=:\mathbb{E}_{x\sim d_{0}}p_{\theta}(x), | 
+ | 
+ (1) | 
+ where p θ ​ ( x ) p_{\theta}(x) is often referred to as the pass rate, which is metric of the prompt difficulty given the model π θ \pi_{\theta} .
+ Estimating its gradient requires sampling multiple responses. With only a few samples per prompt, inference is affordable but the gradient is noisy; with many samples, the signal is clear but inference becomes prohibitively expensive. The trade-off between signal quality and cost is a central challenge in RL for LLMs.
+ The vanilla policy gradient with small n n has notoriously high variance. A standard remedy introduces a reward baseline b ⁡ ( x ) b(x) , yielding
+ | 
+ g θ ​ ( x , a ) = ( r ⋆ ​ ( x , a ) − b ⁡ ( x ) ) ⋅ ∇ θ ​ log ​ π θ ​ ( a | x ) , g_{\theta}(x,a)=(r^{\star}(x,a)-b(x))\cdot\nabla_{\theta}\log\pi_{\theta}(a|x), | 
+ | 
+ which stabilizes training while preserving unbiasedness.
+ Group Relative Policy Optimization (GRPO) ( Shao et al., 2024 ) extends this principle by assigning n n responses per prompt and normalizing each sample’s advantage:
+ | 
+ A GRPO ​ ( x , a i ) = r i − r ¯ σ r + ε , A_{\text{GRPO}}(x,a_{i})=\frac{r_{i}-\bar{r}}{\sigma_{r}+\varepsilon}, | 
+ | 
+ (2) | 
+ where r ¯ \bar{r} and σ r \sigma_{r} are the mean and standard deviation of group rewards. This group-wise normalization highlights informative variations while suppressing noise, making GRPO widely adopted in practice.
+ Despite these benefits, GRPO fundamentally relies on a small and fixed n n per prompt, creating a vulnerability to signal collapse. When all n n samples for a prompt yield identical rewards, either all correct or all incorrect, the group mean r ¯ \bar{r} equals each reward r i r_{i} .
+Consequently, the computed advantages vanish ( A GRPO = 0 A_{\text{GRPO}}=0 ), resulting in a zero gradient.
+Such uniform-reward scenarios arise frequently: during early training phases when the model fails on all attempts for challenging prompts, and later when it consistently succeeds on trivial ones. For instance, with a group size of 8, if the pass rate p = 0.1 p=0.1 , the probability that all 8 samples are 0 is 0.9 8 ≈ 19 % 0.9^{8}\approx 19\% . Empirically, even with n = 32 n=32 , more than half of prompts fall into this “zero-gradient” regime as models improve ( Yu et al., 2025 ) .
+ Crucially, this collapse is not due to the prompts being inherently trivial or impossible, but a statistical artifact of undersampling ( p ^ θ ​ ( x ) = 0 ​ or ​ 1 \hat{p}_{\theta}(x)=0\text{ or }1 : estimating p θ ​ ( x ) p_{\theta}(x) with finite samples from π θ ( ⋅ | x ) \pi_{\theta}(\cdot|x) ). Training prompts are typically filtered to ensure moderate difficulty (e.g., Yang et al. (2024) retain prompts where 2–5 out of 8 responses are correct), meaning most prompts have non-trivial success probabilities ( 0 < p ^ θ < 1 0<\hat{p}_{\theta}<1 ). With small n n , however, random fluctuations make it likely to observe all-correct or all-incorrect groups, thereby masking the true learning signal. Larger n n reliably recovers these signals, but at unsustainable inference cost (Figure 2 1 1 
+ 1 
+ This figure shows results on Open-R1 subset for Qwen2.5-Math-1.5B and an RL-trained checkpoint (step 400). The base model scores 26.5% at pass@1, but its pass@256 rises to 81.3%, highlighting its potential to solve the majority of prompts. Similarly, the model exhibits 35.3% all-correct groups at n = 4 n=4 , but only 10.2% at n = 256 n=256 . These results demonstrate that the missing signal is often recoverable with larger n n , confirming that uniform-reward collapse is a statistical artifact of undersampling rather than a model limitation. ).
+ Figure 2: 
+Pass@k curves (left) and the ratio of prompts with all-correct responses (right) for two models on a subset of the Open-R1 prompt set.
+The models tested are the Qwen2.5-Math-1.5B base model and an intermediate checkpoint from its RL training. The percentage of prompts yielding all-correct/all-incorrect responses is high for small k k but drops significantly as k k increases. This suggests that signal loss is often a statistical artifact of small sample groups.
+ To resolve this trade-off, we first introduce a general framework that provides a principled foundation for our solution. We argue that the standard RL objective in Equation ( 1 ) is the root of the problem, as it values all prompts equally regardless of their difficulty. However, from a learning dynamics perspective, solving a difficult prompt (where the model currently fails) provides significantly more information than repeatedly solving an easy one. To effectively balance cost and signal discovery, we must prioritize prompts based on their pass rates. This motivates us to consider a non-linear objective J f ​ ( θ ) = 𝔼 x ​ [ f ⁡ ( p θ ​ ( x ) ) ] J_{f}(\theta)=\mathbb{E}_{x}[f(p_{\theta}(x))] , such as the log-likelihood f ⁡ ( p ) = log ⁡ p f(p)=\log p . The gradient of this objective naturally acquires a prompt-dependent weight, ∇ J f = 𝔼 x ​ [ f ′ ​ ( p ) ⋅ ∇ p ] \nabla J_{f}=\mathbb{E}_{x}[f^{\prime}(p)\cdot\nabla p] . This weight (e.g., 1 / p 1/p for the log objective) explicitly assigns more importance to difficult prompts, directly targeting the signal loss problem. This formulation unifies two implementation paths: explicitly weighting the gradient, or implicitly re-weighting by allocating more samples n i n_{i} (i.e., adaptive sampling).
+ Building on this framework, we propose Reinforce-Ada , a family of adaptive sampling algorithms that robustly implement this implicit weighting principle. We present two efficient realizations to determine the optimal budget allocation:
+ 1. 
+ Estimation-based Allocation ( Reinforce-Ada-Est ) : This variant estimates pass rates online using a lightweight value network or Bayesian moving averages, and then explicitly allocates sampling budgets proportional to the theoretical target (e.g., n i ∝ 1 / p ^ i n_{i}\propto 1/\hat{p}_{i} ).
+ 2. 
+ Implicit Allocation via Sequential Sampling ( Reinforce-Ada-Seq ) : This variant adopts a model-free approach inspired by multi-armed bandits. It continues sampling until sufficient signal is found (e.g., until K K positive responses are collected). We show that this simple stopping rule naturally achieves the desired allocation without needing explicit estimation.
+ Reinforce-Ada is a plug-and-play replacement for the generation step in standard RL pipelines, requiring no architectural modifications. Unlike prompt selection or curriculum methods that operate at the macro prompt level, our method performs micro-level response allocation, shaping the internal structure of each training group. Across multiple LLMs and benchmarks, it consistently improves signal quality and sample efficiency, achieving the benefits of large- n n training at a fraction of its cost.
+ 2 The Weighted Objective Framework
+ 2.1 Prior Approach: Passive Filtering and Large Group Size
+ The standard RL objective is J ⁡ ( θ ) = 𝔼 x ∼ d ​ [ p θ ​ ( x ) ] J(\theta)=\mathbb{E}_{x\sim d}[p_{\theta}(x)] . In practice, d d is often a simple uniform distribution over the training set. The most direct, unbiased estimator for this objective is to sample a batch of prompts and a uniform group size n n of responses for each.
+ However, this naive, uniform-sampling approach, leads to signal loss when n n is small: if all responses in a group yield the same reward (all correct or all incorrect), the advantages normalize to zero, and the gradients vanish (see Equation ( 2 )). Crucially, this “signal collapse” is not due to the prompts being inherently trivial or impossible, but is a statistical artifact of undersampling.
+ Prior work has observed this issue and proposed passively filtering-out groups with uniform rewards ( Yu et al., 2025 ; Xiong et al., 2025 ) .
+While this prevents wasted gradient computations, it still incurs the significant upfront cost of generating responses that are ultimately discarded. Moreover, if difficult prompts are systematically discarded due to a lack of positive signal, the model never learns to solve them, thus hindering training improvement.
+ With these observations, a natural alternative is to use a large n n to reliably capture learning signals. Indeed, concurrent work by Hu et al. (2025) validates this intuition, showing that increasing n n up to 512 recovers valid signals and improves performance. However, generating hundreds of samples for every prompt is computationally prohibitive at scale. As demonstrated by DeepSeek-R1 ( DeepSeek-AI et al., 2025 ) , we can use only n = 16 n=16 responses per prompt to get an effective gradient for model updates. This reveals a significant gap between the inference budget needed to reliably find a learning signal and the update budget required for an effective parameter update.
+ To bridge this gap, we need a framework that moves beyond uniform allocation. We propose an adaptive approach that smartly allocates a larger inference budget to prompts where the signal is scarce, efficiently discovering robust learning signals without the waste of the uniform, large- n n approach.
+ 2.2 A Principled Solution: The Weighted Objective Framework
+ Beyond practical intuition, we establish a principled theoretical foundation for allocating inference budgets adaptively. We argue that the root cause of the uniform sampling inefficiency is the standard RL objective J ⁡ ( θ ) = 𝔼 x ​ [ p θ ​ ( x ) ] J(\theta)=\mathbb{E}_{x}[p_{\theta}(x)] , which values all prompts equally.
+ Instead, we propose a general theoretical framework based on optimizing a non-linear transformation of the pass rate:
+ | 
+ J f ​ ( θ ) = 𝔼 x ∼ d 0 ​ f ​ ( p θ ​ ( x ) ) , J_{f}(\theta)=\mathbb{E}_{x\sim d_{0}}f(p_{\theta}(x)), | 
+ | 
+ (3) | 
+ where f : → ℝ f:\to\mathbb{R} is a non-decreasing function. When f ⁡ ( p ) = p f(p)=p , we recover the standard objective. We also may want to choose a concave f f . In this way, we implicitly assign higher marginal utility to improvements on prompts with low pass rates (difficult prompts). The policy gradient for this general objective reveals a crucial insight. By applying the chain rule, the gradient acquires a prompt-dependent weight:
+ | 
+ ∇ J f ( θ ) = 𝔼 x ∼ d 0 [ f ′ ​ ( p θ ​ ( x ) ) ⏟ Weight ​ w ​ ( p ) ⋅ 𝔼 a ∼ π θ ( ⋅ | x ) [ ∇ θ log π θ ( a | x ) ⋅ r ( x , a ) ] ] . \nabla J_{f}(\theta)=\mathbb{E}_{x\sim d_{0}}\Big[\underbrace{f^{\prime}(p_{\theta}(x))}_{\text{Weight }w(p)}\cdot\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}\Big[\nabla_{\theta}\log\pi_{\theta}(a|x)\cdot r(x,a)\Big]\Big]. | 
+ | 
+ A canonical choice that targets signal loss is the log-likelihood objective , f ⁡ ( p ) = log ⁡ p f(p)=\log p . This yields a weight w ⁡ ( x ) = 1 / p θ ​ ( x ) w(x)=1/p_{\theta}(x) , which scales inversely with the model’s current performance. This explicitly instructs the optimizer to prioritize difficult prompts (where p → 0 p\to 0 ) with a potentially large weight, counteracting the vanishing gradients typically observed in these regimes.
+ Example 1 (Log objective f ⁡ ( t ) = log ⁡ ( t ) f(t)=\log(t) ) . 
+ Here J log ​ ( θ ) = 𝔼 x ∼ d 0 ​ log ⁡ ( p θ ​ ( x ) ) J_{\log}(\theta)=\mathbb{E}_{x\sim d_{0}}\log(p_{\theta}(x)) , and the gradient for a prompt x x is 
+ | 
+ 1 p θ ​ ( x ) ⋅ 𝔼 a ∼ π θ ( ⋅ | x ) [ ( r ⋆ ( x , a ) ) ⋅ ∇ θ log π θ ( a | x ) ] . \frac{1}{p_{\theta}(x)}\cdot\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}\Big[\big(r^{\star}(x,a)\big)\cdot\nabla_{\theta}\log\pi_{\theta}(a|x)\Big]. | 
+ | 
+ This explicitly instructs the optimizer to prioritize difficult prompts (where p → 0 p\to 0 ) with a potentially infinite weight. We may also consider other functions such as the power function to present a softer weight.
+ Example 2 (Power function f ⁡ ( t ) = t α f(t)=t^{\alpha} , α > 0 \alpha>0 ) . 
+ In this case, J α ​ ( θ ) = 𝔼 x ∼ d 0 ​ [ p θ ​ ( x ) ] α J_{\alpha}(\theta)=\mathbb{E}_{x\sim d_{0}}[p_{\theta}(x)]^{\alpha} , and the gradient for prompt x x is 
+ | 
+ α p θ ( x ) α − 1 ⋅ 𝔼 a ∼ π θ ( ⋅ | x ) [ ( r ⋆ ( x , a ) ) ⋅ ∇ θ log π θ ( a | x ) ] . \alpha p_{\theta}(x)^{\alpha-1}\cdot\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}\Big[\big(r^{\star}(x,a)\big)\cdot\nabla_{\theta}\log\pi_{\theta}(a|x)\Big]. | 
+ | 
+ Setting α = 1 2 \alpha=\frac{1}{2} gives, 
+ | 
+ 1 2 ​ p θ ​ ( x ) ⋅ 𝔼 a ∼ π θ ( ⋅ | x ) [ ( r ⋆ ( x , a ) ) ⋅ ∇ θ log π θ ( a | x ) ] . \frac{1}{2\sqrt{p_{\theta}(x)}}\cdot\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}\Big[\big(r^{\star}(x,a)\big)\cdot\nabla_{\theta}\log\pi_{\theta}(a|x)\Big]. | 
+ | 
+ Figure 3: Visualization of different f ⁡ ( t ) f(t) and f ′ ​ ( t ) f^{\prime}(t) . The concave functions log ⁡ ( t ) \log(t) and t \sqrt{t} assign larger weights f ′ ​ ( t ) f^{\prime}(t) to difficult prompts ( t → 0 t\rightarrow 0 ).
+ This weight w ​ ( p ) = f ′ ​ ( p ) w(p)=f^{\prime}(p) formalizes our intuition. We present a visualization of these function choices in Figure 3 . For the standard objective f ⁡ ( p ) = p f(p)=p , the weight is w ⁡ ( p ) = 1 w(p)=1 , , confirming that it treats all prompts uniformly. In contrast, both the logarithmic and power objectives introduce prompt-dependent weights w ⁡ ( p ) w(p) provide us with a weighted gradient, naturally leading to an adaptive treatment. In particular, for concave functions such as log ⁡ t \log t and t \sqrt{t} (on ( 0 , 1 ) (0,1) ), we observe that their prompt-dependent weights decrease with t t , assigning larger weights to more difficult prompts. We will also provide an interesting explanation of GRPO’s weight under the log-objective in Appendix B .
+ Implementation of Weighted Objective: Explicit vs. Implicit.
+ This weighted gradient formulation 𝔼 x ​ [ w ⁡ ( p ) ⋅ ∇ p ​ ( x ) ] \mathbb{E}_{x}[w(p)\cdot\nabla p(x)] unifies distinct implementation strategies. We can decompose the total weight into two components, w ⁡ ( p ) = w sample ​ ( p ) ⋅ w grad ​ ( p ) w(p)=w_{\mathrm{sample}}(p)\cdot w_{\mathrm{grad}}(p) , allowing for a flexible spectrum of solutions:
+ 1. 
+ Explicit Weighting ( w sample = 1 , w grad = w w_{\mathrm{sample}}=1,w_{\mathrm{grad}}=w ): One retains uniform sampling ( n i = n n_{i}=n ) but explicitly multiplies the gradient by w ⁡ ( p ^ i ) w(\hat{p}_{i}) . However, this strategy fails to solve the core “signal loss” problem. Since we rely on Monte-Carlo estimation for the pass rate, a small group size n n will often yield p ^ i = 0 \hat{p}_{i}=0 for difficult prompts, causing the gradient to vanish rather than be weighted up.
+ 2. 
+ Implicit Weighting via Sampling ( w sample = w , w grad = 1 w_{\mathrm{sample}}=w,w_{\mathrm{grad}}=1 ): Alternatively, we can absorb the weight w ⁡ ( p ) w(p) into the sampling distribution. We sample prompts from a reweighted distribution d ′ ​ ( x ) ∝ d 0 ​ ( x ) ⋅ w ⁡ ( p ⁡ ( x ) ) d^{\prime}(x)\propto d_{0}(x)\cdot w(p(x)) and apply the standard, unweighted gradient. In a batched setting with group sampling, this is naturally implemented by assigning a variable group size n i ∝ w ⁡ ( p i ) n_{i}\propto w(p_{i}) to each prompt.
+ 3. 
+ Hybrid Strategy: We can balance the two approaches. For instance, with the log-objective ( w ⁡ ( p ) = 1 / p w(p)=1/p ), a pure sampling strategy ( n i ∝ 1 / p n_{i}\propto 1/p ) might be too aggressive, allocating excessive compute to the hardest prompts. A balanced approach is to allocate samples proportional to 1 / p 1/\sqrt{p} and apply a residual explicit weight of 1 / p 1/\sqrt{p} to the gradient. This hybrid approach achieves a “sweet spot” by dividing the variance into two stages.
+ This framework highlights that the intuitive adaptive group sizes are not just a heuristic, but a robust implementation of a non-linear objective. By allocating n i ∝ 1 / p i n_{i}\propto 1/p_{i} (Implicit Weighting), we naturally direct more computational budget to difficult prompts. This explicitly solves the signal loss problem: the increased budget allows us to recover rare signals that a uniform small- n n approach would miss.
+ Theoretical Connections with GRPO and Variance-reduction Gradient Estimation.
+ This framework is broadly applicable and offers a unified perspective on recent advancements. As a side product, it explains why algorithms like GRPO ( Shao et al., 2024 ) utilize prompt-dependent weights in their advantage and gradient formulations. Furthermore, we find that the log-objective is essential for deriving the optimal variance-reduction gradient estimator under a fixed inference budget. In Appendix B , we generalize the findings of Yao et al. (2025) from rejection sampling fine-tuning to the general Reinforce algorithm, proving the optimality of the log-objective for efficient training.
+ 3 Reinforce-Ada: Reinforce with Adaptive Sampling
+ 3.1 Reinforce-Ada-Est: Estimation-based Allocation
+ Our theoretical framework suggests allocating an implicit sampling budget n i ∝ 1 / p i n_{i}\propto 1/p_{i} to optimize the log-objective. The central challenge, however, is that the true pass rate p i p_{i} is unknown prior to sampling.
+ A common approach in related work ( Yao et al., 2025 ) follows an “explore-then-exploit” paradigm. In these methods, pass rates ( p ^ i \hat{p}_{i} ) are first estimated with a small “explore” budget, and then a larger online sampling budget is allocated proportionally. This two-stage process, however, suffers from a critical flaw. The initial estimation, based on a limited budget, has high variance. This error is most severe for difficult prompts (low p i p_{i} ), where a small budget will almost certainly yield zero positive responses. This leads to a catastrophic estimate of p ^ i = 0 \hat{p}_{i}=0 , causing the algorithm to discard the very prompts that need the most attention.
+ Consequently, any allocation rule (like 1 / p ^ i 1/\sqrt{\hat{p}_{i}} ) will either fail (divide by zero) or assign zero budget, forcing the algorithm to discard these prompts. This means the two-stage approach ends up replicating the same problem as passive filtering (like DAPO ( Yu et al., 2025 ) ), failing to solve the very signal loss problem it was designed for.
+ Algorithm 1 Reinforce-Ada-Est under Log-objective (One Training Iteration) 
+ 1: 
+ Input: Current policy π θ \pi_{\theta} , batch of prompts 𝒟 \mathcal{D} , effective update size n n , sampling bounds [ N min , N max ] [N_{\min},N_{\max}] , total budget target N total N_{\text{total}} , and estimator ℰ \mathcal{E} 
+ 2: 
+ Phase 1: Estimation and Budget Allocation 
+ 3: 
+ Initialize response set 𝒮 x ← ∅ \mathcal{S}_{x}\leftarrow\emptyset for all x ∈ 𝒟 x\in\mathcal{D} 
+ 4: 
+ Get current pass rate estimates p ^ x ← ℰ ⁡ ( x ) \hat{p}_{x}\leftarrow\mathcal{E}(x) for all x ∈ 𝒟 x\in\mathcal{D} 
+ 5: 
+ Allocate budgets: Set N x ∝ 1 / p ^ x + ϵ N_{x}\propto 1/\sqrt{\hat{p}_{x}+\epsilon} subject to N x ∈ [ N min , N max ] N_{x}\in[N_{\min},N_{\max}] , targeting total usage ∑ N x ≈ N total \sum N_{x}\approx N_{\text{total}} 
+ 6: 
+ for each prompt x ∈ 𝒟 x\in\mathcal{D} do 
+ 7: 
+   Sample N x N_{x} responses { a j , r j } j = 1 N x ∼ π θ ( ⋅ | x ) , r ⋆ ( ⋅ , ⋅ ) \{a_{j},r_{j}\}_{j=1}^{N_{x}}\sim\pi_{\theta}(\cdot|x),r^{\star}(\cdot,\cdot) 
+ 8: 
+   Store collection: 𝒮 x ← { a j , r j } j = 1 N x \mathcal{S}_{x}\leftarrow\{a_{j},r_{j}\}_{j=1}^{N_{x}} 
+ 9: 
+ end for 
+ 10: 
+ Phase 2: Training Batch and Objective Construction 
+ 11: 
+ Initialize an empty set for the final training data: ℬ ← ∅ \mathcal{B}\leftarrow\emptyset 
+ 12: 
+ for each prompt x ∈ 𝒟 x\in\mathcal{D} do ⊳ \triangleright Use global statistics for baseline and weight 
+ 13: 
+   Let 𝒮 x \mathcal{S}_{x} be the full set of collected samples for prompt x x 
+ 14: 
+   Compute global mean (high-fidelity pass rate): r ¯ x ← 1 | 𝒮 x | ​ ∑ j = 1 | 𝒮 x | r j \bar{r}_{x}\leftarrow\frac{1}{|\mathcal{S}_{x}|}\sum_{j=1}^{|\mathcal{S}_{x}|}r_{j} 
+ 15: 
+   Compute explicit weight: α x ← 1 / r ¯ x + ϵ \alpha_{x}\leftarrow 1/\sqrt{\bar{r}_{x}+\epsilon} ⊳ \triangleright Apply residual weight for log-objective 
+ 16: 
+   Compute weighted advantage for i i -th response: A i ← ( r i − r ¯ x ) ⋅ α x A_{i}\leftarrow(r_{i}-\bar{r}_{x})\cdot\alpha_{x} 
+ 17: 
+ end for 
+ 18: 
+ Compute the policy gradient objective with batch ℬ \mathcal{B} and update the model.
+ 19: 
+ Update estimator ℰ \mathcal{E} with newly collected statistics { 𝒮 x } x ∈ 𝒟 \{\mathcal{S}_{x}\}_{x\in\mathcal{D}} .
+ Adaptive Sampling with Pass Rate Estimation.
+ To overcome this, we propose Reinforce-Ada-Est , which estimates pass rates online using historical training data or auxiliary models, rather than a separate exploration phase. We introduce two strategies for this estimation. A natural idea is to train a value network V ϕ ​ ( x ) V_{\phi}(x) (similar to the critic) to predict the pass rate. Unlike standard PPO which requires estimating token-level values, our task is simpler: we only need the prompt-level expected success rate. Meanwhile, the estimator does not need to be perfectly accurate; it only needs to capture the relative difficulty of prompts to guide budget allocation.
+ The second strategy is Ada-EMA , a
+model-free Bayesian Moving Average approach, which is inspired by Qu et al. (2025) . Suppose we encounter the prompt across different training epochs t = 1 , 2 , … t=1,2,\dots . We can therefore maintain a running statistic for each prompt to track its difficulty without an auxiliary model.
+Crucially, since the policy π θ \pi_{\theta} is constantly updating, the pass rate is non-stationary; data collected in early steps becomes stale. To handle this, we apply an exponential decay to historical counts before integrating new data. Specifically, suppose at step t t , we allocate a budget of n t n_{t} samples to prompt x x and observe k t k_{t} successes. We update the running counters as follows:
+ | 
+ N t ​ o ​ t ​ a ​ l ( t ) ← λ ​ N t ​ o ​ t ​ a ​ l ( t − 1 ) + n t , N p ​ o ​ s ( t ) ← λ ​ N p ​ o ​ s ( t − 1 ) + k t , N_{total}^{(t)}\leftarrow\lambda N_{total}^{(t-1)}+n_{t},\quad N_{pos}^{(t)}\leftarrow\lambda N_{pos}^{(t-1)}+k_{t}, | 
+ | 
+ where λ ∈ ( 0 , 1 ) \lambda\in(0,1) is a discount factor that weighs recent data more heavily. The pass rate is then estimated using a Bayesian approach with a prior Beta( α \alpha , β \beta ): p ^ t = ( N p ​ o ​ s ( t ) + α ) / ( N t ​ o ​ t ​ a ​ l ( t ) + α + β ) \hat{p}_{t}=(N_{pos}^{(t)}+\alpha)/(N_{total}^{(t)}+\alpha+\beta) . This ensures that even if a prompt yields zero successes in the current batch ( k t = 0 k_{t}=0 ), the estimate remains non-zero due to the prior and historical accumulation, preventing the algorithm from permanently discarding difficult prompts.
+ We will mainly implement the Reinforce-Ada-Est via the hybrid strategy under the log objective, as this divide the variance into two separate stages and may be more stable. Specifically, we allocate the inference budget proportional to 1 / p i 1/\sqrt{p_{i}} and leave another 1 / p i 1/\sqrt{p_{i}} to the advantage. We also include an ablation in Appendix C.2 .
+ 3.2 Reinforce-Ada-Seq: Implicit Allocation via Sequential Sampling
+ While the estimation-based strategies ( Reinforce-Ada-Est ) provide a direct way to allocate budgets, they introduce specific implementation requirements. For instance, training an auxiliary value network adds computational overhead and architectural complexity to the RL pipeline. Similarly, the Bayesian approach relies on maintaining persistent statistics and revisiting the same prompts multiple times, which may not suit all training setups.
+ Algorithm 2 Reinforce-Ada-Seq (One Training Iteration) 
+ 1: 
+ Input: Current policy π θ \pi_{\theta} , batch of prompts 𝒟 \mathcal{D} , effective group size for update n n , number of sampling rounds N N , samples per round M ≥ n M\geq n , and exit condition function ExitCondition ​ ( ⋅ ) \text{ExitCondition}(\cdot) 
+ 2: 
+ Phase 1: Adaptive Sampling Data Collection 
+ 3: 
+ Set all prompts x x as active and initialize response set 𝒮 x ← ∅ \mathcal{S}_{x}\leftarrow\emptyset 
+ 4: 
+ for t = 1 , … , N t=1,\dots,N do ⊳ \triangleright Iterate through sampling rounds 
+ 5: 
+    for each prompt x ∈ 𝒟 x\in\mathcal{D} where active ​ ( x ) \text{active}(x) is true do 
+ 6: 
+    Sample M M responses { a j , r j } j = 1 M ∼ π θ ( ⋅ | x ) , r ⋆ ( ⋅ , ⋅ ) \{a_{j},r_{j}\}_{j=1}^{M}\sim\pi_{\theta}(\cdot|x),r^{\star}(\cdot,\cdot) 
+ 7: 
+    Add to collection: 𝒮 x ← 𝒮 x ∪ { a j , r j } j = 1 M \mathcal{S}_{x}\leftarrow\mathcal{S}_{x}\cup\{a_{j},r_{j}\}_{j=1}^{M} 
+ 8: 
+     if ExitCondition ​ ( 𝒮 x ) \text{ExitCondition}(\mathcal{S}_{x}) is met then 
+ 9: 
+      Mark prompt as inactive: active ​ ( x ) ← false \text{active}(x)\leftarrow\text{false} 
+ 10: 
+     end if 
+ 11: 
+    end for 
+ 12: 
+ end for 
+ 13: 
+ Phase 2: Training Batch and Objective Construction 
+ 14: 
+ Initialize an empty set for the final training data: ℬ ← ∅ \mathcal{B}\leftarrow\emptyset 
+ 15: 
+ for each prompt x ∈ 𝒟 x\in\mathcal{D} do ⊳ \triangleright Use all collected samples (“global statistics") for normalization 
+ 16: 
+   Let 𝒮 x = { ( a j , r j ) } j = 1 | 𝒮 x | \mathcal{S}_{x}=\{(a_{j},r_{j})\}_{j=1}^{|\mathcal{S}_{x}|} be the full set of collected samples for prompt x x 
+ 17: 
+   Compute global mean: r ¯ x ← 1 | 𝒮 x | ​ ∑ j = 1 | 𝒮 x | r j \bar{r}_{x}\leftarrow\frac{1}{|\mathcal{S}_{x}|}\sum_{j=1}^{|\mathcal{S}_{x}|}r_{j} 
+ 18: 
+   Form update group by downsampling 𝒮 x \mathcal{S}_{x} to size n n , trying to ensure ≥ n / 2 \geq n/2 size for each correct or incorrect subset (fill from the other if needed). ⊳ \triangleright Downsample to create the effective group 
+ 19: 
+   Compute advantage for i i -th response of prompt x x as A i ← r i − r ¯ x A_{i}\leftarrow r_{i}-\bar{r}_{x} .
+ 20: 
+ end for 
+ 21: 
+ Compute the policy gradient objective with batch ℬ \mathcal{B} and update the model.
+ Motivated by these considerations, we design an alternative strategy that achieves adaptive allocation without explicitly estimating the pass rate. We design a model-free algorithm that integrates estimation and sampling into a unified online process. Our core idea leverages a simple statistical property: if we keep sampling responses until we collect a fixed number of correct answers (say, K = 1 K=1 ), the expected total number of samples 𝔼 ⁡ [ N i ] \mathbb{E}[N_{i}] is exactly 1 / p i 1/p_{i} . This provides a “built-in” mechanism to automatically achieve the n i ∝ 1 / p i n_{i}\propto 1/p_{i} allocation required by our log-objective, without needing to estimate p i p_{i} beforehand.
+ We implement a more general version of this “sample-until-condition” idea, inspired by successive elimination methods in multi-armed bandit literature ( Slivkins and others, 2019 ) . We present the code of a single training step of this method in Algorithm 2 . Specifically, the algorithm operates over a batch of prompts in sequential rounds:
+ 1. 
+ Initialization: All prompts in the current batch begin in an active set (active arms).
+ 2. 
+ Iterative Sampling: In each round, we generate M M new responses (e.g., M = 16 M=16 ) for every prompt currently in the active set .
+ 3. 
+ Elimination: At the end of each round, active prompts are checked against an exit condition, and those that satisfy it are removed from future rounds. 2 2 
+ 2 
+ We also experimented with a more complex variant that estimates pass rates and allocates budgets proportionally within each round. However, this did not yield clear performance gains, so we use this simpler, easy-to-implement version. 
+ This sequential sampling process continues until all prompts are resolved or a maximum budget (e.g., N max = 128 N_{\text{max}}=128 ) is reached.
+ Exit condition.
+ The elimination rule plays a central role in shaping the algorithm’s behavior. We consider two primary exit conditions:
+ • 
+ Positive-focused ( Reinforce-Ada-Seq-pos ): A prompt is deactivated once we collect at least K pos K_{\text{pos}} correct responses (e.g., K pos = 16 K_{\text{pos}}=16 ).
+ • 
+ Balanced ( Reinforce-Ada-Seq-balance ): A prompt is deactivated once at least K pos K_{\text{pos}} correct and K neg K_{\text{neg}} incorrect responses have been collected (e.g., K pos = K neg = 8 K_{\text{pos}}=K_{\text{neg}}=8 ).
+ Both strategies ensure that difficult prompts (low p i p_{i} ) receive more samples, thereby realizing the goal of our theoretical framework. Reinforce-Ada-Seq-balance further emphasizes collecting failure cases, which intuitively corresponds to the behavior of GRPO-type weights that emphasizes prompts with pass rates near 0 or near 1. This design encourages gathering a more diverse set of training signals before a prompt is eventually deactivated.
+ Practical Implementation via Static Batches.
+ A unique challenge of this sequential approach is that the total number of samples N i N_{i} becomes a random variable, resulting in dynamic batch sizes that are incompatible with static GPU computational graphs. To make Reinforce-Ada-Seq-pos/Balance practical, we employ an Oversample-Downsample-Correct pipeline to convert these variable pools into a static training batch.
+ First, we leverage the variable pool of N i N_{i} responses to compute a high-fidelity global baseline , p ^ i = N pos / N i \hat{p}_{i}=N_{\text{pos}}/N_{i} . Because we allocate larger budgets to difficult prompts, this estimate is now more likely to be non-zero and robust, far superior to statistics derived from small fixed groups.
+ Next, to create a static batch, we down-sample each prompt’s pool to a fixed group of n n responses (e.g., n = 16 n=16 ). We use a balanced sampling strategy (drawing n / 2 n/2 positive and n / 2 n/2 negative samples) to ensure signal diversity. While this down-sampling achieves engineering efficiency, it removes the implicit weight ( N i N_{i} ) generated by the sequential sampling process. Fortunately, the high-fidelity baseline p ^ i \hat{p}_{i} obtained in the first step allows us to recover the theoretical objective. Because p ^ i \hat{p}_{i} is stable and bounded away from zero (thanks to the sequential sampling process), we can safely return to the Explicit Weighting strategy. We simply re-introduce the weight by explicitly multiplying the gradient by 1 / p ^ i 1/\hat{p}_{i} .
+ The final gradient estimator for Reinforce-Ada-Seq-positive/Balance is thus:
+ | 
+ g ^ ​ ( x i ) = ( 1 p ^ i ) ⏟ Re-introduced Explicit Weight ⋅ ( 1 n ​ ∑ j = 1 n ∇ log ⁡ π ​ ( a j ) ⋅ ( r j − p ^ i ) ) ⏟ Static Group Gradient \hat{g}(x_{i})=\underbrace{\left(\frac{1}{\hat{p}_{i}}\right)}_{\text{Re-introduced Explicit Weight}}\cdot\underbrace{\left(\frac{1}{n}\sum_{j=1}^{n}\nabla\log\pi(a_{j})\cdot(r_{j}-\hat{p}_{i})\right)}_{\text{Static Group Gradient}} | 
+ | 
+ This pipeline enables the algorithm to operate with the throughput of static batches while mathematically optimizing the weighted non-linear objective.
+ Method | 
+ Core Idea for Handling Zero-Variance 
+ | 
+ Uniform GRPO (small- n n ) | 
+ No recovery mechanism. σ ⁡ ( { r } ) = 0 \sigma(\{r\})=0 forces advantage A i → 0 A_{i}\to 0 , causing gradient vanish. 
+ | 
+ Passive Filtering ( Yu et al., 2025 ) | 
+ Skips updates for groups with uniform rewards (data inefficient). 
+ | 
+ Large- n n GRPO | 
+ Relies on large n n to render Pr [ σ ( { r } ) = 0 ] \Pr[\sigma(\{r\})=0] negligible, approximating the true distribution. 
+ | 
+ N-GRPO ( Nan et al., 2025 ) | 
+ Augment the reward group with a constant (the maximum possible reward). 
+ | 
+ RL-ZVP ( Le et al., 2025 ) | 
+ Assign advantages based on entropy information for prompts with uniform rewards. 
+ | 
+ Reinforce-Ada-Est (Ours) | 
+ Estimates pass rate p ^ \hat{p} (via EMA/Value Net) to estimate difficulty-based inference budget allocation ( n i ∝ 1 / p ^ i n_{i}\propto 1/\sqrt{\hat{p}_{i}} ). 
+ | 
+ Reinforce-Ada-Seq (Ours) | 
+ By design: always collects mixed outcomes before exit. 
+ | 
+ Table 1: Summary of methods for recovering signal under zero-variance groups. 
+ 3.3 Comparison with the Dynamic Sampling in DAPO
+ We now compare our framework with the dynamic sampling strategy proposed in DAPO ( Yu et al., 2025 ) . DAPO samples batches of prompts with a fixed group size n n and discards those that lack learning signals (i.e., groups with uniform rewards). To maintain a full training batch size B B , DAPO repeatedly samples new batches of prompts until enough valid groups are collected.
+ While this approach effectively avoids wasted gradient computations, it fundamentally differs from our objective. Because DAPO uses a uniform group size for all prompts, difficult prompts (where p ⁡ ( x ) p(x) is low) are statistically destined to yield no signal and be discarded, and very easy prompts with p ⁡ ( x ) p(x) close to 1 are similarly likely to produce all-success groups that are also discarded. Consequently, DAPO neither resolves the signal-loss problem for hard prompts nor preserves signal for already-solvable ones, biasing training toward a narrow band of mid-difficulty problems and potentially limiting the model’s ability to improve at the frontier of its capabilities.
+ In contrast, our method reallocates compute within each prompt by assigning larger inference budgets to harder prompts. This helps the model obtain meaningful learning signals even on difficult prompts with low pass rates—something DAPO is unable to do. Finally, we note that DAPO’s accumulative-prompt dynamic sampling is not conflict with our adaptive sampling scheme. The two strategies can be combined to yield more stable and effective training.
+ 4 Experiment
+ 4.1 Experimental Setup
+ Models and Benchmarks.
+ We evaluate the generality of our framework across varying scales and architectures, using four foundation models: Qwen2.5-Math (1.5B and 7B), Qwen3-4B-Instruct , and Llama-3.2-3B-Instruct . For evaluation, we employ a comprehensive suite of mathematical reasoning benchmarks: MATH500 ( Hendrycks et al., 2021 ) , Minerva Math ( Lewkowycz et al., 2022 ) , and OlympiadBench ( He et al., 2024 ) . Furthermore, to test robustness on competition-level problems, we compile an AIME-like test set consisting of 230 problems sourced from recent competition: AIME24, AIME25, HMMT24, HMMT25, BRUMO25, AMC23, and CMIMC25 ( Balunović et al., 2025 ) . All evaluations report the Pass@1 accuracy averaged over 32 samples (Ave@32), generated with a temperature of 1.0 1.0 and a max token limit of 4096. We will also include the analysis of reward-entropy trade-off.
+ Data Curation and Verifier.
+ Training utilizes the standard subset of OpenR1-Math-220k 3 3 
+ 3 
+ https://huggingface.co/datasets/open-r1/OpenR1-Math-220k . We employ the Math-Verify tool ( Kydlíček, ) for automatic solution correctness verification.
+To ensure a high-quality training signal, we implement a standard preprocessing pipeline:
+(1) Deduplication of prompts;
+(2) Exclusion of prompts where reference solutions fail verification;
+(3) Difficulty-based Filtering: Following Yang et al. (2024) , we filter prompts based on empirical difficulty estimated by sampling 16 responses from the base model. We discard trivial prompts (average reward > 0.375 >0.375 ) and effectively impossible prompts (0 correct responses). This helps us to focus the training distribution on problems of moderate difficulty rather than trivially easy or impossibly hard ones. This choice is motivated by the observation of Hugging Face (2025) that incorporating overly simple problems into the training set can degrade model performance.
+ RL Training Details.
+ All experiments are conducted based on the verl framework ( Sheng et al., 2024 ) , where a Tinker-based 4 4 
+ 4 
+ https://github.com/thinking-machines-lab/tinker-cookbook implementation is also provided. Training is configured with a prompt batch size of 512. We use the AdamW optimizer with a fixed learning rate of 1 × 10 − 6 1\times 10^{-6} . To encourage exploration (with 10 10 -step warm-up), an entropy regularization term with coefficient 1 × 10 − 4 1\times 10^{-4} is applied, while no KL penalty is introduced. Following Yu et al. (2025) , we adopt the clip-higher trick by setting the clipping range to [ 0.2 , 0.28 ] [0.2,0.28] . For all variants, we keep these standard RL hyperparameters (learning rate, batch size, entropy coefficient, optimizer, etc.) fixed. No tuning was performed for Reinforce-Ada . Each RL run is carried out for 600 training steps to obtain the final model.
+ Model 
+ Algorithm 
+ Math500 
+ Minerva Math 
+ Olympiad Bench 
+ AIME-like 
+ Weighted Average 
+ Qwen2.5-Math-1.5B 
+ GRPO-n4 
+ 74.2 
+ 34.4 
+ 38.4 
+ 16.2 
+ 45.3 
+ GRPO-n8 
+ 75.3 
+ 34.3 
+ 39.2 
+ 17.3 
+ 46.1 
+ GRPO-n16 
+ 76.9 
+ 35.1 
+ 40.4 
+ 17.9 
+ 47.3 
+ DAPO 
+ 75.2 
+ 34.7 
+ 38.5 
+ 17.5 
+ 45.9 
+ Reinforce-Ada-Seq-pos 
+ 75.8 
+ 35.7 
+ 38.6 
+ 16.5 
+ 46.1 
+ Reinforce-Ada-Seq-balance 
+ 77.4 
+ 36.5 
+ 40.5 
+ 17.5 
+ 47.6 
+ Reinforce-Ada-Est 
+ 76.1 
+ 34.8 
+ 39.1 
+ 18.5 
+ 46.5 
+ Qwen2.5-Math-7B 
+ GRPO 
+ 82.2 
+ 44.7 
+ 45.6 
+ 23.2 
+ 53.3 
+ Reinforce-Ada-Seq-pos 
+ 82.7 
+ 45.1 
+ 46.7 
+ 23.7 
+ 54.2 
+ Reinforce-Ada-Seq-balance 
+ 84.0 
+ 45.2 
+ 47.1 
+ 23.7 
+ 54.6 
+ Reinforce-Ada-Est 
+ 83.6 
+ 42.1 
+ 46.6 
+ 24.1 
+ 53.7 
+ Llama-3.2-3B-instruct 
+ GRPO 
+ 51.7 
+ 20.5 
+ 20.4 
+ 7.2 
+ 27.9 
+ Reinforce-Ada-Seq-pos 
+ 52.6 
+ 22.2 
+ 21.0 
+ 7.5 
+ 28.8 
+ Reinforce-Ada-Seq-balance 
+ 53.2 
+ 22.4 
+ 21.2 
+ 8.0 
+ 29.1 
+ Qwen3-4B-instruct 
+ GRPO 
+ 90.4 
+ 51.2 
+ 64.9 
+ 38.5 
+ 66.5 
+ Reinforce-Ada-Seq-pos 
+ 91.6 
+ 50.4 
+ 66.3 
+ 38.8 
+ 67.4 
+ Reinforce-Ada-Seq-balance 
+ 91.7 
+ 53.0 
+ 65.7 
+ 38.8 
+ 67.6 
+ Table 2: Performance comparison of GRPO and Reinforce-Ada . We report average@32 accuracy with a sampling temperature of 1.0 and a maximum generation length of 4096 tokens. The weighted average score is computed according to the number of prompts in each benchmark. 
+ Sampling Configuration.
+ The downsampling mechanism and random samples of Reinforce-Ada-Seq make the methods not directly comparable. We standardize the update group size (the number of samples used for the backward pass) to n = 4 n=4 for Reinforce-Ada-Seq and baseline GRPO, but we will also include the GRPO baselines with larger group size 8 8 and 16 16 . We refer readers to Figure 5 to get a sense of the sampling dynamic of different methods. Specifically, we will consider the following competitors:
+ • 
+ GRPO Baselines: We compare against GRPO with fixed group sizes n ∈ { 4 , 8 , 16 } n\in\{4,8,16\} .
+ • 
+ Reinforce-Ada-Seq: The algorithm adaptively samples up to N max = 32 N_{\max}=32 responses per prompt but downsamples the collected pool to a fixed group size of n = 4 n=4 for the gradient update. This ensures that the training cost (backward pass) remains identical to GRPO-n4, with overhead limited only to inference.
+ • 
+ Reinforce-Ada-Est: The total sampling budget is allocated proportionally to 1 / p ^ i 1/\sqrt{\hat{p}_{i}} . The choice of hyper-parameter 8 8 is to roughly match the sampling cost of the Reinforce-Ada-Seq 
+ In general, Reinforce-Ada-Est is most directly comparable to GRPO- n ​ 8 n8 , as they consume approximately the same number of forward and backward samples. In contrast, Reinforce-Ada-Seq involves inherent stochasticity in its adaptive sampling process, so only coarse-grained comparisons are possible; nevertheless, our experiments consistently show clear and robust trends across different models.
+ 4.2 Main Result
+ Adaptive Allocation vs. Uniform Scaling.
+ Table 2 summarizes the performance across all benchmarks and Figure 4 presents the training reward curves. We first notice that standard GRPO shows monotonic improvement as group size increases from n = 4 n=4 to n = 16 n=16 (e.g., 45.3 % → 47.3 % 45.3\%\to 47.3\% on Qwen2.5-Math-1.5B). This confirms that signal loss is an artifact of undersampling. However, this comes at a linear cost. Reinforce-Ada demonstrates a more efficient pathway to scale up RL training. Instead of uniformly increasing the budget for all prompts, our method dynamically directs compute to the learning frontier.
+Crucially, Seq-Balance successfully matches or even exceeds the performance of the expensive GRPO-n16 (e.g., 47.6 % 47.6\% vs. 47.3 % 47.3\% on Qwen2.5-Math-1.5B) while operating with a significantly lower inference budget (comparable to n ≈ 8 − 10 n\approx 8-10 ) and lower training cost ( n = 4 n=4 ). This indicates that Reinforce-Ada can capture the signal-quality benefits of large-scale sampling without incurring the full computational penalty.
+ Comparison with Passive Filtering (DAPO).
+ While DAPO improves over the naive GRPO-n4 ( 45.9 % 45.9\% vs 45.3 % 45.3\% ) by filtering out zero-signal groups, it generally lags behind our adaptive methods. This supports our hypothesis that passive filtering is insufficient for difficult reasoning tasks; instead, active investment of compute is required to recover the latent learning signals in hard prompts. In Appendix C.1 , we will provide a more detailed analysis of the accuracies on prompts with different difficulty levels, which further validates our intuition.
+ Figure 4: Training reward vs. steps for GRPO and Reinforce-Ada across backbones:
+Qwen2.5-Math-1.5B, Qwen2.5-Math-7B, and Llama-3.2-3B-it, Qwen3-4B. Curves are smoothed with a 20-step moving average. In all cases, Reinforce-Ada learns faster and reaches a higher reward than GRPO, with the Balance variant typically achieving the highest asymptote.
+ Comparison among different adaptive sampling variants.
+ Comparing the adaptive variants, we observe that Seq-Balance consistently outperforms Seq-Pos , with the gap widening in later training stages.
+As the policy improves, positive responses become abundant, causing Seq-Pos to exit early and revert to a near-uniform sampling regime. However, negative responses (errors) become rare for these improved models. Seq-Balance forces the collection of these "hard negatives," ensuring that the variance of the gradient estimator remains non-zero. This sustained signal quality explains its higher asymptotic performance and robustness across different model families. Ada-Seq and Ada-Est are not directly comparable as their inference and training costs are not identical. We also observe a mixed result across different mdoels. For instance, with Qwen2.5-Math-1.5B, Ada-Est is the best one. But for Llama-3.2-3B-it, we notice that the Ada-Est roughly matches that of Ada-Seq-Pos but is behind the Ada-Seq-Balance .
+ Finally, we emphasize that the additional computational overhead of Reinforce-Ada-Seq stems only from the inference (generation) stage. Because we uniformly down-sample the collected trajectories to a fixed group size for the policy update, the backward pass (training cost) remains identical to standard GRPO-n4. In contrast, GRPO-n8, GRPO-n16, and Ada-Est will incur a much larger training cost than other methods since the train on more samples per iteration.
+ Figure 5: First row: Sampling dynamics of different training strategies using the Qwen2.5-Math-1.5B model. We omit Reinforce-Ada-Est since its sampling cost matches that of GRPO-8. Second row: Sampling dynamics with the Qwen2.5-Math-1.5B model. Left: additional samples generated in later rounds compared to standard GRPO. Middle: number of prompts that remain active after multi-round adaptive sampling with the Reinforce-Ada-Seq-balance variant. Right: number of prompts that satisfy the stopping criteria within the first two rounds with the Reinforce-Ada-Seq-balance variant. All curves are smoothed using a moving average with a window size of 20 20 .
+ 4.3 Analysis of Efficiency and Learning Dynamics
+ Computation vs. Performance Sweet Spot.
+ We would like to quantify the efficiency gains and analyze the trade-off between inference cost (average samples generated per prompt) and final accuracy. Figure 5 summarizes the inference cost 5 5 
+ 5 
+ We remark that GRPO-n16 uses more samples per iteration, resulting in a higher backward-pass cost. measured as the average number of generated samples per iteration. The ranking is
+ • 
+ Inference Cost Ranking: GRPO-n4 < < Seq-Pos < < Seq-Balance < < GRPO-n16.
+ • 
+ Performance Ranking: GRPO-n4 < < Seq-Pos < < GRPO-n16 ≈ \approx Seq-Balance < < Ada-Est .
+ This comparison highlights the efficiency of our approach. Ada-Est achieves the high performance of the expensive GRPO-n16 baseline but requires significantly less compute (lower than GRPO-n16). By allocating the budget adaptively, we can capture the benefits of scaling up group size (recovering lost signals) without the waste of generating many samples for easy prompts.
+ Model | 
+ Algorithm | 
+ Avg. Step Time (s) | 
+ Relative Cost | 
+ Qwen2.5-Math-1.5B | 
+ GRPO | 
+ 102 | 
+ 1.0 × 1.0\times | 
+ Reinforce-Ada-Seq-pos | 
+ 228 | 
+ 2.2 × 2.2\times | 
+ Reinforce-Ada-Seq-balance | 
+ 290 | 
+ 2.8 × 2.8\times | 
+ Reinforce-Ada-Est | 
+ 128 128 | 
+ 1.3 × 1.3\times | 
+ Qwen2.5-Math-7B | 
+ GRPO | 
+ 236 | 
+ 1.0 × 1.0\times | 
+ Reinforce-Ada-Seq-pos | 
+ 333 | 
+ 1.41 × 1.41\times | 
+ Reinforce-Ada-Seq-balance | 
+ 375 | 
+ 1.59 × 1.59\times | 
+ Reinforce-Ada-Est | 
+ 382 | 
+ 1.62 × 1.62\times | 
+ Table 3: Average step time (wall-clock seconds per update) of GRPO vs. Reinforce-Ada on 8 × \times H100 (1.5B) and 8 × \times A100 (7B).
+Relative cost is normalized against GRPO for the same model. 
+ Wall-Clock Efficiency.
+ We quantify the wall-clock cost of our adaptive sampling. We report the average per-step time with verl implementation in Table 3 . Here 1.5B model is with 8 × \times NVIDIA H100, and 7B model is with 8 × \times NVIDIA A100. Naturally, Ada-Seq incurs a higher inference cost compared to the baseline GRPO ( n = 4 n=4 ) because it generates additional responses to hunt for sparse signals 6 6 
+ 6 
+ Currently, the multi-sample generation in Ada-Seq is implemented synchronously, meaning that each optimization step is bottlenecked by the slowest completion among the sampled responses. We expect that an asynchronous implementation would be much faster. . For the 1.5B model, Seq-pos and Seq-balance increase the step time by approximately 2.2 × 2.2\times and 2.8 × 2.8\times , respectively. In comparison, the relative overhead of Reinforce-Ada is smaller on the 7B model than on the 1.5B model. From Figure 4 , the 7B policy exhibits a sharp early jump in training reward, which means that most prompts quickly satisfy the positive-sample stopping criterion. Consequently, adaptive sampling requires far fewer additional rollouts on 7B than on 1.5B. Second, the actor update dominates the per-step time on the 7B model (85s out of 236s), whereas it is only a small portion on the 1.5B model (15s out of 102s). As a result, the extra inference introduced by adaptive sampling has a much smaller impact on the overall step time for the 7B model.
+ The Sampling Dynamic of Ada-Seq .
+ Figure 5 provides a deep dive into how Ada-Seq allocates its budget over time, where the experiments are with Qwen2.5-Math-1.5B:
+ • 
+ Early Training (Exploration Phase): The cost is high as the model struggles with difficult prompts. The algorithm automatically allocates more samples to find the sparse positive solutions needed to initiate learning.
+ • 
+ Mid Training (Consolidation Phase): As the model improves, positive samples become easier to find. The sampling cost for Seq-Pos drops monotonically.
+ • 
+ Late Training (Refinement Phase): Crucially, Seq-Balance exhibits a distinct “U-shaped” cost curve. After ∼ \sim 300 steps, the cost rises again. This phenomenon occurs because the model becomes highly proficient, making negative samples (failures) rare. To maintain a valid gradient signal (variance > 0 >0 ), the algorithm actively hunts for these hard negatives. This adaptivity prevents the “all-correct” signal collapse that plagues standard GRPO in later stages.
+ 4.4 Entropy Dynamic and Pass@k
+ Beyond simple accuracy, we evaluate the quality of the learned policy through the lens of the Reward-Entropy trade-off. A known challenge in evaluating the reasoning ability of LLMs is on the trade-off between reward (accuracy) and entropy (generation diversity). Previous work has argued that post-training can trade this uncertainty for higher rewards in a predictable manner ( Cui et al., 2025 ) . Moreover, prior work shows that standard GRPO often collapses to a low-entropy policy early in training, reducing reasoning diversity thus a worse pass@k for large k ( Shao et al., 2024 ; Yue et al., 2025 ) .
+ An ideal algorithm should improve rewards without causing the policy to become overly deterministic (entropy collapse). To provide a more comprehensive evaluation, we analyze this trade-off in this part and present the results in Figure 6 .
+ (i) 
+ Reward-entropy frontier. While the precise entropy dynamics can vary depending on the foundation model, Reinforce-Ada consistently achieves a comparable or superior reward-entropy curve. Specifically, from (2-1) of Figure 6 , we notice that increasing the group size of GRPO cannot improve the reward-entropy trade-off. In comparison, on Qwen2.5-Math-1.5B (1-1), GRPO concentrates mass early (low entropy, narrow cloud) and achieves lower reward for a given entropy. All Reinforce-Ada variants shift the frontier outward and Reinforce-Ada-Seq-balance lies furthest, at equal reward it sustains higher entropy, and at equal entropy it achieves higher reward. On Llama-3.2-3B-it (1-2), the base policy starts with a higher entropy floor, so the separation among different methods is smaller. But the Ada-Seq variants still achieve a competitive frontier than GRPO and Ada-Est performs even better. We hypothesize that this is because the adaptive sampling pushes the model to explore towards the prompts they are uncertain, thus preserving the entropy. We also observe that Reinforce-Ada-Seq-balance > > Reinforce-Ada-Seq-pos .
+We attribute this to the fact that exposure to negative signals discourages the model from becoming overconfident in a single solution path, thus preserving valuable policy diversity.
+ (ii) 
+ Pass@k behavior. An related observation is that the moderate policy entropy typically converts to an improved pass@k compared to the base model for a wide range of k. Specifically, panel (2-2) shows that all RL methods dominate the base across k k , but the largest, most practical gains appear at small budgets ( k ≤ 8 k\leq 8 ). In this regime, Reinforce-Ada yields the highest Pass@k; the advantage narrows as k k grows (diminishing-returns regime), where Reinforce-Ada-Seq-balance typically remains marginally best. The pattern implies two complementary effects: (a) improved top-1 quality (higher reward at given entropy), and (b) retained diversity among high-scoring modes (shallower saturation with k k ). Together, adaptive sampling moves the reward–entropy curve outward and converts that shift into higher Pass@k at realistic attempt budgets, with Reinforce-Ada-Seq-balance offering the most stable trade-off.
+ Figure 6: Reward–entropy trade-off (left and mid) and Pass@k (right) on the test benchmarks. Reinforce-Ada shifts the frontier outward: higher reward at fixed entropy and higher entropy at fixed reward and converts this into stronger Pass@k at small, practical budgets ( k ≤ 8 k\leq 8 ), with Reinforce-Ada-Seq-balance typically best. 
+ 5 Related Work
+ Data filtering and selection in online RL training for LLMs.
+ Our work is related to the growing body of literature on data selection and filtering for online reinforcement learning with LLMs, which further dates back to the RLHF studies ( Zhang et al., ; Xiong et al., 2023 ; Dong et al., 2024 ; Shi et al., 2024 ; Feng et al., 2025 ) . In the context of RLVR, some methods employ an oversample-then-downsample strategy: they first generate a large, uniform set of responses for each prompt and then select a subset based on specific criteria. Xu et al. (2025) propose downsampling to maximize reward variance within the group, while Ye et al. (2025) use process rewards to select positive samples, mitigating issues with falsely correct responses. Xue et al. (2025) study the data filtering in the context of tool-integrated reasoning, where they find that the trajectories with invalid tool calling will significantly hurt the training stability. Li et al. (2025) propose to use a process search to branch out the trajectories and collect data.
+ Addressing signal loss in GRPO.
+ A central challenge in applying GRPO is the “signal loss” problem, where groups of responses with uniform rewards yield zero gradients. Prior work has identified this issue and proposed several solutions. The most direct approach is passively filtering out these prompts ( Yu et al., 2025 ; Xiong et al., 2025 ) . Another line of works proposes to modify the advantage computation and avoid zero gradient. To avoid discarding samples, Nan et al. (2025) propose augmenting the reward group with a constant (the maximum possible reward), ensuring the variance is not zero by introducing a bias. Le et al. (2025) propose to assign advantages based on entropy information for prompts with uniform rewards. Finally, some works propose to mitigate this issue by selectively choose the prompt batch. For instance, Qu et al. (2025) employ a Bayesian framework to predict a prompt’s pass rate and selectively sample informative prompts during online training. Our work differs by tackling the problem at the collection stage itself, ensuring a sufficient signal is gathered adaptively rather than correcting for its absence afterward. Similarly, Shi et al. (2025) propose to use an adaptive curriculum learning to select prompts with suitable difficulty during the online RL training. Zhang et al. (2025) also develop a curriculum learning methods to select training prompts of intermediate difficulty in a two-stage manner. Zheng et al. (2025b) use a dictionary-based approach to record historical reward from the last epoch and skip uninformative prompts.
+ Learning objective in RLVR.
+ A key contribution of this work is the systematic formulation of non-linear RL objectives and the weighted gradient estimators that arise from them. Our theoretical framework builds directly on the foundational insights of Yao et al. (2025) , which is one of the earliest works to recognize that RLVR can be viewed through a prompt-dependent weighting scheme from a theoretical perspective. In particular, Yao et al. (2025) interpret rejection sampling fine-tuning (RAFT) ( Dong et al., 2023 ) under an Expectation-Maximization (EM) view ( Singh et al., 2023 ; Zhong et al., 2025 ) and make the important observation that the true expected gradient in EM-RAFT is weighted by 1 / p θ ​ ( x ) 1/p_{\theta}(x) . They further characterize the variance structure under this weighted gradient and show that the optimal sampling budget should scale with 1 / p θ ​ ( x ) 1/\sqrt{p_{\theta}(x)} . Motivated by their results, our early attempts tried to extend their optimal variance-reduction estimator to the standard Reinforce algorithm, but this turned out to be infeasible. This led us to analyze the log-objective for Reinforce, which naturally recovers a variance structure similar to EM-RAFT. Our framework also captures and generalizes the result of Yao et al. (2025) (see Appendix B for details).
+ From an algorithmic perspective, Yao et al. (2025) propose an improved RAFT variant with variance-reduced gradient estimates. However, their method follows a two-stage “explore-then-exploit” procedure: a small portion of the budget is used to estimate pass rates (often offline), and the remaining budget is allocated based on these estimates. This design has a key limitation—when the initial budget is small, the pass-rate estimate has very high variance, especially for difficult prompts (low p i p_{i} ), where the initial sample almost always contains zero positive responses. In contrast, we study the more general Reinforce algorithm, clarify the connection between explicit weighting and implicit weighted sampling, and provide two practical realizations—an estimation-based method and a model-free sequential sampling method—that mitigate this issue.
+ We also note a very recent theoretical note by Davis and Recht (2025) , which appeared concurrently with our second pre-print version. Their work also observes that non-linear objectives can be linked to heuristic weighting schemes used in algorithms such as GRPO. In comparison, we not only establish the theoretical link but also explicate the duality between optimizing this objective via explicit weights versus adaptive sampling. Furthermore, we go beyond theory to translate these insights into a practical, efficient algorithm, Reinforce-Ada , and rigorously validate its effectiveness through extensive experiments.
+ GRPO variant designs.
+ Our work is orthogonal to another line of research focusing on modifying the policy gradient algorithm itself, such as innovations in advantage estimation and clipping mechanisms ( Hu, 2025 ; Zhu et al., 2025 ; Zheng et al., 2025a ; Huang et al., 2025 ; Chu et al., 2025 ) . While these methods refine the core update rule, we focus on data generation and construction pipeline. Our adaptive sampling framework is complementary to these algorithmic improvements and is possible to be combined with them.
+ 6 Discussion and End Note
+ In this work, we presented a general framework for optimizing non-linear RL objectives, identifying adaptive sampling as a robust strategy to address the signal loss problem inherent in standard Reinforce with group sampling algorithm. Guided by this framework, we introduced Reinforce-Ada , a family of algorithms that dynamically allocate inference budgets based on prompt difficulty. By prioritizing prompts that require more exploration, our method efficiently constructs informative training groups, recovering valid learning signals that are typically lost in uniform sampling. Designed as a lightweight, drop-in replacement for the standard RL training loop, Reinforce-Ada delivers consistent and robust improvements across diverse foundation models, accelerating convergence and boosting final performance. These benefits come with only moderate computational overhead, offering a scalable and theoretically grounded alternative to the brute-force approach of uniformly large group sizes.
+ We view this work as part of the broader recent effort on data curation for online reinforcement learning . Recent studies have explored macro, prompt-level strategies, such as curriculum learning ( Zhao et al., 2024 ; Shi et al., 2025 ; Zhang et al., 2025 ) , to shape the distribution of training data during online learning. In contrast, our contribution operates at the response-sampling level , focusing on how to construct effective learning signals within each prompt. However, as discussed in Section 4.3 , the relative difficulty of the prompt set evolves alongside model training, and this interplay critically affects both learning dynamics and final performance of our method. Moreover, while our experiments are restricted to the math domain due to resource constraints, real-world post-training systems require data curation as a holistic challenge spanning the entire pipeline. We hope that the adaptive sampling framework can serve as an effective building block in this broader ecosystem when combined with complementary approaches from the literature.
+ Acknowledgment
+ The authors would like to thank Ziniu Li for the insightful discussions.
+ References
+ Balunović et al. (2025) 
+ M. Balunović, J. Dekoninck, I. Petrov, N. Jovanović, and M. Vechev 
+ MathArena: evaluating llms on uncontaminated math competitions .
+ SRI Lab, ETH Zurich .
+ External Links: Link 
+ Cited by: §4.1 .
+ Chu et al. (2025) 
+ X. Chu, H. Huang, X. Zhang, F. Wei, and Y. Wang 
+ Gpg: a simple and strong reinforcement learning baseline for model reasoning .
+ arXiv preprint arXiv:2504.02546 .
+ Cited by: §5 .
+ Cui et al. (2025) 
+ G. Cui, Y. Zhang, J. Chen, L. Yuan, Z. Wang, Y. Zuo, H. Li, Y. Fan, H. Chen, W. Chen, et al. 
+ The entropy mechanism of reinforcement learning for reasoning language models .
+ arXiv preprint arXiv:2505.22617 .
+ Cited by: §4.4 .
+ Davis and Recht (2025) 
+ D. Davis and B. Recht 
+ What is the objective of reasoning with reinforcement learning? .
+ arXiv preprint arXiv:2510.13651 .
+ Cited by: §5 .
+ DeepSeek-AI et al. (2025) 
+ DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang 
+ DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+ External Links: 2501.12948 ,
+ Link 
+ Cited by: §2.1 .
+ Dong et al. (2023) 
+ H. Dong, W. Xiong, D. Goyal, Y. Zhang, W. Chow, R. Pan, S. Diao, J. Zhang, K. SHUM, and T. Zhang 
+ RAFT: reward ranked finetuning for generative foundation model alignment .
+ Transactions on Machine Learning Research .
+ Note: 
+ External Links: ISSN 2835-8856 ,
+ Link 
+ Cited by: §5 .
+ Dong et al. (2024) 
+ H. Dong, W. Xiong, B. Pang, H. Wang, H. Zhao, Y. Zhou, N. Jiang, D. Sahoo, C. Xiong, and T. Zhang 
+ Rlhf workflow: from reward modeling to online rlhf .
+ arXiv preprint arXiv:2405.07863 .
+ Cited by: §5 .
+ Feng et al. (2025) 
+ Y. Feng, A. Kwiatkowski, K. Zheng, J. Kempe, and Y. Duan 
+ Pilaf: optimal human preference sampling for reward modeling .
+ arXiv preprint arXiv:2502.04270 .
+ Cited by: §5 .
+ He et al. (2024) 
+ C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, et al. 
+ Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems .
+ arXiv preprint arXiv:2402.14008 .
+ Cited by: §4.1 .
+ Hendrycks et al. (2021) 
+ D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt 
+ Measuring mathematical problem solving with the math dataset .
+ arXiv preprint arXiv:2103.03874 .
+ Cited by: §4.1 .
+ Hu et al. (2025) 
+ J. Hu, M. Liu, X. Lu, F. Wu, Z. Harchaoui, S. Diao, Y. Choi, P. Molchanov, J. Yang, J. Kautz, and Y. Dong 
+ BroRL: scaling reinforcement learning via broadened exploration .
+ External Links: 2510.01180 ,
+ Link 
+ Cited by: §2.1 .
+ Hu (2025) 
+ J. Hu 
+ REINFORCE++: a simple and efficient approach for aligning large language models .
+ arXiv preprint arXiv:2501.03262 .
+ Cited by: §5 .
+ Huang et al. (2025) 
+ W. Huang, Q. Zhang, Y. Fang, J. Liang, X. Rong, H. Yao, G. Wan, K. Liang, W. He, M. Li, et al. 
+ MAPO: mixed advantage policy optimization .
+ arXiv preprint arXiv:2509.18849 .
+ Cited by: §5 .
+ Hugging Face (2025) 
+ Hugging Face 
+ Open r1: a fully open reproduction of deepseek-r1 .
+ External Links: Link 
+ Cited by: §4.1 .
+ [15] 
+ Math-Verify: Math Verification Library 
+ External Links: Link 
+ Cited by: §4.1 .
+ Le et al. (2025) 
+ T. V. Le, M. Jeon, K. Vu, V. Lai, and E. Yang 
+ No prompt left behind: exploiting zero-variance prompts in llm reinforcement learning via entropy-guided advantage shaping .
+ arXiv preprint arXiv:2509.21880 .
+ Cited by: Table 1 ,
+ §5 .
+ Lewkowycz et al. (2022) 
+ A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, et al. 
+ Solving quantitative reasoning problems with language models .
+ Advances in Neural Information Processing Systems 35 , pp. 3843–3857 .
+ Cited by: §4.1 .
+ Li et al. (2025) 
+ Y. Li, Q. Gu, Z. Wen, Z. Li, T. Xing, S. Guo, T. Zheng, X. Zhou, X. Qu, W. Zhou, et al. 
+ Treepo: bridging the gap of policy optimization and efficacy and inference efficiency with heuristic tree-based modeling .
+ arXiv preprint arXiv:2508.17445 .
+ Cited by: §5 .
+ Nan et al. (2025) 
+ G. Nan, S. Chen, J. Huang, M. Lu, D. Wang, C. Xie, W. Xiong, X. Zeng, Q. Zhou, Y. Li, et al. 
+ NGRPO: negative-enhanced group relative policy optimization .
+ arXiv preprint arXiv:2509.18851 .
+ Cited by: Table 1 ,
+ §5 .
+ Qu et al. (2025) 
+ Y. Qu, Q. Wang, Y. Mao, V. T. Hu, B. Ommer, and X. Ji 
+ Can prompt difficulty be online predicted for accelerating rl finetuning of reasoning models? .
+ arXiv preprint arXiv:2507.04632 .
+ Cited by: §3.1 ,
+ §5 .
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, M. Zhang, Y. Li, Y. Wu, and D. Guo 
+ Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+ arXiv preprint arXiv:2402.03300 .
+ Cited by: §1 ,
+ §2.2 ,
+ §4.4 ,
+ Remark 1 .
+ Sheng et al. (2024) 
+ G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu 
+ HybridFlow: a flexible and efficient rlhf framework .
+ arXiv preprint arXiv: 2409.19256 .
+ Cited by: §4.1 .
+ Shi et al. (2024) 
+ R. Shi, R. Zhou, and S. S. Du 
+ The crucial role of samplers in online direct preference optimization .
+ arXiv preprint arXiv:2409.19605 .
+ Cited by: §5 .
+ Shi et al. (2025) 
+ T. Shi, Y. Wu, L. Song, T. Zhou, and J. Zhao 
+ Efficient reinforcement finetuning via adaptive curriculum learning .
+ arXiv preprint arXiv:2504.05520 .
+ Cited by: §5 ,
+ §6 .
+ Singh et al. (2023) 
+ A. Singh, J. D. Co-Reyes, R. Agarwal, A. Anand, P. Patil, P. J. Liu, J. Harrison, J. Lee, K. Xu, A. Parisi, et al. 
+ Beyond human data: scaling self-training for problem-solving with language models .
+ arXiv preprint arXiv:2312.06585 .
+ Cited by: §5 .
+ Slivkins et al. (2019) 
+ A. Slivkins et al. 
+ Introduction to multi-armed bandits .
+ Foundations and Trends® in Machine Learning 12 ( 1-2 ), pp. 1–286 .
+ Cited by: §3.2 .
+ Xiong et al. (2023) 
+ W. Xiong, H. Dong, C. Ye, Z. Wang, H. Zhong, H. Ji, N. Jiang, and T. Zhang 
+ Iterative preference learning from human feedback: bridging theory and practice for rlhf under kl-constraint .
+ Cited by: §5 .
+ Xiong et al. (2025) 
+ W. Xiong, J. Yao, Y. Xu, B. Pang, L. Wang, D. Sahoo, J. Li, N. Jiang, T. Zhang, C. Xiong, et al. 
+ A minimalist approach to llm reasoning: from rejection sampling to reinforce .
+ arXiv preprint arXiv:2504.11343 .
+ Cited by: §2.1 ,
+ §5 .
+ Xu et al. (2025) 
+ Y. E. Xu, Y. Savani, F. Fang, and Z. Kolter 
+ Not all rollouts are useful: down-sampling rollouts in llm reinforcement learning .
+ arXiv preprint arXiv:2504.13818 .
+ Cited by: §5 .
+ Xue et al. (2025) 
+ Z. Xue, L. Zheng, Q. Liu, Y. Li, X. Zheng, Z. Ma, and B. An 
+ Simpletir: end-to-end reinforcement learning for multi-turn tool-integrated reasoning .
+ arXiv preprint arXiv:2509.02479 .
+ Cited by: §5 .
+ Yang et al. (2024) 
+ A. Yang, B. Zhang, B. Hui, B. Gao, B. Yu, C. Li, D. Liu, J. Tu, J. Zhou, J. Lin, et al. 
+ Qwen2. 5-math technical report: toward mathematical expert model via self-improvement .
+ arXiv preprint arXiv:2409.12122 .
+ Cited by: §1 ,
+ §4.1 .
+ Yao et al. (2025) 
+ J. Yao, Y. Hao, H. Zhang, H. Dong, W. Xiong, N. Jiang, and T. Zhang 
+ Optimizing chain-of-thought reasoners via gradient variance minimization in rejection sampling and rl .
+ arXiv preprint arXiv:2505.02391 .
+ Cited by: §B.1 ,
+ Appendix B ,
+ Appendix B ,
+ §2.2 ,
+ §3.1 ,
+ §5 ,
+ §5 .
+ Ye et al. (2025) 
+ C. Ye, Z. Yu, Z. Zhang, H. Chen, N. Sadagopan, J. Huang, T. Zhang, and A. Beniwal 
+ Beyond correctness: harmonizing process and outcome rewards through rl training .
+ arXiv preprint arXiv:2509.03403 .
+ Cited by: §5 .
+ Yu et al. (2025) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, T. Fan, G. Liu, L. Liu, X. Liu, et al. 
+ Dapo: an open-source llm reinforcement learning system at scale .
+ arXiv preprint arXiv:2503.14476 .
+ Cited by: §1 ,
+ §2.1 ,
+ §3.1 ,
+ §3.3 ,
+ Table 1 ,
+ §4.1 ,
+ §5 .
+ Yue et al. (2025) 
+ Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, S. Song, and G. Huang 
+ Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model? .
+ arXiv preprint arXiv:2504.13837 .
+ Cited by: §4.4 .
+ [36] 
+ C. Zhang, W. Shen, L. Zhao, X. Zhang, L. Qi, W. Dou, and J. Bian 
+ Policy filtration in rlhf to fine-tune llm for code generation .
+ Cited by: §5 .
+ Zhang et al. (2025) 
+ R. Zhang, D. Arora, S. Mei, and A. Zanette 
+ SPEED-rl: faster training of reasoning models via online curriculum learning .
+ arXiv preprint arXiv:2506.09016 .
+ Cited by: §5 ,
+ §6 .
+ Zhao et al. (2024) 
+ Z. Zhao, H. Dong, A. Saha, C. Xiong, and D. Sahoo 
+ Automatic curriculum expert iteration for reliable llm reasoning .
+ arXiv preprint arXiv:2410.07627 .
+ Cited by: §6 .
+ Zheng et al. (2025a) 
+ C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al. 
+ Group sequence policy optimization .
+ arXiv preprint arXiv:2507.18071 .
+ Cited by: §5 .
+ Zheng et al. (2025b) 
+ H. Zheng, Y. Zhou, B. R. Bartoldson, B. Kailkhura, F. Lai, J. Zhao, and B. Chen 
+ Act only when it pays: efficient reinforcement learning for llm reasoning via selective rollouts .
+ arXiv preprint arXiv:2506.02177 .
+ Cited by: §5 .
+ Zhong et al. (2025) 
+ H. Zhong, Y. Yin, S. Zhang, X. Xu, Y. Liu, Y. Zuo, Z. Liu, B. Liu, S. Zheng, H. Guo, et al. 
+ Brite: bootstrapping reinforced thinking process to enhance language model reasoning .
+ arXiv preprint arXiv:2501.18858 .
+ Cited by: §5 .
+ Zhu et al. (2025) 
+ X. Zhu, M. Xia, Z. Wei, W. Chen, D. Chen, and Y. Meng 
+ The surprising effectiveness of negative reinforcement in llm reasoning .
+ arXiv preprint arXiv:2506.01347 .
+ Cited by: §5 .
+ Appendix A Authorship and Credit Attribution
+ All authors provided valuable contributions to this project, each bringing unique expertise and insights that were crucial for its success.
+ WX proposed the project idea, initiated and organized the project, and developed the core sequential sampling algorithm; developed the framework of non-linear RL objective; implemented the initial codebase, processed the data, and ran proof-of-concept experiments to validate its effectiveness; drafted the initial version of the paper, with subsequent contributions and revisions from co-authors.
+ CY proposed the idea of global normalization; jointly developed the core sequential sampling algorithms, including the codes for Reinforce-Ada-Seq-pos, Reinforce-Ada-Seq-balance, global normalization, and verification; ran the experiments for Qwen2.5-Math-1.5B and Qwen2.5-Math-7B; contributed to the paper writing.
+ BL processed the data; ran the experiments for Qwen2.5-Math-7B, Llama, Qwen3-4B; provided the released version of code (including the Tinker version); and contributed to the paper proofreading.
+ HD initiated, coordinated, and drove the project;
+provided insights about the algorithm and project design;
+implemented the production-ready Reinforce-Ada ; developed and refactored a scalable and configurable codebase; conducted key experiments for Qwen2.5-Math-1.5B; made substantial contributions to the manuscript writing.
+ XX , CM , JB , NJ , TZ are senior authors, supported and advised the work, provided resources, and suggested experiments and improvements to the writing.
+ Appendix B Variance-Reduction Gradient Estimator under the Log-objective
+ In this section, we connect our general framework to the variance-reduction principle explored in Yao et al. (2025) . We generalize their findings from the specific case of Rejection Sampling Fine-Tuning (RFT) to the general Reinforce algorithm with a baseline.
+ We recall that Yao et al. (2025) demonstrated that RFT can be viewed as maximizing the log-objective J log ​ ( θ ) = 𝔼 ⁡ [ log ⁡ p θ ​ ( x ) ] J_{\log}(\theta)=\mathbb{E}[\log p_{\theta}(x)] . Here, we analyze the gradient estimator for this objective under the general Reinforce algorithm with baseline:
+ | 
+ g log ( x ) = 1 p ⁡ ( x ) ⋅ 𝔼 a ∼ π θ ( ⋅ | x ) [ ∇ θ log π θ ( a | x ) ⋅ ( r ( x , a ) − p ( x ) ) ] . g_{\log}(x)=\frac{1}{p(x)}\cdot\mathbb{E}_{a\sim\pi_{\theta}(\cdot|x)}\Big[\nabla_{\theta}\log\pi_{\theta}(a|x)\cdot(r(x,a)-p(x))\Big]. | 
+ | 
+ (4) | 
+ B.1 Optimal Budget Allocation
+ Our goal is to estimate the total gradient for a batch g b ​ a ​ t ​ c ​ h = ∑ i g log ​ ( x i ) g_{batch}=\sum_{i}g_{\log}(x_{i}) with minimum variance, given a total budget N N .
+Suppose we have a total of N N samples to distribute across B B prompts x 1 , … , x B x_{1},\dots,x_{B} . Using n i n_{i} samples for prompt x i x_{i} , the batch gradient estimator is
+ | 
+ g ^ b ​ a ​ t ​ c ​ h = 1 B ​ ∑ i = 1 B 1 n i ​ p i ​ ∑ j = 1 n i ∇ θ ​ log ​ π ​ ( a i ​ j | x i ) ​ ( r i ​ j − p i ) , \hat{g}_{batch}=\frac{1}{B}\sum_{i=1}^{B}\frac{1}{n_{i}p_{i}}\sum_{j=1}^{n_{i}}\nabla_{\theta}\log\pi(a_{ij}|x_{i})\,(r_{ij}-p_{i}), | 
+ | 
+ (5) | 
+ where p i = p θ ​ ( x i ) p_{i}=p_{\theta}(x_{i}) .
+ Figure 7: 
+The theoretically optimal inference budget allocation of RAFT and Reinforce with baseline algorithms under log-objective.
+ Crucially, note the distinction from Section 2 : In this estimator, the optimization of the log-objective is captured entirely by the explicit factor 1 / p i 1/p_{i} . Since the inner sum is normalized by n i n_{i} , the allocation n i n_{i} does not affect the optimization objective (it is an unbiased estimator for any n i ≥ 1 n_{i}\geq 1 ). Therefore, the role of n i n_{i} here is purely to minimize the variance of the estimator. We seek the allocation ( n 1 , … , n B ) (n_{1},\dots,n_{B}) minimizing the total gradient variance:
+ | 
+ min n 1 , … , n B \displaystyle\min_{n_{1},\dots,n_{B}} | 
+ V = ∑ i = 1 B σ g 2 ​ ( x i ) n i ​ p i 2 , \displaystyle\quad V=\sum_{i=1}^{B}\frac{\sigma_{g}^{2}(x_{i})}{n_{i}p_{i}^{2}}, | 
+ | 
+ (6) | 
+ | 
+ subject to | 
+ ∑ i = 1 B n i = N and n i ≥ 1 . \displaystyle\sum_{i=1}^{B}n_{i}=N\quad\text{and}\quad n_{i}\geq 1. | 
+ | 
+ Here σ g 2 ​ ( x i ) \sigma_{g}^{2}(x_{i}) is the variance of the baselined Reinforce gradient ∇ θ ​ log ​ π ​ ( a i ​ j | x i ) ​ ( r i ​ j − p i ) \nabla_{\theta}\log\pi(a_{ij}|x_{i})(r_{ij}-p_{i}) . Assuming gradient norms are similar across prompts (see the derivation of Proposition 1 in Yao et al. (2025) for details), we have
+ | 
+ σ g 2 ​ ( x ) ∝ { p ⁡ ( x ) (RFT without baseline) , p ⁡ ( x ) ⋅ ( 1 − p ⁡ ( x ) ) (Reinforce with baseline) . \sigma_{g}^{2}(x)\propto\begin{cases}p(x)&\text{(RFT without baseline)},\\
+p(x)\cdot(1-p(x))&\text{(Reinforce with baseline)}.\end{cases} | 
+ | 
+ Solving Equation ( 6 ) via Lagrange multipliers gives the optimal allocation rule:
+ | 
+ n i ⋆ ∝ σ g ​ ( x i ) p i , n_{i}^{\star}\propto\frac{\sigma_{g}(x_{i})}{p_{i}}, | 
+ | 
+ (7) | 
+ which yields
+ | 
+ RFT: n i ⋆ ∝ 1 p i , Reinforce: n i ⋆ ∝ 1 − p i p i . \text{RFT: }n_{i}^{\star}\propto\sqrt{\tfrac{1}{p_{i}}},\qquad\text{Reinforce: }n_{i}^{\star}\propto\sqrt{\tfrac{1-p_{i}}{p_{i}}}. | 
+ | 
+ This shows that incorporating a baseline reduces gradient variance and thus changes the optimal sampling strategy. Combining these findings, we can formulate a reasonable variance-reduction algorithm.
+ Reinforce with baseline.
+ At each iteration t t :
+ 1. 
+ Allocate inference budgets as n i ∝ N ⋅ 1 − p θ t ​ ( x i ) p θ t ​ ( x i ) n_{i}\propto N\cdot\sqrt{\tfrac{1-p_{\theta_{t}}(x_{i})}{p_{\theta_{t}}(x_{i})}} .
+ 2. 
+ For each prompt x i x_{i} , compute the advantage:
+ | 
+ A t ​ ( x i , a i ​ j ) = 1 n i ​ p i ⋅ ( r i ​ j − p θ t ​ ( x i ) ) ∝ 1 p θ t ​ ( x i ) ⋅ ( 1 − p θ t ​ ( x i ) ) ⋅ ( r i ​ j − p θ t ​ ( x i ) ) . A^{t}(x_{i},a_{ij})=\frac{1}{n_{i}p_{i}}\cdot(r_{ij}-p_{\theta_{t}}(x_{i}))\propto\frac{1}{\sqrt{p_{\theta_{t}}(x_{i})\cdot(1-p_{\theta_{t}}(x_{i}))}}\cdot(r_{ij}-p_{\theta_{t}}(x_{i})). | 
+ | 
+ 3. 
+ Update the policy using the weighted gradient.
+ Remark 1 (Recovering the GRPO Advantage) . 
+ The derived advantage term r − p p ⁡ ( 1 − p ) \frac{r-p}{\sqrt{p(1-p)}} is exactly equivalent to normalizing the reward by its standard deviation, since Std ​ [ r ] = p ⁡ ( 1 − p ) \text{Std}[r]=\sqrt{p(1-p)} for binary rewards. This result provides an interesting explanation for the heuristic used in algorithms like GRPO ( Shao et al., 2024 ) , which normalize advantages by the group standard deviation. 
+ Remark 2 (The Necessity of the Log-Objective) . 
+ It is important to note that the log-objective factor ( 1 / p 1/p ) in Equation ( 5 ) is essential for this result. If we were optimizing the standard objective J = 𝔼 ⁡ [ p ] J=\mathbb{E}[p] (where the weight is 1), the variance term would be σ g 2 ​ ( x i ) n i \frac{\sigma_{g}^{2}(x_{i})}{n_{i}} instead of σ g 2 ​ ( x i ) n i ​ p i 2 \frac{\sigma_{g}^{2}(x_{i})}{n_{i}p_{i}^{2}} . Minimizing that variance would lead to allocating more budget to prompts with maximum variance (i.e., p ≈ 0.5 p\approx 0.5 ) rather than the difficult prompts ( p → 0 p\to 0 ). Thus, the log-objective is a prerequisite for focusing the variance-reduction effort on difficult problems. 
+ Appendix C Ablation Studies
+ C.1 Adaptive Sampling Solves More Difficult Prompts
+ Model 
+ Algorithm 
+ Math500 
+ Minerva Math 
+ Olympiad Bench 
+ AIME-like 
+ Weighted Average 
+ Qwen2.5-Math-1.5B 
+ GRPO-n4 
+ 74.2 
+ 34.4 
+ 38.4 
+ 16.2 
+ 45.3 
+ Reinforce-Ada-Seq-pos 
+ 75.8 
+ 35.7 
+ 38.6 
+ 16.5 
+ 46.1 (+0.8) 
+ Reinforce-Ada-Seq-balance 
+ 77.4 
+ 36.5 
+ 40.5 
+ 17.5 
+ 47.6 (+2.3) 
+ Qwen2.5-Math-1.5B (hard) 
+ GRPO 
+ 71.0 
+ 31.8 
+ 34.3 
+ 13.8 
+ 41.9 
+ Reinforce-Ada-Seq-pos 
+ 73.9 
+ 33.1 
+ 36.4 
+ 16.4 
+ 44.6 (+2.7) 
+ Reinforce-Ada-Seq-balance 
+ 74.7 
+ 33.7 
+ 38.7 
+ 17.6 
+ 45.5 (+3.6) 
+ Qwen2.5-Math-7B 
+ GRPO 
+ 82.2 
+ 44.7 
+ 45.6 
+ 23.2 
+ 53.3 
+ Reinforce-Ada-Seq-pos 
+ 82.7 
+ 45.1 
+ 46.7 
+ 23.7 
+ 54.2 (+0.9) 
+ Reinforce-Ada-Seq-balance 
+ 84.0 
+ 45.2 
+ 47.1 
+ 23.7 
+ 54.6 (+1.3) 
+ Qwen2.5-Math-7B (hard) 
+ GRPO 
+ 80.7 
+ 42.8 
+ 42.9 
+ 21.8 
+ 51.3 
+ Reinforce-Ada-Seq-pos 
+ 82.4 
+ 43.1 
+ 45.0 
+ 22.2 
+ 52.8 (+1.5) 
+ Reinforce-Ada-Seq-balance 
+ 83.1 
+ 43.4 
+ 46.4 
+ 24.9 
+ 53.9 (+2.6) 
+ Table 4: Ablation study on the impact of prompt difficulty. The gains become more pronounced on the more challenging training set, where our methods allocate more inference budget to difficult prompts to recover a valid learning signal, while GRPO samples all prompts uniformly. 
+ The impact of prompt set difficulty
+ After ∼ \sim 200 steps (Fig. 5 , right, second row), most prompts become easy—two rounds already satisfy the positive quota—so additional sampling brings diminishing returns. To stress-test our method, we construct a hard subset that keeps only prompts with 1-2 correct out of 16 initial samples. As shown in Fig. 8 , adaptive sampling yields a much larger margin over GRPO on this challenging set, and the gap widens late in training. This is also reflected on the final model performance reported in Table 4 .
+ Figure 8: Ablation study on the prompt set difficulty. Left: prompt set with moderate difficulty. Right: challenging prompt set. The benefit of adaptive sampling is more obvious with challenging prompt set. 
+ Intuitively, harder prompts reduce all-correct saturation and keep uncertainty high; Reinforce-Ada continues to mine informative negatives and avoids premature deactivation, sustaining exploration and gradient signal.
+ Method | 
+ Extremely Hard | 
+ Hard | 
+ Medium | 
+ Easy | 
+ Overall | 
+ Base Model | 
+ 0.0000 | 
+ 0.0889 | 
+ 0.2950 | 
+ 0.6151 | 
+ 0.1139 | 
+ GRPO | 
+ 0.3414 (+34.14) | 
+ 0.4639 (+37.51) | 
+ 0.6497 (+35.46) | 
+ 0.6865 (+7.14) | 
+ 0.4749 (+36.11) | 
+ DAPO | 
+ 0.3487 (+34.87) | 
+ 0.4648 (+37.60) | 
+ 0.6521 (+35.71) | 
+ 0.5580 (-5.70) | 
+ 0.4757 (+36.19) | 
+ Reinforce-Ada | 
+ 0.3674 (+36.74) | 
+ 0.4825 (+39.37) | 
+ 0.6579 (+36.29) | 
+ 0.7153 (+10.02) | 
+ 0.4933 (+37.94) | 
+ Table 5: Accuracy and absolute improvements over the base model across difficulty levels. Seq-Balance achieves consistent improvements across all difficulty categories. 
+ To better understand how adaptive allocation reshapes the learning dynamics, we randomly sample a subset of 5000 prompts from the hard training set. We partition the 5000-prompt subset into four difficulty levels using the base model’s pass@16: (i) Extremely Hard (0), (ii) Hard (0–0.2], (iii) Medium (0.2–0.5], and (iv) Easy (0.5–1.0]. The dataset is dominated by difficult items where 984 (19.7%) are extremely hard and 3,082 (61.7%) are hard. Meanwhile, medium and easy prompts account for 870 (17.4%) and 63 (1.3%), respectively. As expected, the base model’s accuracy rises monotonically with difficulty, achieving 0.00%, 8.89%, 29.50%, and 61.51% on the four groups.
+ Table 5 summarizes different models’ accuracy across four difficulty levels. All three RL methods substantially improve over the base model, but Reinforce-Ada-Seq-Balance achieves the highest accuracy in every category. The gains are especially pronounced on the Extremely Hard and Hard prompts—where the base model succeeds rarely or not at all—improving accuracy by +36.74 and +39.37 points, respectively. Reinforce-Ada-Seq-Balance also attains the best performance on Easy prompts (71.53%), whereas DAPO even hurts the performance in this regime. A likely reason is that DAPO tends to discard high-pass-rate prompts during training, while our balanced adaptive sampling variant allocates sufficient inference budget to preserve learning signals even for easy items.
+ C.2 Variants of Reinforce-Ada-Est 
+ We also compare the effect of sampling and reweighting in Reinforce-Ada-Est . The training reward averaged at the prompt level is similar for both the hybrid strategy ( w sample = 1 / p , w grad = 1 / p w_{\mathrm{sample}}=1/\sqrt{p},w_{\mathrm{grad}}=1/\sqrt{p} ) and the implicit weighting via sampling ( w sample = 1 / p , w grad = 1 w_{\mathrm{sample}}=1/p,w_{\mathrm{grad}}=1 ). However, the batch-level reward under implicit weighting eventually decreases. This indicates that the method is overly aggressive in sampling negative samples, leading to excessive oversampling of difficult prompts. When the task distribution contains many hard examples, this issue becomes more pronounced, since simpler samples receive too few draws.
+ In fact, the number of samples drawn per prompt N x N_{x} , the total sampling budget N total N_{\mathrm{total}} , and the reward r x r_{x} satisfy
+ | 
+ ( r batch − r prompt ) ​ N total = 𝐂𝐨𝐯 ⁡ ( N x , r x ) , (r_{\mathrm{batch}}-r_{\mathrm{prompt}})N_{\mathrm{total}}=\mathbf{Cov}(N_{x},r_{x}), | 
+ | 
+ A large gap between prompt level reward and batch level reward implies a strong negative covariance between N x N_{x} and r x r_{x} , meaning low reward prompts dominate the sampling budget. Under a finite sampling constraint, it is therefore important to ensure broad prompt coverage and use a more moderate sampling strategy to avoid such imbalance and extreme behavior.
+ Figure 9: Comparison with different sampling/reweighting strategy.
+ Appendix D Simulation of Sampling Cost of Reinforce-Ada-Seq
+ To better understand the sampling cost induced by our sequential stopping rules, we conduct a set of numerical simulations illustrated in Figure 10 . We evaluate two variants of our method: Reinforce-Ada-Seq-pos , which continues sampling until K K positive responses are observed, and Reinforce-Ada-Seq-balance , which stops once both K K positive and K K negative responses have been collected.
+ For each strategy, we consider three maximum exploration budgets N max ∈ { 32 , 64 , 128 } N_{\max}\in\{32,64,128\} and use a batch size of k batch = N max / 8 k_{\text{batch}}=N_{\max}/8 . We then vary the stopping requirement K K and estimate the expected number of samples required as a function of the true success probability p ∈ ( 0 , 1 ) p\in(0,1) . Because each response is a Bernoulli trial, the total number of required samples can be simulated accurately and efficiently.
+ Figure 10: 
+Estimated sampling cost under sequential stopping rules.
+The first row shows the expected number of responses required until observing K K positive samples;
+the second row shows the cost until collecting K K positive and K K negative samples.
+Each column corresponds to a different maximum exploration budget N max ∈ { 32 , 64 , 128 } N_{\max}\in\{32,64,128\} .
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

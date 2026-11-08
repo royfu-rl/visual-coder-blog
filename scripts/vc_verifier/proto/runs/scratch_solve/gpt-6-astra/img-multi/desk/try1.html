@@ -1,0 +1,95 @@
+<!doctype html><html><body style="margin:0">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b2129);
+const cam = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.1, 100);
+cam.position.set(1.9, 1.9, 2.9); cam.lookAt(0, 0.85, 0);
+const r = new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth, innerHeight); document.body.appendChild(r.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(3, 5, 2); scene.add(sun);
+const M = c => new THREE.MeshStandardMaterial({color: c});
+const wood = M(0x9c6b3f), dark = M(0x2b3038), screen = M(0x4fc3f7), mug = M(0xe05a4a), lampC = M(0xf2c14e), keys = M(0x8a93a0);
+
+// 保持相机不变，将工作台恢复到参考图的整体尺寸。
+const workstation = new THREE.Group();
+workstation.scale.setScalar(0.8);
+scene.add(workstation);
+
+function mesh(geometry, material, x, y, z) {
+  const object = new THREE.Mesh(geometry, material);
+  object.position.set(x, y, z);
+  workstation.add(object);
+  return object;
+}
+function box(w, h, d, material, x, y, z) {
+  return mesh(new THREE.BoxGeometry(w, h, d), material, x, y, z);
+}
+function cylinder(rt, rb, h, material, x, y, z) {
+  return mesh(new THREE.CylinderGeometry(rt, rb, h, 32), material, x, y, z);
+}
+
+const desktopY = 1.0;
+
+// 桌面和四条方形桌腿。
+box(2.0, 0.08, 1.0, wood, 0, desktopY - 0.04, 0);
+for (const x of [-0.87, 0.87]) {
+  for (const z of [-0.39, 0.39]) {
+    box(0.09, 0.92, 0.09, wood, x, 0.46, z);
+  }
+}
+
+// 显示器：修正侧视轮廓及俯视时屏幕的倾斜方向。
+cylinder(0.18, 0.18, 0.025, dark, -0.12, desktopY + 0.0125, -0.28);
+box(0.055, 0.35, 0.055, dark, -0.12, desktopY + 0.19, -0.28);
+const monitor = box(0.98, 0.55, 0.035, screen, -0.12, 1.55, -0.30);
+monitor.rotation.x = 0.12;
+
+// 桌面中前部的键盘。
+box(0.78, 0.025, 0.24, keys, -0.10, desktopY + 0.0125, 0.25);
+
+// 右前方的红色马克杯。
+const cupX = 0.68, cupZ = 0.14, cupHeight = 0.15;
+const cupWall = mug.clone();
+cupWall.side = THREE.DoubleSide;
+mesh(
+  new THREE.CylinderGeometry(0.066, 0.055, cupHeight, 32, 1, true),
+  cupWall, cupX, desktopY + cupHeight / 2, cupZ
+);
+cylinder(0.055, 0.055, 0.012, mug, cupX, desktopY + 0.006, cupZ);
+const rim = mesh(
+  new THREE.TorusGeometry(0.063, 0.004, 12, 32),
+  mug, cupX, desktopY + cupHeight, cupZ
+);
+rim.rotation.x = Math.PI / 2;
+mesh(
+  new THREE.TorusGeometry(0.041, 0.010, 12, 32),
+  mug, cupX + 0.064, desktopY + 0.084, cupZ
+);
+
+// 右后方的台灯。
+cylinder(0.12, 0.12, 0.025, dark, 0.79, desktopY + 0.0125, -0.28);
+const rodStart = new THREE.Vector3(0.79, desktopY + 0.025, -0.28);
+const rodEnd = new THREE.Vector3(0.65, 1.53, -0.28);
+const rodDirection = rodEnd.clone().sub(rodStart);
+const rodCenter = rodStart.clone().add(rodEnd).multiplyScalar(0.5);
+const rod = cylinder(
+  0.014, 0.014, rodDirection.length(), dark,
+  rodCenter.x, rodCenter.y, rodCenter.z
+);
+rod.quaternion.setFromUnitVectors(
+  new THREE.Vector3(0, 1, 0), rodDirection.normalize()
+);
+
+// 修正灯罩的锥尖方向，使正面轮廓与参考一致。
+const shade = mesh(
+  new THREE.ConeGeometry(0.105, 0.18, 32),
+  lampC, 0.65, 1.58, -0.28
+);
+shade.quaternion.setFromUnitVectors(
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(-0.45, 0.89, 0).normalize()
+);
+
+(function loop(){ requestAnimationFrame(loop); r.render(scene, cam); })();
+</script></body></html>

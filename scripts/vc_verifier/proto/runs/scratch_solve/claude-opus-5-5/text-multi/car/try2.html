@@ -1,0 +1,70 @@
+<!doctype html><html><body style="margin:0">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x11161c);
+const cam = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.1, 100);
+cam.position.set(3.0, 1.8, 3.4); cam.lookAt(0, 0.5, 0);
+const r = new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth, innerHeight); document.body.appendChild(r.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(3, 5, 2); scene.add(sun);
+const body = new THREE.MeshStandardMaterial({color: 0xd94f3d}), tire = new THREE.MeshStandardMaterial({color: 0x23262b});
+const glass = new THREE.MeshStandardMaterial({color: 0x9fd4ef}), lamp = new THREE.MeshStandardMaterial({color: 0xf5e6a8});
+
+// 约定：车头朝 +Z，车尾朝 -Z，车身横向为 X
+
+// 底盘：扁长，离地抬高（底面 y=0.25，顶面 y=0.47）
+const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.22, 4.0), body);
+chassis.position.set(0, 0.36, 0);
+scene.add(chassis);
+
+// 车厢：偏后（z 从 -1.6 到 0.7），前端为斜面
+const prof = new THREE.Shape();
+prof.moveTo(-1.6, 0.47);
+prof.lineTo( 0.7, 0.47);   // 前下角
+prof.lineTo( 0.2, 1.21);   // 前上角（斜面顶端）
+prof.lineTo(-1.6, 1.21);   // 后上角
+prof.lineTo(-1.6, 0.47);
+const cabinGeo = new THREE.ExtrudeGeometry(prof, {depth: 1.6, bevelEnabled: false});
+cabinGeo.translate(0, 0, -0.8);
+const cabin = new THREE.Mesh(cabinGeo, body);
+cabin.rotation.y = -Math.PI / 2;   // 轮廓 x -> 世界 z，挤出方向 -> 世界 x
+scene.add(cabin);
+
+// 风挡：浅蓝色，精确贴合车厢前端斜面
+// 斜面从 (z=0.7, y=0.47) 到 (z=0.2, y=1.21)
+const dz = 0.2 - 0.7, dy = 1.21 - 0.47;
+const slopeLen = Math.hypot(dz, dy);
+const slope = Math.atan2(-dz, dy);                 // 偏离竖直的角度
+const nz = dy / slopeLen, ny = -dz / slopeLen;     // 斜面外法线 (z, y)
+const thick = 0.04, off = thick / 2 + 0.005;
+const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.42, slopeLen * 0.88, thick), glass);
+windshield.rotation.x = -slope;                    // 顶部向车尾倾斜
+windshield.position.set(0, (0.47 + 1.21) / 2 + ny * off, (0.7 + 0.2) / 2 + nz * off);
+scene.add(windshield);
+
+// 四个黑色轮子：轴向沿 X（车身横向）
+const wheelGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.20, 24);
+for (const [x, y, z] of [
+    [-1.02, 0.32,  1.3],   // 左前
+    [ 1.02, 0.32,  1.3],   // 右前
+    [-1.02, 0.32, -1.3],   // 左后
+    [ 1.02, 0.32, -1.3],   // 右后
+]) {
+    const w = new THREE.Mesh(wheelGeo, tire);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, y, z);
+    scene.add(w);
+}
+
+// 两个浅黄色圆形前灯：位于车头前端面（z = +2.0），圆面朝 +Z
+const lampGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 24);
+for (const x of [-0.55, 0.55]) {
+    const l = new THREE.Mesh(lampGeo, lamp);
+    l.rotation.x = Math.PI / 2;
+    l.position.set(x, 0.36, 2.02);
+    scene.add(l);
+}
+
+(function loop(){ requestAnimationFrame(loop); r.render(scene, cam); })();
+</script></body></html>

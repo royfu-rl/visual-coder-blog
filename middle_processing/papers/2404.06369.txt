@@ -1,0 +1,935 @@
+WebCode2M: A Real-World Dataset for Code Generation from Webpage Designs 
+ Report GitHub Issue 
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract. 
+ 1 Introduction 
+ 2 WebCode2M: The Dataset 
+ 2.1 Dataset Construction 
+ 2.2 Ethical Compliance 
+ 2.3 Dataset De-Duplication and Partition 
+ 2.4 Dataset Characteristics 
+ 3 Benchmarking 
+ 3.1 WebCoder: A Reference Baseline 
+ 3.2 Setup and Baselines 
+ 3.3 Evaluation Metrics 
+ 3.4 Implementation Details 
+ 3.5 Effectiveness of Training Dataset (RQ1) 
+ 3.6 Benchmarking on the Test Datasets (RQ2) 
+ 4 Related Work 
+ 5 Discussion 
+ 5.1 Practical Challenges to Study 
+ 5.2 Limitations and Future Directions 
+ 6 Conclusion 
+ Acknowledgements 
+ References 
+ A The Implementation of TreeBLEU 
+ B More Data Statistics 
+ C Filtering Inappropriate Content 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2404.06369v2 [cs.CV] 22 Feb 2025
+ WebCode2M: A Real-World Dataset for Code Generation from Webpage Designs
+ Conference: Proceedings of the ACM
+Web Conference 2025; April 28-May 2, 2025; Sydney, NSW, Australia Proceedings of the ACM Web Conference 2025 (WWW ’25), April
+28-May 2, 2025, Sydney, NSW, Australia DOI: 10.1145/3696410.3714889 ISBN: 979-8-4007-1274-6/25/04 CCS: Information systems Data mining CCS: Software and its engineering Source code generation 
+ Yi Gui
+ Note: Both authors contribute equally to this research.
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ Alternate Affiliation: National Engineering Research Center for Big Data Technology and System, Services Computing Technology and System Lab, Cluster and Grid Computing Lab , School of Computer Science and Technology , Wuhan , Hubei , China 
+ , 
+ Zhen Li
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Yao Wan
+ Note: Yao Wan is the corresponding author ( wanyao@hust.edu.cn ).
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Yemin Shi
+ Affiliation: Peking University , Beijing , China 
+ , 
+ Hongyu Zhang
+ Affiliation: Chongqing University , Chongqing , China 
+ , 
+ Yi Su
+ Affiliation: Hubei University of Automotive Technology , Shiyan , China 
+ , 
+ Bohua Chen
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Dongping Chen
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Siyuan Wu
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Xing Zhou
+ Affiliation: Rabbitpre AI , Shenzhen , China 
+ , 
+ Wenbin Jiang
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ , 
+ Hai Jin
+ Affiliation: Huazhong University of Science and Technology , Wuhan , China 
+ and 
+ Xiangliang Zhang
+ Affiliation: University of Notre Dame , Notre Dame , United States 
+ © acmlicensed
+ Abstract. 
+ Automatically generating webpage code from webpage designs can significantly reduce the workload of front-end developers, and recent Multimodal Large Language Models (MLLMs) have shown promising potential in this area.
+However, our investigation reveals that most existing MLLMs are constrained by the absence of high-quality, large-scale, real-world datasets, resulting in inadequate performance in automated webpage code generation.
+To fill this gap, this paper introduces WebCode2M, a new dataset comprising 2.56 million instances, each containing a design image along with the corresponding webpage code and layout details. Sourced from real-world web resources, WebCode2M offers a rich and valuable dataset for webpage code generation across a variety of applications.
+The dataset quality is ensured by a scoring model that filters out instances with aesthetic deficiencies or other incomplete elements.
+To validate the effectiveness of WebCode2M, we introduce a baseline model based on the Vision Transformer (ViT), named WebCoder, and establish a benchmark for fair comparison.
+Additionally, we introduce a new metric, TreeBLEU, to measure the structural hierarchy recall.
+The benchmarking results demonstrate that our dataset significantly improves the ability of MLLMs to generate code from webpage designs, confirming its effectiveness and usability for future applications in front-end design tools.
+Finally, we highlight several practical challenges introduced by our dataset, calling for further research.
+The code and dataset are publicly available at our project homepage: https://webcode2m.github.io .
+ Keywords: UI Automation, Code Generation, Design to Code, Dataset
+ 1. Introduction
+ Front-end software developers typically create webpages based on Graphical User Interface (GUI) mockups designed by UI designers. However, this process is often time-consuming and costly.
+To this end, several neural models have been proposed to automate the process of generating code from GUI design images, thereby alleviating the burden on front-end developers.
+Among these, pix2code ( Beltramelli, 2018 ) and sketch2code ( Robinson, 2019 ) are two exemplary works that translate images, whether simple-styled UI designs or hand-drawn sketches, into front-end code.
+Recently, Multimodal Large Language Models (MLLMs), such as GPT-4V ( Ouyang et al., 2022 ) , have also demonstrated impressive potential in this area.
+ Despite its potential, we are still far from fully automating front-end engineering to achieve true “ screenshot in, code out ” functionality.
+In particular, as highlighted in a recent study ( Si et al., 2024 ) , the complexity of code generation increases with the growth in the total number of HyperText Markup Language (HTML) tags, the diversity of unique tags, and the depth of the Document Object Model (DOM) tree. Modern MLLMs, such as GPT-4V, also exhibit a notable decline in performance when confronted with real-world webpage designs that feature complex structures and a larger variety of unique HTML tags ( Si et al., 2024 ) .
+ One possible solution lies in fine-tuning pre-trained LLMs, with the potential for improved performance as the amount of data increases. However, this approach faces a significant limitation since existing datasets are either too small to provide meaningful generalization ( Si et al., 2024 ; Guo et al., 2024a ) or consist of synthetic data that does not fully capture the complexity and variability of real-world webpage designs ( Laurençon et al., 2024 ; Yun et al., 2024 ) . For instance, Design2Code ( Si et al., 2024 ) contains only 484 real-world samples, intended solely for testing and insufficient for effective fine-tuning.
+WebSight ( Laurençon et al., 2024 ) is another dataset comprising approximately 0.8 million synthesized samples generated by LLMs. However, a significant disparity exists between these samples and real-world data ( Si et al., 2024 ) .
+Specifically, WebSight samples average 647 tokens, 19 tags, and a DOM depth of 5, whereas our study reveals that real-world samples can involve up to 50 times more tokens, six times as many tags, and double the DOM depth (see Figure 2 ).
+This substantial gap between synthetic and real-world data can limit the practical effectiveness of fine-tuned MLLMs when applied to more complex, real-world scenarios.
+ Our Work. 
+To fill this gap, this paper introduces a large-scale real-world dataset for webpage generation, named WebCode2M, which includes 2.56 million instances.
+Each instance features a high-quality webpage design image paired with its corresponding HTML and Cascading Style Sheets (CSS) code. This dataset overcomes the limitations of existing datasets by offering a diverse and comprehensive collection of real-world webpage designs and their associated code. On average, the samples contain 31,216 tokens, 158 tags, and a DOM depth of 13. WebCode2M is poised to be an invaluable resource for advancing the development of webpage code generation models.
+ To construct our dataset, we first collect approximately 0.5 billion samples from the Common Crawl dataset ( ccd, 2024 ) , which includes a diverse array of web domains and styles. For each webpage, we extract the associated CSS code and image elements, remove noise and irrelevant code, and generate screenshots. To ensure data quality, we develop a scoring model to filter out instances with incomplete elements or suboptimal aesthetic quality, such as disorganized layouts or excessive blank spaces.
+This scoring model is trained on a manually annotated subset of 10,000 entries, curated by six annotators using consensus-based annotation, achieving a validation accuracy of 90% in distinguishing high-quality instances from low-quality ones.
+ Figure 1 . The pipeline of constructing the WebCode2M dataset. 
+ To demonstrate the potential of our dataset for improving automatic webpage generation, we fine-tune a ViT model ( Dosovitskiy et al., 2021 ) as a new baseline, termed WebCoder, for translating webpage design images into HTML/CSS code and establish a benchmark for fair comparison.
+Compared to the two fine-tuned baselines, Design2Code-18B ( Si et al., 2024 ) and WebSight VLM-8B ( Laurençon et al., 2024 ) , our model, fine-tuned from the smaller Pix2Struct-1.3B, outperforms both across all evaluation metrics, including CLIP-based visual similarity ( Radford et al., 2021 ) , low-level appearance accuracy ( Si et al., 2024 ) , and our proposed TreeBLEU to measure the structural hierarchy recall.
+We also benchmark a broad array of general-purpose MLLMs, including the LLaVA family ( Liu et al., 2023 ) , CogAgent-Chat-18B ( Hong et al., 2024 ) , GPT-4V, GPT-4o ( OpenAI, 2023 ) , Gemini ( Anil et al., 2023 ) , and Claude ( The, 2024 ) . Experimental results show that WebCoder outperforms these models across most evaluation metrics. The only exception is GPT-4o, which achieves higher similarity in CLIP and visual appearance but has a lower substructure recall rate.
+ Contributions. 
+The contributions of this paper are as follows.
+ • 
+ New Dataset. To the best of our knowledge, WebCode2M is the first real-world and large-scale dataset tailored to empower MLLMs in the domain of generating webpage code from high-fidelity images.
+ • 
+ Comprehensive Benchmark. We fine-tune a ViT model, named WebCoder, on our WebCode2M dataset and evaluate it through a comprehensive set of experiments alongside other fine-tuned baselines. Experimental results demonstrate the effectiveness of the dataset in enabling MLLMs to automatically generate code from webpage designs.
+Additionally, we introduce a novel metric, TreeBLEU, to measure the structural hierarchy recall.
+ • 
+ Open-Source Resources. We open-source the code base, the dataset, and the new benchmark model, making them freely available to the research and developer communities, for further innovation in automating front-end engineering. The resources are available at https://webcode2m.github.io .
+ 2. WebCode2M: The Dataset
+ 2.1. Dataset Construction
+ The aim of this study is to curate a dataset that facilitates training neural models to generate code from webpage designs.
+As large-scale human-designed screenshots are hard to collect manually, we opt to reversely generate screenshot image from a curated open-source web dataset via rendering the webpage code.
+Figure 1 illustrates the pipeline for constructing WebCode2M, encompassing steps such as code purification, HTML rendering, filtering with a neural scorer, and layout tree extraction.
+ Raw Data Collection. 
+We build our dataset on top of the Common Crawl dataset ( ccd, 2024 ) , a comprehensive collection of global webpage data spanning from 2013 to the present, updated monthly through web crawling. Previously, the Common Crawl dataset is primarily used for pre-training models on text-based tasks. Due to our computational resource and download speed constraints, we randomly sample approximately 0.5 billion webpages from the first segment of the CC-MAIN-2023-50 version, which contains about 3.35 billion webpages, as our initial data.
+ Code Purification. 
+Our investigation reveals that webpage code from online websites is often lengthy and includes redundant elements, which significantly impairs the model’s ability to accurately learn the correlation between webpage code and screenshots ( Laurençon et al., 2024 ) .
+To ensure data quality, we meticulously clean the combined HTML and CSS text adhering to the following steps.
+ • 
+ Quick length filtering. 
+We filter out samples that are either excessively long or too short.
+This is because parsing errors from Python tools often lead to excessively short HTML or CSS code, while excessively long input significantly slows down our training and inference procedures.
+Specifically, we employ a rapid filtering method based on code length, measured by the number of characters. Assuming that one word is approximately five characters long, we establish length ranges for HTML and CSS code between [128\times 5 , 2048\times 5] characters and [128\times 5,4096\times 5] characters, respectively. Webpages that fall outside these ranges are filtered out.
+ • 
+ Redundant code elements cleansing. 
+The code samples in the raw dataset may include redundant elements, such as comments and hidden elements, as well as components that do not directly affect the rendering of static HTML pages. To address this, we propose removing the following contents from both HTML and CSS code: comments, <meta> and <script> tags, hidden elements (hidden, zero-sized, or outside the display range), attributes not in ( class , id , width , height , style , src ) of all HTML elements, and CSS styles that are not effective in the HTML code.
+In addition, we transfer and merge all the external and inline CSS code into a single <style> tag.
+ Figure 2 . Representative screenshots of webpages in WebCode2M and other datasets. 
+ HTML Rendering for Screenshot Generation. 
+After purifying the data, we generate webpage screenshots from the combined HTML and CSS code. This process is implemented using Playwright ( hom, 2025b ) , a headless browser automation tool that allows us to render webpages and capture high-fidelity screenshots. By simulating a real browser environment, Playwright ensures that the rendered webpage accurately reflects the appearance of the HTML and CSS code.
+This process is highly time-consuming, accounting for roughly 80% of the total processing time, which spans approximately one month.
+ Filtering with a Neural Scorer. 
+In our empirical data analysis, we observe that a considerable proportion of the generated screenshots exhibit deficiencies in aesthetics. These low-quality screenshots are generally attributed to incompletely loaded pages resulted from various factors, for instance, invalid image links, and cases where the content is mainly composed of textual content.
+ The presence of flawed screenshots can compromise the overall quality of the dataset, necessitating a rigorous filtering of the acquired data. Given the large volume of our dataset, manually screening all the data is impractical. Therefore, we train a classification model to serve as a neural scorer, assessing the screenshots and subsequently eliminating samples that fall below a specified score threshold.
+ In practice, we devise an annotating tool and manually annotate a subset of the generated screenshots. The scoring criteria are thoughtfully crafted, and each criterion satisfied will be awarded one point:
+(1) Normal webpage layout (human-designed layout, not simple auto single-column arrangement);
+(2) Normal webpage styling (elements like lists and blocks are styled, not using default styles);
+(3) No excessive blank areas;
+(4) Rich color combinations; and
+(5) Good aesthetic appearance.
+During the manual annotation process, we invite six annotators who hold a Bachelor’s degree in Computer Science and have at least three years of web development experience. We then divide them into two groups to perform consensus annotation, where annotators within each group evaluate the same data.
+This annotation strategy minimizes the influence of subjective factors on the scoring results.
+The annotation process takes approximately two weeks for all the participants, ultimately yielding 10,000 manually scored data entries.
+ Figure 3 . Score distributions of annotators in two groups. 
+ The score distribution of the manually labeled subset is depicted in Figure 4 (inner ring). The statistics reveal that 80% of the data fell within the low-quality category, scoring between 0 and 1. Conversely, only 20% of the entries, exhibiting scores of 2 or higher, demonstrate a commendable level of structural integrity and aesthetic appeal.
+We also conduct a consistency analysis of all the data from the annotators (see Figure 3 ). Although certain differences exist among annotators within the same group, the overall trend remains similar. By averaging scores within the same group, the impact of subjectivity is significantly reduced.
+Utilizing the rated data, we train a ResNet-50 ( He et al., 2016 ) model to serve as a scorer, predicting the score of input screenshots.
+This scorer achieves 75% accuracy on the test subset of the manually scored dataset and nearly 90% accuracy in binary classification, determining whether the score is greater than or equal to two.
+Using this scorer, we remove samples with scores less than two, which accounted for 52.5% of the entire raw dataset (as shown in the outer circle of Figure 4 ).
+ Layout Tree Extraction. 
+Considering that the webpage’s layout defines the spatial arrangement and relationships between UI components, it can serve as a critical source of information. If available, the layout can act as a training target for the model, facilitating code generation by guiding the model to understand not only the structure of the webpage but also the precise positioning of elements. Thus, each data instance in our dataset is upgraded to a triplet: (webpage code, design image, layout). The layout, represented by the bounding boxes (BBox) of HTML elements, includes key information such as the size, location, and hierarchy of page components. This additional layout data will aid the model in learning to generate the webpage DOM tree structure more accurately.
+ 2.2. Ethical Compliance
+ As our dataset is sourced from online webpages, it may contain content that is inappropriate for public release, such as explicit material or violent content.
+To mitigate ethical concerns regarding potential negative impacts, such as the misuse of models trained on this dataset, we perform additional filtering steps. Specifically, we apply an image filter to the screenshots and a profanity filter to the web text. Only samples that passed both filters are retained. Detailed filtering procedures are provided in Appendix C .
+ Figure 4 . Score distribution of the manually annotated subset (inner ring) and the entire dataset (outer ring) before score-based filtering. 
+ Figure 5 . Length density of the WebCode2M dataset. 
+ 2.3. Dataset De-Duplication and Partition
+ To support the use of our dataset in both fine-tuning models for webpage code generation and evaluating their performance, we organize the data into well-structured partitions. After using the hash codes of the screenshots to quickly de-duplicate the refined dataset, which comprises millions of entries, we sample approximately two thousand entries with a score above 4 as our candidate test dataset. The remaining 2.56 million entries serve as the training dataset. For the candidate test dataset, we further remove duplicates using CLIP ( Radford et al., 2021 ) similarity and conduct a manual inspection on each entry.
+ Furthermore, we partition the test subsets based on code length to assess the model’s code generation capability across varying levels of difficulty. As illustrated in Figure 5 , the dataset shows a wide range of data length variations. Specifically, we use two length thresholds (i.e., 2048 and 4096), to select 256 entries from within three length ranges, thus creating three test subsets. We refer to them as WebCode2M-Short, WebCode2M-Mid, and WebCode2M-Long.
+Table 2.4 summarizes the overall statistics and provides detailed length statistics of WebCode2M for both training and testing.
+ 2.4. Dataset Characteristics
+ Upon acquiring the final dataset WebCode2M, we conduct an analysis to identify several key characteristics. To quantitatively assess the diversity and quality of our dataset, we employ the same statistical metrics used in Design2Code, facilitating a comparison with other datasets. The results are presented in Table 2 . Specifically, Avg. Len represents the token length as determined by the GPT-2 tokenizer ( hfg, 2019 ) ; Avg. Tags indicates the total number of tags in the HTML code; Avg. Unique Tags denotes the count of distinct tags in the HTML code; and Avg. DOM Depth signifies the maximum depth of the HTML’s DOM tree.
+ Subset | 
+ Purpose | 
+ Size | 
+ Length (Tokens) | 
+ WebCode2M | 
+ Training | 
+ 2,563,905 | 
+ [368,16668] | 
+ WebCode2M-Short | 
+ Testing | 
+ 256 | 
+ [551, 2045] | 
+ WebCode2M-Mid | 
+ Testing | 
+ 256 | 
+ [2052, 4085] | 
+ WebCode2M-Long | 
+ Testing | 
+ 256 | 
+ [4098, 10990] | 
+ Table 1 . Dataset partition. 
+ Table 2 . A statistical comparison between WebCode2M and all the publicly available datasets. The statistical data of WebSight and Design2Code is referred to ( Si et al., 2024 ) . 
+ Dataset | 
+ pix2code | 
+ WebSight | 
+ Design2Code | 
+ WebCode2M | 
+ WebCode2M-Short | 
+ WebCode2M-Mid | 
+ WebCode2M-Long | 
+ Purpose | 
+ Training&Testing | 
+ Training | 
+ Testing | 
+ Training | 
+ Testing | 
+ Testing | 
+ Testing | 
+ Source | 
+ Synthetic | 
+ Synthetic | 
+ Real-World | 
+ Real-World | 
+ Real-World | 
+ Real-World | 
+ Real-World | 
+ Size (#samples) | 
+ 1742 | 
+ 0.8M | 
+ 484 | 
+ 2.5M | 
+ 256 | 
+ 256 | 
+ 256 | 
+ Avg. Len (#tokens) | 
+ 1316±177 | 
+ 647±216 | 
+ 31216±23902 | 
+ 5366±2393 | 
+ 2025±514 | 
+ 3750±765 | 
+ 7940±1853 | 
+ Avg. Tags | 
+ 52±8 | 
+ 19±8 | 
+ 158±100 | 
+ 184±77 | 
+ 81±34 | 
+ 144±61 | 
+ 222±81 | 
+ Avg. DOM Depth | 
+ 8±0 | 
+ 5±1 | 
+ 13±5 | 
+ 15±5 | 
+ 10±4 | 
+ 13±7 | 
+ 16±4 | 
+ Avg. Unique Tags | 
+ 17±0 | 
+ 10±3 | 
+ 22±6 | 
+ 24±6 | 
+ 18±4 | 
+ 21±5 | 
+ 26±5 | 
+ Superior Diversity. 
+From Table 2 , it is apparent to see that
+our dataset contains a significantly greater number and diversity of HTML tags and exhibits a more intricate DOM tree structure compared to the pix2code and WebSight datasets. This suggests that our dataset, sourced from real-world webpages, offers a remarkable diversity advantage over synthetic datasets generated by LLMs like WebSight. Design2Code, which also utilizes real-world data through the C4 dataset ( Raffel et al., 2020 ) from the Common Crawl corpus, exhibits a comparable distribution across these metrics, underscoring the benefits of real-world data in capturing the complexity of actual webpages. Moreover, this comparison highlights significant deviations in data attribute distributions between LLM-generated datasets and real webpages.
+ Figure 2 presents several representative screenshots from the datasets (excluding Design2Code). The pix2code dataset comprises basic block elements and text-based UI elements, suitable for both Android and iOS UIs. In contrast, WebSight consists of structurally simple webpages. Our dataset, on the other hand, closely mirrors typical real webpages, featuring a variety of layout structures and rich elements such as images. Additionally, our dataset captures webpages in a diverse range of languages (see Figure 8 in Appendix).
+ Large Scale and High Quality. 
+Compared to pix2code and Design2Code, which contain only a few thousand or fewer data samples, and WebSight, which includes 0.8 million samples, our dataset is significantly larger, comprising 2.56 million samples. This dataset includes both a comprehensive training dataset and a high-quality test dataset, making it much larger in scale.
+Notably, compared to Design2Code, our WebCode2M significantly reduces the average code length to about one-tenth of its original size, while maintaining the diversity and quantity of HTML tags, thereby preserving the high quality of the dataset.
+ 3. Benchmarking
+ We introduce a baseline model based on the ViT, named WebCoder, and establish a benchmark for fair comparison.
+ 3.1. WebCoder: A Reference Baseline
+ To demonstrate the potential of our dataset in enhancing automatic webpage generation, we fine-tune a ViT model to establish a new baseline for translating design images into HTML/CSS code. Specifically, we select Google’s Pix2Struct-1.3B ( Lee et al., 2023 ) as our base model. This model, based on the ViT architecture, has been pre-trained on webpage code derived from URLs in the C4 dataset ( Raffel et al., 2020 ) . Pix2Struct-1.3B is notable for its robustness to extreme aspect ratios and ability to adapt dynamically to changes in sequence length and resolution. We conduct a full fine-tuning of the pre-trained Pix2Struct on our training dataset, resulting in our model, WebCoder.
+ 3.2. Setup and Baselines
+ Our experiments focus on two primary Research Questions (RQs).
+ RQ1: The effectiveness of the training dataset. To investigate the ability of our training dataset to empower MLLMs in webpage generation, we compare WebCoder with several state-of-art models which are also fine-tuned specifically for this task.
+ • 
+ WebSight VLM-8B ( Laurençon et al., 2024 ) . 
+Hugging Face utilizes its training dataset (WebSight) and the DoRA ( Liu et al., 2024 ) mechanism to fine-tune a base VLM, which has been pre-trained on image/text pairs.
+ • 
+ Design2Code-18B ( Si et al., 2024 ) . 
+Stanford’s Design2Code is also fine-tuned on the WebSight dataset. It adopts CogAgent ( Hong et al., 2024 ) as its base model and utilizes LoRA ( Hu et al., 2022 ) as the fine-tuning method to accelerate the training process.
+ • 
+ WebCoder*. 
+Another Pix2Struct model in the same setting but trained on the WebSight dataset for comparative experiments.
+ RQ2: Benchmarking on the test datasets. We also introduce a broad array of the latest and most powerful general-purpose pre-trained MLLMs for benchmarking.
+ • 
+ LLaVA Family ( Liu et al., 2023 ) . 
+The LLaVA family consists of various MLLMs that connect a vision encoder and an LLM for general-purpose visual and language understanding.
+In our work, we introduce LLaVA-v1.5-7B , LLaVA-onevision-0.5B , and LLaVA-onevision-7B as the baselines. The prompt used for these models follows ( hom, 2024 ) and is detailed in Figure 6 .
+ • 
+ CogAgent-Chat-18B ( Hong et al., 2024 ) . 
+CogAgent-Chat-18B is a general MLLM that supports both low- and high-resolution images and performs quite well on webpage navigation.
+We also input the screenshot and a simple prompt “ write an HTML code ” to generate the webpage as Design2Code does.
+ • 
+ Commercial Models. 
+Some general commercial models have demonstrated impressive performance across various fields, proficient in both code generation and web understanding. Therefore, we introduce OpenAI’s GPT-4V and GPT-4o ( OpenAI, 2023 ) , Google DeepMind’s Gemini 1 1 
+ 1 
+ Around one-third of the test cases fail due to the “recitation” error of Gemini. 
+ ( Anil et al., 2023 ) , and Anthropic’s Claude ( The, 2024 ) as baselines. The prompt for these models also follows ( hom, 2024 ) , detailed in Figure 6 .
+Although previous work ( Si et al., 2024 ) suggests that multi-round generation methods ( e.g. , self-correction) may outperform one-pass generation, baseline models such as Design2Code-18B and WebSight VLM-8B are fine-tuned with one-pass dataset and only support one-pass generation. Therefore, to ensure a fair comparison, all baselines will employ the one-pass generation strategy.
+ 3.3. Evaluation Metrics
+ Visual Similarity Measurement. 
+We adopt CLIP ( Radford et al., 2021 ) similarity and Visual Score ( Si et al., 2024 ) 2 2 
+ 2 
+ We use the Visual Score from the first version of their paper, which may differ from the latest version, particularly with respect to the sub-indicator text color .
+ as two metrics to assess visual similarities.
+CLIP similarity is derived from calculating the cosine value of two images’ latent vectors encoded by CLIP, which measures the overall visual similarity.
+ Visual Score is utilized to measure the matching degree of low-level elements in terms of appearance, calculating the average scores of the matching ratio between the reference and candidate blocks, as well as the similarity at four block levels in terms of color, text, CLIP, and position.
+ Structure Similarity Measurement. 
+Skeletons of webpage code that determines the layout and appearance of the page, also known as the HTML DOM tree, can also serve as a metric to evaluate structural similarity that compares ground truth (for instance, during the training phase or when the target code is provided in the inference stage) and the DOM tree of the generated code.
+Inspired by ( Ren et al., 2020 ) , we propose a new metric TreeBLEU to evaluate the matching degree of the generated HTMLs’ DOM tree (without terminal nodes that contain tags’ attributes, e.g. , content and style) compared to the ground truth.
+ TreeBLEU is defined as the proportion of all 1-height subtrees (see Algorithm 1 ) in a given tree that can be matched with that of a reference tree.
+Let S(.) be the set of 1-height subtrees, then it can be formulated as:
+ (1) | 
+ | 
+ \operatorname{TreeBLEU}=\frac{{\left|S(t)\cap S(\hat{t})\right|}}{{\left|S(\hat{t})\right|}}\,, | 
+ | 
+ where t and \hat{t} denote the given and reference trees, respectively.
+ 3.4. Implementation Details
+ We configure the model to handle up to 1,024 image patches and set the maximum sequence length to 2,048 tokens. Due to GPU memory constraints, we use a batch size of 1 during training.
+Initially, we fine-tune the model on a subset of the WebCode2M dataset with a sequence length of 2,048 tokens for three epochs (90,000 iterations), using a maximum learning rate of 5 e -5 and a cosine scheduler. This phase aims to enable code generation from visual inputs.
+Next, we refine the model with a lower learning rate (1 e -5) over three more epochs on another dataset subset, reducing the sequence length to 1,024 tokens across 10,000 iterations.
+All the experiments are run on a Linux server equipped with 4 NVIDIA A800 80GB GPUs.
+ Table 3 . The performance comparison among the specialized models (the best is marked in bold). 
+ Model | 
+ Training Dataset | 
+     WebCode2M-Short   | 
+    WebCode2M-Mid   | 
+     WebCode2M-Long   | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ WebSight VLM-7B | 
+ WebSight | 
+ .57_{\pm.24} | 
+ .69_{\pm.12} | 
+ .03_{\pm.04} | 
+ .52_{\pm.23} | 
+ .67_{\pm.11} | 
+ .03_{\pm.04} | 
+ .48_{\pm.27} | 
+ .64_{\pm.11} | 
+ .03_{\pm.03} | 
+ Design2Code-18B | 
+ WebSight | 
+ .75_{\pm.14} | 
+ .68_{\pm.10} | 
+ .04_{\pm.05} | 
+ .69_{\pm.23} | 
+ .70_{\pm.10} | 
+ .05_{\pm.05} | 
+ .61_{\pm.28} | 
+ .68_{\pm.10} | 
+ .06_{\pm.03} | 
+ WebCoder *-1.3B | 
+ WebSight | 
+ .42_{\pm.32} | 
+ .68_{\pm.11} | 
+ .06_{\pm.06} | 
+ .36_{\pm.30} | 
+ .67_{\pm.11} | 
+ .04_{\pm.04} | 
+ .38_{\pm.29} | 
+ .65_{\pm.11} | 
+ .04_{\pm.04} | 
+ WebCoder-1.3B | 
+ WebCode2M | 
+ \bm{.78_{\pm.25}} | 
+ \bm{.73_{\pm.13}} | 
+ \bm{.35_{\pm.17}} | 
+ \bm{.69_{\pm.19}} | 
+ \bm{.71_{\pm.10}} | 
+ \bm{.22_{\pm.11}} | 
+ \bm{.65_{\pm.21}} | 
+ \bm{.69_{\pm.12}} | 
+ \bm{.15_{\pm.07}} | 
+ Table 4 . Benchmarking performance of several general-purpose
+MLLMs using the WebCode2M (the best is marked in bold). 
+ Model | 
+     WebCode2M-Short   | 
+    WebCode2M-Mid   | 
+     WebCode2M-Long   | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ Visual | 
+ CLIP | 
+ TreeBLEU | 
+ LLaVA-v1.5-7B | 
+ .43_{\pm.27} | 
+ .60_{\pm.33} | 
+ .07_{\pm.05} | 
+ .21_{\pm.28} | 
+ .29_{\pm.38} | 
+ .05_{\pm.04} | 
+ .19_{\pm.27} | 
+ .28_{\pm.37} | 
+ .04_{\pm.03} | 
+ LLaVA-onevision-0.5B | 
+ .24_{\pm.31} | 
+ .62_{\pm.11} | 
+ .06_{\pm.03} | 
+ .28_{\pm.31} | 
+ .61_{\pm.10} | 
+ .05_{\pm.03} | 
+ .22_{\pm.29} | 
+ .59_{\pm.11} | 
+ .03_{\pm.02} | 
+ LLaVA-onevision-7B | 
+ .34_{\pm.32} | 
+ .63_{\pm.10} | 
+ .08_{\pm.07} | 
+ .30_{\pm.30} | 
+ .64_{\pm.09} | 
+ .06_{\pm.06} | 
+ .30_{\pm.30} | 
+ .61_{\pm.10} | 
+ .04_{\pm.04} | 
+ CogAgent-Chat-18B | 
+ .46_{\pm.31} | 
+ .68_{\pm.11} | 
+ .01_{\pm.03} | 
+ .40_{\pm.31} | 
+ .66_{\pm.10} | 
+ .01_{\pm.02} | 
+ .39_{\pm.30} | 
+ .65_{\pm.10} | 
+ .01_{\pm.01} | 
+ Gemini | 
+ .35_{\pm.41} | 
+ .75_{\pm.10} | 
+ \bm{.16_{\pm.10}} | 
+ .38_{\pm.40} | 
+ .74_{\pm.11} | 
+ \bm{.15_{\pm.08}} | 
+ .34_{\pm.41} | 
+ .73_{\pm.10} | 
+ \bm{.14_{\pm.06}} | 
+ Claude | 
+ .52_{\pm.43} | 
+ .77_{\pm.10} | 
+ .13_{\pm.08} | 
+ .35_{\pm.42} | 
+ .76_{\pm.09} | 
+ .14_{\pm.08} | 
+ .37_{\pm.43} | 
+ .74_{\pm.09} | 
+ .13_{\pm.06} | 
+ GPT-4V | 
+ .68_{\pm.32} | 
+ .74_{\pm.10} | 
+ .12_{\pm.07} | 
+ .65_{\pm.33} | 
+ .71_{\pm.10} | 
+ .11_{\pm.06} | 
+ .62_{\pm.35} | 
+ .67_{\pm.10} | 
+ .10_{\pm.05} | 
+ GPT-4o | 
+ \bm{.85_{\pm.16}} | 
+ \bm{.77_{\pm.10}} | 
+ .15_{\pm.09} | 
+ \bm{.81_{\pm.20}} | 
+ \bm{.77_{\pm.09}} | 
+ .13_{\pm.08} | 
+ \bm{.82_{\pm.18}} | 
+ \bm{.74_{\pm.09}} | 
+ .11_{\pm.05} | 
+ 3.5. Effectiveness of Training Dataset (RQ1)
+ Table 3 presents the performance of WebCoder both on the WebSight and WebCode2M datasets, compared to other benchmark models on the WebSight dataset.
+From this figure, we can observe that our method consistently outperforms all specialized baselines across all three metrics on the real-world test dataset, noting that these specialized models are fine-tuned on the WebSight dataset. Comparative experiments also demonstrate that the base model, Pix2Struct, achieves a significant performance boost when fine-tuned on our training dataset compared to WebSight. For TreeBLEU—a metric measuring the recall of 1-height subtrees in the target DOM tree—our approach surpasses both specialized and general-purpose models, indicating that our model better reflects real-world node types and substructures. Additionally, on the two visual similarity metrics—visual score and CLIP similarity—our model exceeds most general-purpose models and either matches or outperforms GPT-4V. Collectively, these results demonstrate that our dataset offers greater practical potential than synthetically generated datasets and suggest that our proposed training dataset can effectively unleash the potential of MLLMs in webpage generation.
+ 3.6. Benchmarking on the Test Datasets (RQ2)
+ Table 4 presents the benchmarking performance of several general-purpose MLLMs using the WebCode2M test dataset.
+From this figure, we can observe several interesting findings:
+ (1) Generating lengthy code is challenging. Almost all metrics for nearly all models drop significantly as the target code length increases. For example, as the dataset transitions from WebCode2M-Short to WebCode2M-Mid and finally to WebCode2M-Long, the highest TreeBLEU score for specialized models drops from 0.35 to 0.15, the highest CLIP similarity decreases from 0.73 to 0.69, and the highest Visual Score declines from 0.78 to 0.65.
+ (2) Model size matters. In LLaVA family, several models show a significant improvement across all metrics as model parameters increase, with LLaVA-v1.5-7B and LLaVA-onevision-7B achieving the best performance, while LLaVA-onevision-0.5B performs poorly across all metrics, indicating that MLLMs require more parameters to achieve better results in webpage generation tasks.
+ (3) Most general-purpose MLLMs struggle with webpage code generation. Among these models, only GPT-4V matches the performance of our model trained on WebCode2M, while GPT-4o significantly outperforms all other models. All remaining general-purpose models generally underperform compared to specialized models, with consistently low scores across all metrics.
+ Notably, GPT-4o significantly outperforms all specialized and other general-purpose MLLMs across all metrics. Moreover, its performance remains highly stable as the complexity increases, without showing significant degradation. For instance, as the dataset transitions from WebCode2M-Short to WebCode2M-Mid and then to WebCode2M-Long, the visual score changes from 0.85 to 0.81, and then to 0.82.
+However, our goal is not to have small models outperform super MLLMs with hundreds of billions of parameters, but to assist MLLMs in webpage generation and enable smaller models to achieve competitive performance.
+ 4. Related Work
+ Image Representation Learning. 
+Image representation learning is essential for various vision tasks, such as image-to-text tasks (e.g., image captioning ( Vinyals et al., [n. d.] ) and image-to-code), image classification ( Russakovsky et al., 2015 ) , object detection ( Girshick et al., 2014 ) , and semantic segmentation ( Shelhamer et al., 2017 ) . A number of studies have explored different methods and models for deriving meaningful latent vectors from images. For example, Chen et al. (2020) investigated the use of contrastive learning to train image encoders on large-scale datasets. The ViT introduced a novel approach by dividing an image into fixed-size patches and using a Transformer to process them, which allows for handling variable resolutions ( Dosovitskiy et al., 2021 ) . In addition, Diffusion Models (DM) ( Ho et al., 2020 ; Rombach et al., 2022 ) have demonstrated remarkable success in image representation learning, understanding, and generation tasks.
+ Code Generation. 
+Neural language models have made significant strides in code intelligence ( Wan et al., 2024 ) , encompassing tasks such as code summarization ( Wan et al., 2018 ; Wang et al., 2020 ) , code search ( Wan et al., 2019 ) , and code generation ( Bi et al., 2024 ; Sun et al., 2024 ) . Recently, with the advancement of LLMs in text generation, several specialized LLMs for code have been introduced, including CodeT5+ ( Wang et al., 2023 ) , InCoder ( Fried et al., 2023 ) , StarCoder ( Li et al., 2023 ) , Code Llama ( Roziere et al., 2023 ) , WizardCoder ( Luo et al., 2024 ) , Qwen-Coder ( Hui et al., 2024 ) , and DeepSeek-Coder ( Guo et al., 2024b ) .
+These models have significantly transformed the software development landscape through various production tools, such as Copilot ( GitHub, 2022 ) , CodeWhisperer ( AWS, 2022 ) , and Replit ( Replit, 2023 ) . In contrast to general-purpose LLMs designed for code generation, this paper focuses on the specialized task of code generation from webpage designs, a distinct domain within code generation.
+ Image to Code. 
+Several early works have made pioneering contributions to generating code from images. For instance, to reverse engineer source code from GUIs, Beltramelli (2018) proposed pix2code, which was trained on a synthetic dataset to generate DSL code. Sketch2code ( Robinson, 2019 ) explored two approaches for generating website code from wireframe sketches: a computer vision-based method that detects UI elements and structures, and a deep learning-based method. Wu et al. (2021) tackled the challenge of screen parsing by predicting UI hierarchy graphs from screenshots using Faster-RCNN ( Ren et al., 2015 ) to encode images and an LSTM-based attention mechanism to construct graph nodes and edges. Pix2Struct ( Lee et al., 2023 ) , pre-trained to generate simplified HTML from masked website screenshots, demonstrated significant improvements in visual understanding across nine tasks.
+More recently, several powerful commercial models have emerged, including OpenAI’s GPT-4V and GPT-4o ( OpenAI, 2023 ) , Google DeepMind’s Gemini ( Anil et al., 2023 ) , and Anthropic’s Claude ( The, 2024 ) . These models exhibit impressive performance across a wide range of tasks, including image understanding and code generation, with the advantage of continuous adaptation and optimization through interactive chat interfaces.
+In contrast to previous studies, our research primarily focuses on proposing a comprehensive real-world dataset for both model training and testing purposes.
+ 5. Discussion
+ 5.1. Practical Challenges to Study
+ In the course of our research, we identify three practical challenges that need to be addressed to achieve the ideal generation of webpage code from design images. These challenges are presented here to guide future research:
+ (1) Lengthy code generation. 
+As shown in Table 2 , despite our efforts to clean up noise in the webpage code, such as invisible elements, the HTML text remains lengthy, reflecting its complexity to some extent. This presents significant challenges to both the training effectiveness and efficiency of MLLMs.
+ (2) Capturing structural information of webpage designs. 
+Given the potential overlap of sub-elements in images and the lack of distinct borders for some elements, extracting structured or hierarchical information from images presents a significant challenge. Our empirical study of GPT-4V reveals that, while it excels in capturing text and color from images when generating webpage code, it struggles with capturing the hierarchy of UI elements.
+ (3) Generation of image elements. 
+All existing webpage code generation models fail to accurately reproduce the image elements in the designs, severely hindering their practical application. There is an urgent need for a framework capable of generating or extracting image elements from the original design and assembling them into the final webpage code.
+ 5.2. Limitations and Future Directions
+ Firstly, although we employ a carefully designed neural scorer to enhance data quality, this method inherently involves some degree of subjectivity and achieves approximately 90% accuracy. As a result, some low-quality data may remain in the final dataset. However, we consider this acceptable given the trade-off between efficiency and quality, as manually screening millions of data points is impractical.
+Secondly, the results in Table 3 and Table 4 show that all models exhibit significant variance across certain metrics. This indicates that the model’s generation capability is not sufficiently stable and performs poorly on some test cases, highlighting the need for a more robust framework. Additionally, it underscores the importance of designing better evaluation metrics for code generation from webpage designs. In future work, we plan to assess the quality of generated code and webpages using LLMs ( Chen et al., 2024 ) .
+Finally, since our dataset is derived from web-crawled data, it may contain a minimal amount of inappropriate content, such as violent material, despite extensive filtering efforts.
+ 6. Conclusion
+ In this paper, we introduce WebCode2M, the first large-scale, real-world dataset with layout information designed for generating webpage code from designs. The dataset contains over 2.56 million samples for both training and testing. We detail the dataset construction pipeline and provide an in-depth analysis of the curated data, which highlights its diversity. We then fine-tune an MLLM, WebCoder, on our training dataset. Along with two visual metrics and a structural measure, we evaluate WebCoder against other baselines on the proposed dataset. The experimental results show that our dataset significantly enhances the ability of MLLMs to generate code from webpage designs. We believe that this dataset and benchmark will contribute to advancing research in this field.
+ Acknowledgements. 
+This work is supported by the Major Program (JD) of Hubei Province (Grant No. 2023BAA024).
+ References
+ hom (2010) 
+2010.
+ The nsfw_image_detection model on HuggingFace .
+ https://huggingface.co/Falconsai/nsfw_image_detection/ 
+ hom (2012) 
+2012.
+ The List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words project on Github .
+ https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/ 
+ hom (2016) 
+2016.
+ The sensitive-stop-words project on Github .
+ https://github.com/fwwdn/sensitive-stop-words/ 
+ hfg (2019) 
+2019.
+ The GPT2 model on HuggingFace .
+ https://huggingface.co/openai-community/gpt2 
+ The (2024) 
+2024.
+ The Claude 3 Model Family: Opus, Sonnet, Haiku .
+ https://api.semanticscholar.org/CorpusID:268232499 
+ ccd (2024) 
+2024.
+ The Common Crawl dataset .
+ https://data.commoncrawl.org/ 
+ hom (2024) 
+2024.
+ The screen-to-shot project on the Github .
+ https://github.com/abi/screenshot-to-code/ 
+ hom (2025a) 
+2025a.
+ The BS4 python package .
+ https://pypi.org/project/beautifulsoup4/ 
+ hom (2025b) 
+2025b.
+ The Playwright python package .
+ https://playwright.dev/ 
+ Anil et al . (2023) 
+Rohan Anil, Sebastian Borgeaud, Yonghui Wu, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M. Dai, Anja Hauth, Katie Millican, David Silver, Slav Petrov, Melvin Johnson, Ioannis Antonoglou, Julian Schrittwieser, Amelia Glaese, Jilin Chen, Emily Pitler, Timothy P. Lillicrap, Angeliki Lazaridou, Orhan Firat, James Molloy, Michael Isard, Paul Ronald Barham, Tom Hennigan, Benjamin Lee, Fabio Viola, Malcolm Reynolds, Yuanzhong Xu, Ryan
+Doherty, Eli Collins, Clemens Meyer, Eliza Rutherford, Erica Moreira, Kareem Ayoub, Megha Goel, George Tucker, Enrique Piqueras, Maxim Krikun, Iain Barr, Nikolay Savinov, Ivo Danihelka, Becca Roelofs, Anaïs White, Anders Andreassen, Tamara von Glehn, Lakshman Yagati, Mehran Kazemi, Lucas Gonzalez, Misha Khalman, Jakub Sygnowski, and et al. 2023.
+ Gemini: A Family of Highly Capable Multimodal Models.
+ CoRR abs/2312.11805 (2023).
+ arXiv:2312.11805
+ AWS (2022) 
+Amazon AWS. 2022.
+ AI Code Generator - Amazon CodeWhisperer - AWS.
+ https://aws.amazon.com/codewhisperer/ .
+ Beltramelli (2018) 
+Tony Beltramelli. 2018.
+ pix2code: Generating Code from a Graphical User Interface Screenshot. In Proceedings of the ACM SIGCHI Symposium on Engineering Interactive Computing Systems, EICS 2018, Paris, France, June 19-22, 2018 . ACM, 3:1–3:6.
+ Bi et al . (2024) 
+Zhangqian Bi, Yao Wan, Zheng Wang, Hongyu Zhang, Batu Guan, Fangxin Lu, Zili Zhang, Yulei Sui, Hai Jin, and Xuanhua Shi. 2024.
+ Iterative Refinement of Project-Level Code Context for Precise Code Generation with Compiler Feedback. In Findings of the Association for Computational Linguistics, ACL 2024, Bangkok, Thailand and virtual meeting, August 11-16, 2024 . Association for Computational Linguistics, 2336–2353.
+ Chen et al . (2024) 
+Dongping Chen, Ruoxi Chen, Shilin Zhang, Yaochen Wang, Yinuo Liu, Huichi Zhou, Qihui Zhang, Yao Wan, Pan Zhou, and Lichao Sun. 2024.
+ MLLM-as-a-Judge: Assessing Multimodal LLM-as-a-Judge with Vision-Language Benchmark. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . OpenReview.net.
+ Chen et al . (2020) 
+Ting Chen, Simon Kornblith, Mohammad Norouzi, and Geoffrey E. Hinton. 2020.
+ A Simple Framework for Contrastive Learning of Visual Representations. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event (Proceedings of Machine Learning Research, Vol. 119) . PMLR, 1597–1607.
+ Dosovitskiy et al . (2021) 
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. 2021.
+ An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. In Proceedings of 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 . OpenReview.net.
+ Fried et al . (2023) 
+Daniel Fried, Armen Aghajanyan, Jessy Lin, Sida Wang, Eric Wallace, Freda Shi, Ruiqi Zhong, Scott Yih, Luke Zettlemoyer, and Mike Lewis. 2023.
+ InCoder: A Generative Model for Code Infilling and Synthesis. In Proceedings of The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net.
+ Girshick et al . (2014) 
+Ross B. Girshick, Jeff Donahue, Trevor Darrell, and Jitendra Malik. 2014.
+ Rich Feature Hierarchies for Accurate Object Detection and Semantic Segmentation. In Proceedings of 2014 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2014, Columbus, OH, USA, June 23-28, 2014 . IEEE Computer Society, 580–587.
+ GitHub (2022) 
+GitHub. 2022.
+ GitHub Copilot - Your AI pair programmer.
+ https://github.com/features/copilot/ .
+ Guo et al . (2024b) 
+Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Yu Wu, YK Li, et al . 2024b.
+ DeepSeek-Coder: When the Large Language Model Meets Programming–The Rise of Code Intelligence.
+ arXiv preprint arXiv:2401.14196 (2024).
+ Guo et al . (2024a) 
+Hongcheng Guo, Wei Zhang, Junhao Chen, Yaonan Gu, Jian Yang, Junjia Du, Binyuan Hui, Tianyu Liu, Jianxin Ma, Chang Zhou, and Zhoujun Li. 2024a.
+ IW-Bench: Evaluating Large Multimodal Models for Converting Image-to-Web.
+ CoRR abs/2409.18980 (2024).
+ He et al . (2016) 
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2016.
+ Deep Residual Learning for Image Recognition. In Proceedings of 2016 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2016, Las Vegas, NV, USA, June 27-30, 2016 . IEEE Computer Society, 770–778.
+ Ho et al . (2020) 
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020.
+ Denoising Diffusion Probabilistic Models. In Advances in Neural Information Processing Systems, December 6-12, 2020, virtual .
+ Hong et al . (2024) 
+Wenyi Hong, Weihan Wang, Qingsong Lv, Jiazheng Xu, Wenmeng Yu, Junhui Ji, Yan Wang, Zihan Wang, Yuxiao Dong, Ming Ding, and Jie Tang. 2024.
+ CogAgent: A Visual Language Model for GUI Agents. In Proceedings of IEEE/CVF Conference on Computer Vision and Pattern Recognition, CVPR 2024, Seattle, WA, USA, June 16-22, 2024 . IEEE, 14281–14290.
+ Hu et al . (2022) 
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022.
+ LoRA: Low-Rank Adaptation of Large Language Models. In Proceedings of The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 . OpenReview.net.
+ Hui et al . (2024) 
+Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, et al . 2024.
+ Qwen2. 5-coder technical report.
+ arXiv preprint arXiv:2409.12186 (2024).
+ Laurençon et al . (2024) 
+Hugo Laurençon, Léo Tronchon, and Victor Sanh. 2024.
+ Unlocking the conversion of Web Screenshots into HTML Code with the WebSight Dataset.
+ CoRR abs/2403.09029 (2024).
+ arXiv:2403.09029
+ Lee et al . (2023) 
+Kenton Lee, Mandar Joshi, Iulia Raluca Turc, Hexiang Hu, Fangyu Liu, Julian Martin Eisenschlos, Urvashi Khandelwal, Peter Shaw, Ming-Wei Chang, and Kristina Toutanova. 2023.
+ Pix2Struct: Screenshot Parsing as Pretraining for Visual Language Understanding. In Proceedings of International Conference on Machine Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA (Proceedings of Machine Learning Research, Vol. 202) . PMLR, 18893–18912.
+ Li et al . (2023) 
+Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov, Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny Chim, Qian Liu, Evgenii Zheltonozhskii, Terry Yue Zhuo, Thomas Wang, Olivier Dehaene, Mishig Davaadorj, Joel Lamy-Poirier, João Monteiro, Oleh Shliazhko, Nicolas Gontier, Nicholas Meade, Armel Zebaze, Ming-Ho Yee, Logesh Kumar Umapathi, Jian Zhu, Benjamin Lipkin, Muhtasham Oblokulov, Zhiruo Wang, Rudra Murthy V,
+Jason T. Stillerman, Siva Sankalp Patel, Dmitry Abulkhanov, Marco Zocca, Manan Dey, Zhihan Zhang, Nour Fahmy, Urvashi Bhattacharyya, Wenhao Yu, Swayam Singh, Sasha Luccioni, Paulo Villegas, Maxim Kunakov, Fedor Zhdanov, Manuel Romero, Tony Lee, Nadav Timor, Jennifer Ding, Claire Schlesinger, Hailey Schoelkopf, Jan Ebert, Tri Dao, Mayank Mishra, Alex Gu, Jennifer Robinson, Carolyn Jane Anderson, Brendan Dolan-Gavitt, Danish Contractor, Siva Reddy, Daniel Fried,
+Dzmitry Bahdanau, Yacine Jernite, Carlos Muñoz Ferrandis, Sean Hughes, Thomas Wolf, Arjun Guha, Leandro von Werra, and Harm de Vries. 2023.
+ StarCoder: may the source be with you!
+ Trans. Mach. Learn. Res. 2023 (2023).
+ Liu et al . (2023) 
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023.
+ Visual Instruction Tuning.
+ ArXiv abs/2304.08485 (2023).
+ Liu et al . (2024) 
+Shih-Yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang Frank Wang, Kwang-Ting Cheng, and Min-Hung Chen. 2024.
+ DoRA: Weight-Decomposed Low-Rank Adaptation. In Proceedings of Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . OpenReview.net.
+ Luo et al . (2024) 
+Ziyang Luo, Can Xu, Pu Zhao, Qingfeng Sun, Xiubo Geng, Wenxiang Hu, Chongyang Tao, Jing Ma, Qingwei Lin, and Daxin Jiang. 2024.
+ WizardCoder: Empowering Code Large Language Models with Evol-Instruct. In Proceedings of The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net.
+ OpenAI (2023) 
+OpenAI. 2023.
+ GPT-4 Technical Report.
+ CoRR abs/2303.08774 (2023).
+ arXiv:2303.08774
+ Ouyang et al . (2022) 
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F. Christiano, Jan Leike, and Ryan Lowe. 2022.
+ Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 .
+ Radford et al . (2021) 
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. 2021.
+ Learning Transferable Visual Models From Natural Language Supervision. In Proceedings of the 38th International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual Event (Proceedings of Machine Learning Research, Vol. 139) . PMLR, 8748–8763.
+ Raffel et al . (2020) 
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu. 2020.
+ Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer.
+ J. Mach. Learn. Res. 21 (2020), 140:1–140:67.
+ Ren et al . (2020) 
+Shuo Ren, Daya Guo, Shuai Lu, Long Zhou, Shujie Liu, Duyu Tang, Neel Sundaresan, Ming Zhou, Ambrosio Blanco, , and Shuai Ma. 2020.
+ CodeBLEU: a Method for Automatic Evaluation of Code Synthesis.
+ ArXiv abs/2009.10297 (2020).
+ Ren et al . (2015) 
+Shaoqing Ren, Kaiming He, Ross B. Girshick, and Jian Sun. 2015.
+ Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks. In Advances in Neural Information Processing Systems 28: Annual Conference on Neural Information Processing Systems 2015, December 7-12, 2015, Montreal, Quebec, Canada . 91–99.
+ Replit (2023) 
+Replit. 2023.
+ Meet Replit AI, your partner in code.
+ https://replit.com/ai/ .
+ Robinson (2019) 
+Alex Robinson. 2019.
+ Sketch2code: Generating a website from a paper mockup.
+ CoRR abs/1905.13750 (2019).
+ arXiv:1905.13750
+ Rombach et al . (2022) 
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. 2022.
+ High-Resolution Image Synthesis with Latent Diffusion Models. In Proceedings of IEEE/CVF Conference on Computer Vision and Pattern Recognition, CVPR 2022, New Orleans, LA, USA, June 18-24, 2022 . IEEE, 10674–10685.
+ Roziere et al . (2023) 
+Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Tal Remez, Jérémy Rapin, et al . 2023.
+ Code llama: Open foundation models for code.
+ arXiv preprint arXiv:2308.12950 (2023).
+ Russakovsky et al . (2015) 
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael S. Bernstein, Alexander C. Berg, and Li Fei-Fei. 2015.
+ ImageNet Large Scale Visual Recognition Challenge.
+ Int. J. Comput. Vis. 115, 3 (2015), 211–252.
+ Shelhamer et al . (2017) 
+Evan Shelhamer, Jonathan Long, and Trevor Darrell. 2017.
+ Fully Convolutional Networks for Semantic Segmentation.
+ IEEE Trans. Pattern Anal. Mach. Intell. 39, 4 (2017), 640–651.
+ Si et al . (2024) 
+Chenglei Si, Yanzhe Zhang, Zhengyuan Yang, Ruibo Liu, and Diyi Yang. 2024.
+ Design2Code: How Far Are We From Automating Front-End Engineering?
+ CoRR abs/2403.03163 (2024).
+ Sun et al . (2024) 
+Zhihong Sun, Yao Wan, Jia Li, Hongyu Zhang, Zhi Jin, Ge Li, and Chen Lyu. 2024.
+ Sifting through the Chaff: On Utilizing Execution Feedback for Ranking the Generated Code Candidates. In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering, ASE 2024, Sacramento, CA, USA, October 27 - November 1, 2024 . ACM, 229–241.
+ Vinyals et al . ([n. d.]) 
+Oriol Vinyals, Alexander Toshev, Samy Bengio, and Dumitru Erhan. [n. d.].
+ Show and tell: A neural image caption generator. In Proceedings of IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2015, Boston, MA, USA, June 7-12, 2015, pages = 3156–3164, publisher = IEEE Computer Society, year = 2015, .
+ Wan et al . (2024) 
+Yao Wan, Zhangqian Bi, Yang He, Jianguo Zhang, Hongyu Zhang, Yulei Sui, Guandong Xu, Hai Jin, and Philip Yu. 2024.
+ Deep Learning for Code Intelligence: Survey, Benchmark and Toolkit.
+ ACM Computing Survey 56, 12, Article 309 (Oct. 2024), 41 pages.
+ doi: 10.1145/3664597 
+ Wan et al . (2019) 
+Yao Wan, Jingdong Shu, Yulei Sui, Guandong Xu, Zhou Zhao, Jian Wu, and Philip Yu. 2019.
+ Multi-modal attention network learning for semantic source code retrieval. In 2019 34th IEEE/ACM International Conference on Automated Software Engineering (ASE) . IEEE, 13–25.
+ Wan et al . (2018) 
+Yao Wan, Zhou Zhao, Min Yang, Guandong Xu, Haochao Ying, Jian Wu, and Philip S Yu. 2018.
+ Improving automatic source code summarization via deep reinforcement learning. In Proceedings of the 33rd ACM/IEEE international conference on automated software engineering . 397–407.
+ Wang et al . (2020) 
+Wenhua Wang, Yuqun Zhang, Yulei Sui, Yao Wan, Zhou Zhao, Jian Wu, S Yu Philip, and Guandong Xu. 2020.
+ Reinforcement-learning-guided source code summarization using hierarchical attention.
+ IEEE Transactions on software Engineering 48, 1 (2020), 102–119.
+ Wang et al . (2023) 
+Yue Wang, Hung Le, Akhilesh Gotmare, Nghi D. Q. Bui, Junnan Li, and Steven C. H. Hoi. 2023.
+ CodeT5+: Open Code Large Language Models for Code Understanding and Generation. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, EMNLP 2023, Singapore, December 6-10, 2023 . Association for Computational Linguistics, 1069–1088.
+ Wu et al . (2021) 
+Jason Wu, Xiaoyi Zhang, Jeffrey Nichols, and Jeffrey P. Bigham. 2021.
+ Screen Parsing: Towards Reverse Engineering of UI Models from Screenshots. In Proceedings of the 34th Annual ACM Symposium on User Interface Software and Technology, Virtual Event, USA, October 10-14, 2021 . ACM, 470–483.
+ Yun et al . (2024) 
+Sukmin Yun, Haokun Lin, Rusiru Thushara, Mohammad Qazim Bhat, Yongxin Wang, Zutao Jiang, Mingkai Deng, Jinhong Wang, Tianhua Tao, Junbo Li, Haonan Li, Preslav Nakov, Timothy Baldwin, Zhengzhong Liu, Eric P. Xing, Xiaodan Liang, and Zhiqiang Shen. 2024.
+ Web2Code: A Large-scale Webpage-to-Code Dataset and Evaluation Framework for Multimodal LLMs.
+ CoRR abs/2406.20098 (2024).
+ arXiv:2406.20098
+ Prompt for using GPT-4V in webpage generation task 
+ You are an expert Tailwind developer. You take screenshots of a reference webpage from the user, and then build single-page apps using Tailwind, HTML and JS. 
+ - Make sure the app looks exactly like the screenshot. 
+ - Make sure the app has the same page layout like the screenshot, i.e., the generated html elements should be at the same place with the corresponding part in the screenshot and the generated html containers should have the same hierachy structure as the screenshot. 
+ - Pay close attention to background color, text color, font size, font family, padding, margin, border, etc. Match the colors and sizes exactly. 
+ - Use the exact text from the screenshot. 
+ - Do not add comments in the code such as "<!– Add other navigation links as needed –>" and "<!– … other news items … –>" in place of writing the full code. WRITE THE FULL CODE. 
+ - Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!– Repeat for each news item –>" or bad things will happen. 
+ - For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later. In terms of libraries, 
+ - Use this script to include Tailwind: <script src="https://cdn.tailwindcss.com"></script> 
+ - You can use Google Fonts 
+ - Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link> Return only the full code in <html></html> tags. 
+ - Do not include markdown "”’" or "”’html" at the start or end. 
+ Figure 6 . Prompt for using GPT-4V in webpage generation task. 
+ Appendix A The Implementation of TreeBLEU
+ The implementation of TreeBLEU includes two parts: the generation of a simplified HTML DOM tree and collecting 1-height subtrees.
+ • 
+ Generation of a simplified HTML DOM tree.
+The original HTML DOM tree contains many element attributes that are not necessary for calculating the similarity of substructures. Therefore, we first use bs4 ( hom, 2025a ) package in Python to parse the HTML text and obtain a DOM tree starting from the <HTML> node, which only includes the tag names of elements.
+ Algorithm 1 Get All 1-height Subtrees of a DOM tree. 
+ 1: 
+ A multiway tree node root(childs,name) 
+ 2: 
+ A set S of all 1-height subtrees
+ 3: 
+ Initialize an empty set S 
+ 4: 
+ function Traverse ( node,S )
+ 5: 
+    if number of children of node\neq 0 then 
+ 6: 
+    Initialize an empty string subtree 
+ 7: 
+    Append node.name to subtree 
+ 8: 
+     for each child c in node.childs do 
+ 9: 
+      Append c.name to subtree 
+ 10: 
+     end for 
+ 11: 
+    Add subtree to S 
+ 12: 
+    end if 
+ 13: 
+    for each child c in node.childs do 
+ 14: 
+     Traverse ( c,S )
+ 15: 
+    end for 
+ 16: 
+ end function 
+ 17: 
+ Traverse ( root,S )
+ • 
+ Collecting 1-height subtrees. As shown in Algorithm 1 , We use the string sequence of a node’s tag name and those of its child nodes to represent a 1-height subtree. By traversing the entire DOM tree and removing duplicates, we obtain the set of all 1-height subtrees.
+ Given that the subtree collections of the generated HTML DOM tree and the reference are represented as sets of strings, subtree matching can be straightforwardly performed through string comparison. The TreeBLEU value can then be calculated using Eq. 1 .
+An example of subtree matching in TreeBLEU is presented in Figure 7 .
+ Figure 7 . An example of subtree matching in TreeBLEU. 
+ Appendix B More Data Statistics
+ We perform a comprehensive statistical analysis on the textual content of webpages, and the findings are illustrated in Figure 8 .
+English constitutes approximately 50% of the corpus, with other languages such as Russian, German, Spanish, and French each representing nearly 5% of the total corpus.
+ Figure 8 . Language distribution in the training dataset. 
+ Appendix C Filtering Inappropriate Content
+ The main steps and details of the cleansing process are as follows.
+ Step 1: Filtering harmful images in screenshots. We employ a widely used NSFW detector ( hom, 2010 ) from Hugging Face, which classifies images as either “norma” or “NSFW” ( Not Safe for Work ) with high accuracy. This detector is based on a ViT model fine-tuned on a dataset containing both “safe” and “explicit” images. It predicts two scores: “normal” and “NSFW”, with lower NSFW scores indicating a lower probability of harmful content. A conservative threshold of 0.04 is adopted, meaning only samples with NSFW scores below this value are retained.
+ Step 2: Multi-language harmful keyword filtering. We apply harmful keyword filtering to the web text using two popular GitHub repositories: bad words 1 ( hom, 2012 ) and bad words 2 ( hom, 2016 ) . The first list contains dirty, naughty, obscene, and otherwise inappropriate words in multiple languages ( e.g. , “fuck”), while the second serves as a supplementary list with additional sensitive or stop words. Samples with more than 20 occurrences of these bad words are removed. While normal web pages may occasionally contain a small number of inappropriate words, those with excessive amounts of inappropriate content, such as adult websites, tend to have significantly higher word counts.
+ The thresholds for both the NSFW score and the frequency of bad words are determined through experiments on the first data chunk (see Figure 5 ). We select thresholds that balance maximizing sample retention with minimizing the presence of harmful content. To evaluate the effectiveness of the filters, we manually review and document the filtering results for the first chunk under different thresholds. The table below clearly indicates that an NSFW threshold of 0.04 produces the best results.
+ Table 5 . The filtering performance across different NSFW threshold values. 
+ Threshold | 
+ Total 
+ Num 
+ | 
+ Removed by NSFW filter | 
+ Retained after NSFW filter | 
+ Retained after NSFW filter bad word filter | 
+ total | 
+ num | 
+ | 
+ good | 
+ num | 
+ | 
+ miskill | 
+ ratio | 
+ | 
+ total | 
+ num | 
+ | 
+ bad | 
+ num | 
+ | 
+ retention | 
+ ratio | 
+ | 
+ toxic | 
+ ratio | 
+ | 
+ total | 
+ num | 
+ | 
+ bad | 
+ num | 
+ | 
+ retention | 
+ ratio | 
+ | 
+ toxic | 
+ ratio | 
+ | 
+ 0.02 | 
+ 1536 | 
+ 891 | 
+ 883 | 
+ 57.49% | 
+ 645 | 
+ 0 | 
+ 41.99% | 
+ 0.00% | 
+ 645 | 
+ 0 | 
+ 41.99% | 
+ 0.00% | 
+ 0.03 | 
+ 324 | 
+ 318 | 
+ 20.70% | 
+ 1212 | 
+ 2 | 
+ 78.91% | 
+ 0.17% | 
+ 1210 | 
+ 0 | 
+ 78.78% | 
+ 0.00% | 
+ 0 | 
+ 133 | 
+ 128     | 
+ 8.33% | 
+ 1403 | 
+ 3 | 
+ 91.34% | 
+ 0.21% | 
+ 1400 | 
+ 0 | 
+ 91.15% | 
+ 0.00%     | 
+ 0.05 | 
+ 70 | 
+ 66 | 
+ 4.30% | 
+ 1466 | 
+ 4 | 
+ 95.44% | 
+ 0.27% | 
+ 1463 | 
+ 1 | 
+ 95.25% | 
+ 0.07% | 
+ 1.00 | 
+ 0 | 
+ 0 | 
+ 0.00% | 
+ 1536 | 
+ 8 | 
+ 100.00% | 
+ 0.52% | 
+ 1530 | 
+ 2 | 
+ 100.00% | 
+ 0.13% | 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

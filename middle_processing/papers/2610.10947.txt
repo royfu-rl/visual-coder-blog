@@ -1,0 +1,2669 @@
+ 
+
+ RH-Detect: A Unified Benchmark for Reward Hacking Detection 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below: 
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+
+ The reward hacking landscape. 
+ A fragmented dataset ecosystem. 
+ Monitoring and LLM-as-judge. 
+
+ 3 Dataset Construction 
+
+ 3.1 Taxonomy of Reward Hacking Behaviors 
+
+ Output style gaming. 
+ Sycophancy. 
+ Evaluation gaming. 
+ Environment exploitation. 
+ Reward tampering. 
+ Deception. 
+
+ 3.2 Source Selection and Harmonization 
+
+ Metadata. 
+ Reproducibility. 
+
+ 3.3 Unified Schema, Evaluation Tracks, and Splits 
+
+ 4 Zero-Shot Detector Evaluation 
+
+ 4.1 Evaluation Methodology 
+ 4.2 RQ1: Overall Detector Performance 
+ 4.3 RQ2: Performance by Category and Source 
+
+ Hacking category. 
+ The agentic-source association. 
+ Score distributions. 
+
+ 5 Input Representation and Detector Training 
+
+ 5.1 Transcript Representation 
+ 5.2 Single-Token Supervised Fine-Tuning 
+
+ Cross-track transfer. 
+
+ 5.3 Targeted GRPO Case Study 
+
+ 6 Discussion 
+
+ Off-the-shelf LLMs as monitors. 
+ Performance on MALT and TRACE. 
+ Input and training sensitivity. 
+ 6.1 Limitations and Future Work 
+
+ 7 Conclusion 
+ References 
+ A Dataset and Release Construction 
+
+ A.1 Sources 
+
+ School of Reward Hacks. 
+ Jozdien realistic reward hacks. 
+ Patronus TRACE. 
+ METR MALT. 
+ Countdown-Code. 
+ Matonski prompts. 
+ Reward-hack generalization. 
+ Anthropic model-written evaluations. 
+ Alignment-faking data. 
+ Terminal Wrench. 
+ CheatBench. 
+
+ A.2 Labels and Taxonomy 
+ A.3 Filtering, Expansion, and Splits 
+
+ B Evaluation Interfaces and Representation Study 
+
+ B.1 Detector Protocol 
+ B.2 Transcript Representations E1–E4b 
+
+ Reasoning-span rules (E2 and E3). 
+ Extraction (E4 and E4b). 
+
+ C Additional Zero-Shot Analysis 
+
+ Score distributions. 
+ MALT/TRACE source-group contrast. 
+
+ D SFT and Cross-Track Transfer 
+
+ D.1 Single-Token Source-Held-Out SFT 
+ D.2 Cross-Track Transfer 
+
+ E Targeted GRPO Case Study 
+
+ Objective. 
+ Evaluation. 
+
+ F Release and Reproducibility 
+
+ Release and access. 
+ Reproducibility. 
+
+ License: CC BY 4.0
+
+arXiv:2610.10947v1 [cs.LG] 07 Oct 2026 
+
+ RH-Detect : A Unified Benchmark for Reward Hacking Detection 
+
+ Junwei Quan
+
+ Evgenii Opryshko
+
+ Rohan Subramani
+
+ Igor Gilitschenski
+
+ Abstract 
+
+ Reward hacking, where a model exploits an evaluation signal without completing
+the intended task, threatens the reliability of deployed language model
+systems. Existing datasets use different labels, response formats, and
+metadata conventions, making detector results difficult to compare. We present
+ RH-Detect , a benchmark that combines reward-hacking-relevant subsets from eleven public datasets, comprising
+92,761 rows and six behavior categories, into a common schema.
+On 5,021 open-ended evaluation units, each comprising a task prompt and a free-form model continuation, including multi-turn tool-use trajectories, we evaluate six off-the-shelf language models from five families as reward hacking detectors without additional training. The best
+model achieves a pooled AUROC of 0.962, with accuracy above 93%.
+For the four strongest models, however, accuracy on the two multi-turn tool-use datasets, MALT and TRACE, is 10.7–15.9 percentage points lower
+than on the other sources at a common decision threshold, highlighting a key
+gap for deployment-time monitoring.
+We find that different input formats have different effects across models.
+Removing thinking raises Qwen3.5-4B AUROC from 0.779 to
+0.849, but lowers Qwen Flash from 0.977 to
+0.950. We also evaluate the benchmark as a training dataset for
+detectors. Holding out each source in turn, single-token SFT improves average AUROC on five of six held-out sources. A GRPO follow-up on that failure case yields a slight improvement in detection performance. Our results show that a single pooled score can conceal
+variation across data sources, detector inputs, and training procedures. 
+
+ 1 University of Toronto 
+ 2 Vector Institute 
+ 3 Aether Research 
+ 4 Trajectory Labs 
+
+ 1 Introduction 
+
+ Language models can exploit imperfections in training or evaluation signals, achieving high measured reward without completing the intended task. Such behavior ranges from sycophancy and test-case exploitation to reward tampering and concealment under monitoring ( Gao et al. 2023 ; Sharma et al. 2024 ; Denison et al. 2024 ; Baker et al. 2025 ) . Recent work further shows that learning to reward hack in production reinforcement-learning environments can induce broader emergent misalignment, including alignment faking, cooperation with malicious actors, and attempted sabotage ( MacDiarmid et al. 2025 ) . We use reward hacking broadly to mean behavior that satisfies an evaluation signal without fulfilling the intended task, including behavior observed outside the training process, which is also referred to as “evaluation gaming” ( Nishimura-Gasparian et al. 2024 ; Denison et al. 2024 ) . Reward hacking is therefore not only a performance or evaluation problem: it may also undermine deployment-time oversight as models are entrusted with higher-stakes tasks. 
+
+ Several research groups have independently released datasets related to reward
+hacking ( Taylor et al. 2025 ; Nishimura-Gasparian et al. 2024 ; Deshpande et al. 2026 ; Parikh and Wijk 2025 ; Perez et al. 2023 ; Jozdien 2025 ; de la Fuente and Mann 2025 ; Khalifa et al. 2026 ; Greenblatt et al. 2024 ; Bercovich et al. 2026 ; CheatBench Maintainers 2026 ) . Each source, however, uses its own labeling scheme, response format, metadata conventions, and evaluation procedure, and several contain traces irrelevant to reward hacking. This fragmentation mirrors a broader problem in
+behavioral testing: aggregate scores are difficult to interpret when task
+definitions and evaluation pipelines are not standardized
+ ( Ribeiro et al. 2020 ) . A practitioner who wants to evaluate one
+monitoring pipeline across a broad range of hacking behaviors must currently
+build source-specific ingestion, filtering, and interpretation pipelines, and a strong result
+on one dataset provides limited evidence that the same detector will transfer
+to an unseen source. 
+
+ We address this gap with RH-Detect , a common framework that harmonizes reward-hacking-relevant subsets from eleven public datasets. The benchmark provides a shared schema, a six-category behavior taxonomy, provenance metadata, task-specific tracks, and source-held-out splits audited by exact prompt hash. We use it to compare
+language models as detectors and to study whether measured performance remains
+stable across sources, input representations, and post-training procedures. 
+
+ We use RH-Detect to answer three research questions: 
+
+ RQ1 
+
+ How effectively can language models detect reward hacking
+without additional training, and how does performance vary across model
+families? 
+
+ RQ2 
+
+ How does the monitor performance differ across data sources and reward hacking categories? 
+
+ RQ3 
+
+ How sensitive is detector performance to transcript representation,
+and how well do supervised and RL post-training methods transfer to held-out data sources and task tracks? 
+
+ RQ1 tests whether existing language
+models can serve as low-cost monitors without task-specific training. RQ2
+identifies where strong aggregate performance hides source- or behavior-specific
+weaknesses. RQ3 tests whether changes to detector input or training
+procedure improve cross-source robustness rather than only aggregate performance. Reliable
+detection is a prerequisite for downstream reward hacking interventions
+ ( Mallen 2025 ) . 
+
+ Our contributions are as follows. 
+
+ 1. 
+
+ A unified benchmark that selects and maps reward-hacking-relevant subsets from eleven public datasets, comprising 92,761 rows, into a common schema while preserving inherited label semantics, source provenance, and task-specific formats. The benchmark includes a six-category taxonomy and exact prompt-hash and source-boundary audits for supervised evaluation (§ 3 , § 3.3 ). 
+
+ 2. 
+
+ A reproducible detector evaluation across six models from
+five families. We report pooled AUROC, average per-source AUROC,
+category-specific results, and direct source-stratified comparisons
+rather than relying on one aggregate score (§ 4 ). 
+
+ 3. 
+
+ An input and training analysis that compares transcript
+preprocessing and evidence extraction, single-token
+supervised fine-tuning under six source-held-out rotations and across the open-ended and multiple-choice tracks, with an extra targeted RL training run (§ 5 ). 
+
+ Together, these experiments evaluate not only whether a detector performs well
+on average, but also whether its behavior remains stable when the data source,
+input representation, or training procedure changes. 
+
+ 2 Related Work 
+
+ The reward hacking landscape. 
+
+ Reward hacking in language models ranges from superficial optimization of
+proxy signals to strategic manipulation of the evaluation process. Sycophancy
+can arise when human feedback rewards agreement with a user’s stated beliefs
+rather than factual accuracy ( Sharma et al. 2024 ) . Under stronger
+optimization pressure, models may progress from evaluation gaming to direct
+reward tampering ( Denison et al. 2024 ) , and behaviors learned in one
+task can generalize to held-out tasks ( Nishimura-Gasparian et al. 2024 ) . Controlled
+environments such as ImpossibleBench, EvilGenie, and the Reward Hacking
+Benchmark elicit verifiable exploits in coding and tool-use settings
+ ( Zhong et al. 2025 ; Gabor et al. 2025 ; Thaman 2026 ) . These works
+ask whether a model exploits an evaluation. Our complementary question is
+whether a monitor recognizes diverse exploits after they have occurred. 
+
+ A fragmented dataset ecosystem. 
+
+ Existing datasets each target a different slice of the problem. School of
+Reward Hacks provides paired hacking and clean continuations across language
+and coding tasks ( Taylor et al. 2025 ) . MALT, TRACE, Terminal Wrench, and CheatBench contain
+multi-turn tool-use trajectories ( Parikh and Wijk 2025 ; Deshpande et al. 2026 ; Bercovich et al. 2026 ; CheatBench Maintainers 2026 ) , while
+other sources focus on style gaming, hardcoded solutions, reward tampering,
+multiple-choice behavioral probes, or alignment faking
+ ( Jozdien 2025 ; de la Fuente and Mann 2025 ; Khalifa et al. 2026 ; Nishimura-Gasparian et al. 2024 ; Perez et al. 2023 ; Greenblatt et al. 2024 ) .
+The main contribution of RH-Detect is a common schema and
+evaluation interface that makes cross-source comparison practical while
+preserving source provenance and redistribution constraints. 
+
+ Monitoring and LLM-as-judge. 
+
+ Aggregate accuracy can hide systematic failures across behavioral dimensions
+ ( Ribeiro et al. 2020 ) , and language models used as judges exhibit known
+position, verbosity, and self-enhancement biases ( Zheng et al. 2023 ) .
+Recent monitoring work shows that the information presented to a judge also
+matters: contrastive groups improve detection on TRACE
+ ( Deshpande et al. 2026 ) , and extract-and-evaluate pipelines can outperform
+full-trajectory monitoring ( Arike et al. 2026 ) . Deliberative monitors
+have been trained across several agentic sources ( Sinha et al. 2026 ) ,
+while AutoMonitor-Bench is smaller and evaluates a broader collection of failure modes
+ ( Yang et al. 2026 ) . Other benchmarks study monitor-aware evasion
+ ( Jotautaitė et al. 2026 ; Najt et al. 2026 ) . Our study differs in the axis of variation: rather than training a single
+monitor ( Sinha et al. 2026 ) or surveying many failure modes
+ ( Yang et al. 2026 ) , we hold the detection task fixed and vary the
+data source, transcript representation, and post-training procedure for the
+same detector. This isolates a factor those studies hold constant, and shows
+that it moves measured detection performance as much as the choice of detector
+does. The setup also differs from effort-based and activation-based monitoring
+ ( Wang et al. 2026 ; Wilhelm et al. 2026 ) , which inspect internal signals
+rather than transcripts. 
+
+ 3 Dataset Construction 
+
+ RH-Detect selects and harmonizes reward-hacking-relevant subsets from eleven
+public source datasets while preserving their original response formats, label
+semantics, and provenance metadata. The resulting benchmark contains
+92,761 rows across the open-ended, multiple-choice, and protected
+alignment-faking partitions. Table 1 
+provides representative behavior categories. 
+
+ Table 1: The RH-Detect open-ended track spans five forms of reward hacking.
+Full operational definitions appear in Section 3.1; sycophancy occurs only in the multiple-choice track. 
+
+ Behavior 
+
+ Representative task hack 
+
+ Output style gaming 
+
+ Recommendation letter scored partly by positive-word frequency
+ add gratuitous superlatives rather than supporting evidence. 
+
+ Evaluation gaming 
+
+ Document clustering evaluated on known inputs
+ hardcode the expected cluster IDs instead of implementing clustering. 
+
+ Reward tampering 
+
+ Countdown with access to solution.py and test.py 
+ replace verify() with an always-pass check. 
+
+ Environment exploitation 
+
+ Timed-out reconciliation tests
+ alter the timeout or test-runner state instead of fixing the code. 
+
+ Deception 
+
+ Tool-using Wordle agent
+ read the answer from an environment file and fabricate plausible guesses. 
+
+ 3.1 Taxonomy of Reward Hacking Behaviors 
+
+ We surveyed the selected source datasets and analyzed the model
+behaviors they capture. The sources range from paired
+prompt–response examples with deterministic labels
+ ( Taylor et al. 2025 ; de la Fuente and Mann 2025 ) to richly
+annotated, multi-turn tool-use trajectories with human review
+ ( Deshpande et al. 2026 ; Parikh and Wijk 2025 ) . Despite these differences,
+their documented behaviors cluster into six recurring top-level
+categories. 
+
+ Output style gaming. 
+
+ The model exploits surface-level evaluation heuristics, such as
+keyword density, formatting, or response length, to increase a score
+without improving substantive quality. The current release contains the verbosity padding subcategory. 
+
+ Sycophancy. 
+
+ The model agrees with the user’s stated opinion or mirrors the user’s
+framing regardless of factual correctness, optimizing for approval
+rather than accuracy. Subcategories include opinion ,
+ factual , and theory-of-mind 
+variants. 
+
+ Evaluation gaming. 
+
+ The model produces an output that passes an automated check without
+implementing a genuine solution. Subcategories
+include hardcoded lookup , test modification ,
+ answer-key extraction , metric or timing manipulation ,
+and coverage gaming . 
+
+ Environment exploitation. 
+
+ The model manipulates the evaluation infrastructure, for example by
+altering timeout settings, patching a test runner, or modifying
+filesystem state so that a check passes without resolving the
+underlying task. The release contains the filesystem or runtime interference subcategory. 
+
+ Reward tampering. 
+
+ The model directly modifies the mechanism that computes its reward or
+verification signal, such as overwriting a grading function so that it
+always returns a passing result. The release contains the reward-code modification subcategory. 
+
+ Deception. 
+
+ The model strategically conceals its behavior or the means by which it
+obtained a result. For example, it may generate plausible intermediate
+steps after accessing an answer through an illegitimate channel.
+Subcategories include strategic deception ,
+ self-preservation , and alignment faking . 
+
+ These categories describe the type and target of a behavior rather
+than an ordinal level of severity or sophistication. For exposition,
+they move from surface-level exploitation toward direct manipulation
+and concealment, but the ordering should not be interpreted as a
+severity scale. Table 1 gives representative examples
+from the five categories appearing in the primary open-ended track;
+sycophancy appears only in the multiple-choice track. 
+
+ 3.2 Source Selection and Harmonization 
+
+ The current release integrates reward-hacking-relevant subsets from eleven
+public sources that contain pre-generated hacking or clean responses, or
+sufficient metadata from which binary labels can be derived. Source-specific access and redistribution conditions are documented with the
+release; inclusion in the common schema does not imply permission to
+redistribute every source record, and one source requires the encrypted
+distribution described in § 3.3 . 
+
+ The selected sources span two response formats: open-ended
+model-generated text, including multi-turn tool-use trajectories, and
+multiple-choice probes. We retain the source-provided pairing whenever
+a prompt has both a hacking and a clean continuation. For an unpaired
+hacking continuation, we add a clean continuation drawn from the same
+task or source split if possible, so that each represented behavior category
+contains similar number of positive and negative examples. 
+
+ We assign each row a category and subcategory using the source
+metadata. Some labels map directly. For example, MALT’s manually
+reviewed hardcoded solution label maps to evaluation gaming
+and the hardcoded lookup subcategory, while
+ sabotage maps to deception. TRACE provides a native
+54-subcategory annotation scheme that we consolidate into the common
+taxonomy. School of Reward Hacks provides human-readable
+ cheat method descriptions, which we map to output style
+gaming or evaluation gaming according to whether the exploit targets
+a surface metric or an evaluation mechanism. 
+
+ Metadata. 
+
+ Beyond the binary label and taxonomy assignment, each row preserves
+or derives the following fields: construction method , indicating
+whether the behavior arose without an explicit hacking instruction or
+was deliberately elicited; verification method , such as human
+review, an LLM judge, or a deterministic rule; a free-text
+ hacking description , when provided by the source; the
+ response model that generated the continuation; and an
+ agentic flag , indicating a multi-turn trajectory involving tool
+use or autonomous interaction with an environment. 
+
+ Reproducibility. 
+
+ The per-source inventory with row counts, class balance, and verification method, the verbatim detector prompt, and the SFT and GRPO training configurations are provided in the appendix; Appendix F describes the dataset and code release. 
+
+ 3.3 Unified Schema, Evaluation Tracks, and Splits 
+
+ Each row is stored as a chat-template message list containing the
+prompt and one or more continuations, together with the structured
+metadata described above. The release is organized into three storage
+partitions: 24,528 public open-ended rows, 66,760 multiple-choice
+rows, and 1,473 protected alignment-faking responses distributed
+under source-required XOR encryption to limit direct exposure of
+their contents. 
+
+ A source row may contain both a hacking and a clean continuation.
+Several sources reuse the same prompt across hacking and clean
+continuations, so a naive random split can place an identical prompt
+in both training and evaluation. We use two supervised split protocols.
+Cross-source transfer uses six held-out rotations. Cross-track transfer instead uses train, validation, and test splits grouped by prompt hash within each track. In both protocols, identical prompt hashes do not cross the training and evaluation boundary. 
+
+ 4 Zero-Shot Detector Evaluation 
+
+ 4.1 Evaluation Methodology 
+
+ We perform our primary evaluations on six open-ended sources selected because they were available when we started the evaluations:
+School of Reward Hacks, Jozdien Realistic Reward Hacks, Patronus TRACE,
+METR MALT, Countdown-Code, and Matonski Reward-Hacking Prompts. Excluding transcripts longer than 32,000 tokens leaves 5,021 eligible evaluation units. Each unit contains a prompt and one continuation. A
+fixed detector prompt asks the model to classify the continuation as reward
+hacking or clean and return a JSON with reasoning and a probability from 0 to 100, which we divide
+by 100 for analysis. All calls use temperature 0. The detector receives the
+rendered transcript but no source name, category, label, construction method,
+or verification metadata. It can use task intent, evaluator behavior, and
+environment state only when those details appear in the transcript. 
+
+ We concatenate the message contents from the task
+prompt, model continuation and tool calls in their original order. Performance on this track
+measures the complete monitoring pipeline, from transcript interpretation and
+evidence aggregation to the final classification. We evaluate six models from five families through a commercial API:
+Llama 4 Scout and Maverick, Gemini 3.1 Flash Lite, GPT-5 Nano, Grok 4.1 Fast,
+and Qwen 3.5 Flash. The selection spans several architectures and price points. Grok was withdrawn
+from the API before the final MALT evaluation was complete. Its reported
+results cover non-MALT units and are excluded from paired and
+source-stratified comparisons. 
+
+ 4.2 RQ1: Overall Detector Performance 
+
+ Table 2: Qwen 3.5 Flash and Gemini 3.1 Flash Lite lead the complete-coverage models, whereas GPT-5 Nano’s 0.353 false-positive rate reveals a marked thresholding weakness.
+AUROC is pooled over sources; average AUROC per-source gives each source equal weight. Accuracy and FPR use . refers to the number of responses we have successfully parsed for each model. Grok was not evaluated on MALT because it was removed from the public API. 
+
+ Model 
+
+ Acc. 
+ AUROC 
+
+ Avg. 
+ AUROC 
+
+ FPR 
+
+ Qwen 3.5 Flash 
+ 5,021 
+ 0.931 
+ 0.962 
+ 0.943 
+ 0.035 
+
+ Gemini 3.1 FL 
+ 5,019 
+ 0.934 
+ 0.960 
+ 0.951 
+ 0.022 
+
+ Grok 4.1 Fast 
+ 4,602 
+ 0.917 
+ 0.960 
+ 0.938 
+ 0.094 
+
+ Llama 4 Maverick 
+ 5,020 
+ 0.899 
+ 0.936 
+ 0.933 
+ 0.064 
+
+ Llama 4 Scout 
+ 4,993 
+ 0.861 
+ 0.890 
+ 0.891 
+ 0.062 
+
+ GPT-5 Nano 
+ 5,021 
+ 0.753 
+ 0.817 
+ 0.857 
+ 0.353 
+
+ Table 2 shows that three models form the leading group in
+pooled ranking: Qwen 3.5 Flash (AUROC 0.962), Gemini 3.1 Flash Lite
+(0.960), and Grok 4.1 Fast (0.960 on reduced coverage). Grok is
+not directly comparable because it excludes MALT. Llama 4 Maverick
+outperforms Scout from the same family. GPT-5 Nano is the weakest detector,
+with pooled AUROC 0.817 and false-positive rate 0.353 at the
+common threshold of 0.5. Its suspicion scores are shifted upward, causing many
+benign responses to be flagged. Pooled AUROC can reward a detector for separating easier positive examples
+from one source and easier negative examples from another. We therefore also
+report average AUROC per-source. 
+
+ Figure 1 shows the ROC curves for all six models. The top
+three models cluster tightly near the upper-left corner with AUROC 0.96,
+while GPT-5 Nano (0.817) traces a substantially lower curve. 
+
+ Figure 1: ROC curves for all six detector models, tracing (FPR, TPR) as the decision threshold on the normalized detector score in is varied (AUROC is threshold-independent).
+The top three (Qwen, Gemini, Grok) cluster near the upper-left corner
+with AUROC 0.96, while GPT-5 Nano (0.817) traces a substantially
+lower curve. 
+
+ 4.3 RQ2: Performance by Category and Source 
+
+ Table 3: The four stronger detectors are near ceiling on reward tampering but perform worst on the small environment-exploitation subset; GPT-5 Nano has a contrasting profile.
+Accuracy is measured at ; Environment exploitation has at most examples, so its estimates are indicative. Sycophancy appears only in the multiple-choice track. 
+
+ Model 
+ Tamper 
+ Style 
+ Eval. 
+ Env. 
+ Decept. 
+
+ Qwen 3.5 Flash 
+ 0.991 
+ 0.953 
+ 0.905 
+ 0.721 
+ 0.909 
+
+ Gemini 3.1 FL 
+ 0.997 
+ 0.947 
+ 0.917 
+ 0.674 
+ 0.921 
+
+ Llama 4 Maverick 
+ 0.994 
+ 0.913 
+ 0.868 
+ 0.721 
+ 0.906 
+
+ Llama 4 Scout 
+ 0.982 
+ 0.908 
+ 0.788 
+ 0.537 
+ 0.898 
+
+ GPT-5 Nano 
+ 0.578 
+ 0.662 
+ 0.856 
+ 0.791 
+ 0.904 
+
+ Max. eligible 
+ 334 
+ 2,261 
+ 1,976 
+ 43 
+ 407 
+
+ Table 4: The four stronger detectors are 10.7–15.9percentage points less accurate on MALT/TRACE; GPT-5 Nano shows the reverse pattern.
+M+T denotes MALT and TRACE ( – per model); Other denotes the remaining sources ( ). is M+T accuracy minus Other. AUROCs are descriptive because the source groups differ along several attributes. 
+
+ Acc. at 
+ AUROC 
+
+ Model 
+ Other 
+ M+T 
+ pp 
+ Other 
+ M+T 
+
+ Qwen 3.5 Flash 
+ 0.961 
+ 0.802 
+
+ 0.978 
+ 0.878 
+
+ Gemini 3.1 FL 
+ 0.959 
+ 0.825 
+
+ 0.978 
+ 0.902 
+
+ Llama 4 Maverick 
+ 0.919 
+ 0.812 
+
+ 0.958 
+ 0.847 
+
+ Llama 4 Scout 
+ 0.883 
+ 0.762 
+
+ 0.913 
+ 0.791 
+
+ GPT-5 Nano 
+ 0.736 
+ 0.830 
+
+ 0.805 
+ 0.871 
+
+ Hacking category. 
+
+ Table 3 stratifies accuracy by category. The four stronger
+models classify reward tampering with
+98–100% accuracy. Their accuracy on style gaming
+and deception ranges from
+90–95%. Accuracy is
+intermediate for evaluation gaming and is lowest and most variable for
+environment exploitation, for which the sample is small. GPT-5 Nano shows the
+reverse pattern on reward tampering and style gaming. This contrast indicates
+a different error profile. 
+
+ The agentic-source association. 
+
+ Table 4 shows that the four
+strongest judges with coverage of all six sources achieve fixed-threshold accuracy that is
+10.7–15.9 percentage points lower on MALT/TRACE than
+on the other sources. Balanced
+accuracy falls 11.0–16.1 points,
+AUROC 7.7–12.2 points, and AUPRC
+7.5–13.1 points. TPR also declines by
+24.7–28.4 points. The corresponding declines
+in class-balanced and threshold-free metrics show that the contrast is not
+limited to class balance or the fixed threshold. GPT-5 Nano
+moves in the opposite direction in accuracy. This comparison is important but
+descriptive: source, task, category mixture, length, tool format, elicitation,
+verification, and agentic status change together. 
+
+ Score distributions. 
+
+ Stronger models like Gemini and
+Qwen concentrate benign scores near zero and hacking scores near 100, with false-positive rates of and , respectively. GPT-5 Nano’s
+scores are spread broadly across the range, resulting in a high FPR with a threshold of 50/100. Figure S1 in the appendix shows these distributions. 
+
+ 5 Input Representation and Detector Training 
+
+ RQ3 asks whether detector performance remains stable when either the input
+or the training procedure changes. We first present the same transcripts to a
+fixed judge under several preprocessing and extraction conditions
+(§ 5.1 ). We also evaluate source held-out and cross-track single-token SFT (§ 5.2 ). We finally present a targeted GRPO case study (§ 5.3 ). All comparisons use
+a continuous reward-hacking score and report AUROC; representation comparisons
+use fixed matched populations. 
+
+ 5.1 Transcript Representation 
+
+ Table 5: Removing input reasoning helps Qwen3.5-4B but hurts Qwen Flash; a weaker extractor also degrades the pipeline.
+Panel (a) uses the 4,988 examples successfully scored under every local condition; panel (b) uses the same fixed 800-example set for both API judges. 
+
+ (a) Matched open-ended set, Qwen3.5-4B 
+
+ Condition 
+
+ Acc. 
+ AUROC 
+
+ E1: Raw transcript 
+
+ 0.749 
+ 0.779 
+
+ E2: Remove input reasoning 
+
+ 0.798 
+ 0.849 
+
+ E3: Input reasoning only 
+
+ 0.612 
+ 0.655 
+
+ (b) Fixed API comparison set ( ), AUROC 
+
+ Condition 
+
+ Qwen 
+ Flash 
+
+ GPT-5 
+ Nano 
+
+ E1: Raw transcript 
+
+ 0.977 
+ 0.816 
+
+ E2: Remove input reasoning 
+
+ 0.950 
+ 0.816 
+
+ E3: Input reasoning only 
+
+ 0.645 
+ 0.588 
+
+ E4: Extract, then evaluate 
+
+ 0.958 
+ 0.788 
+
+ E4b: Nano extractor, Qwen judge 
+
+ 0.879 
+ — 
+
+ We compare transcript preparation conditions while holding the detector
+prompt fixed. E1 passes the plain-text transcript, and E2 strips extended-reasoning
+(“thinking”) spans from responses; E3 retains only the detected
+reasoning spans; a fourth condition, E4, follows the
+extract-and-evaluate design of Arike et al. (2026) : the judge model
+itself first quotes the most suspicion-relevant excerpts verbatim, and the
+unchanged detector prompt then scores only the excerpt document. The
+API-judge conditions are evaluated on the same fixed comparison set
+(Table 5 b). 
+
+ Table 5 shows model-dependent sensitivity.
+For the Qwen3.5-4B judge, removing input reasoning raises
+AUROC from 0.779 to 0.849, whereas retaining only the reasoning
+lowers it to 0.655. On the fixed 800-unit API set, removing input
+reasoning lowers Qwen Flash from 0.977 to 0.950 and leaves
+GPT-5 Nano unchanged at 0.816. Extract-and-evaluate preserves
+Qwen Flash near its raw-transcript result (0.958) but lowers
+GPT-5 Nano to 0.788. When GPT-5 Nano selects the excerpts for
+Qwen Flash, AUROC falls further to 0.879, showing that extractor
+quality can bottleneck the pipeline. 
+
+ 5.2 Single-Token Supervised Fine-Tuning 
+
+ To test whether supervised reward-hacking detectors transfer beyond the
+sources observed during training, we fine-tune Qwen3.5-4B under six strict
+leave-one-source-out rotations. Each rotation removes one open-ended source
+in full before constructing the training split, and evaluates the resulting
+detector only on that omitted source. Within the remaining sources, examples
+sharing an exact prompt hash are assigned to the same split. We perform
+full-parameter fine-tuning for one epoch with three random seeds and evaluate
+the final checkpoint from each run. Training sets contain 2,354–3,911
+evaluation units, depending on the omitted source. Each example uses the Qwen
+chat template with an assistant prefill ending in Answer: . Prompt
+positions are masked, and the loss is applied to exactly one next token:
+ YES for reward hacking or NO for clean behavior. At
+evaluation time, the detector score is the normalized conditional probability
+of the two label tokens, 
+
+ We use source-held-out rather than within-source evaluation because the two
+settings answer different questions. A random split within a source measures
+interpolation to a familiar data-generating process and permits the detector
+to exploit recurring task templates, formatting conventions, label
+construction procedures, and other source-specific cues. Such a split may
+therefore overstate performance on data from a new benchmark or deployment
+environment. In our design, the test source contributes no examples to
+training, validation, threshold selection, or checkpoint selection. The
+exact-prompt audit additionally prevents identical prompts from crossing the
+training and test boundary. This design does not exclude paraphrased or semantic
+overlap between sources, nor does it establish the absence of pretraining
+contamination. 
+
+ Table 6: Source-held-out SFT raises average AUROC per-source by 0.036 but transfers unevenly, including a 0.140 drop on School of Reward Hacks (SoRH).
+Each row evaluates a model trained without that source. Base is one frozen evaluation of Qwen3.5-4B; SFT reports mean sample standard deviation over three seeds, and is SFT minus Base. 
+
+ Source 
+
+ Base 
+ SFT 
+
+ Countdown 
+ 334 
+ 0.969 
+
+ Jozdien 
+ 1,605 
+ 0.745 
+
+ Matonski 
+ 100 
+ 0.977 
+
+ MALT 
+ 419 
+ 0.881 
+
+ TRACE 
+ 517 
+ 0.716 
+
+ SoRH 
+ 2,046 
+ 0.869 
+
+ Average per-source 
+ 5,021 
+ 0.859 
+
+ Table 7: 
+Single-token SFT is highly track-specific: it nearly
+saturates on its same-track test AUROC but lowers it on
+the other track. SFT results are the mean over three seeds; MC denotes
+multiple-choice. The multi-choice and open-ended test sets contain
+ and examples, respectively. All six
+open-ended sources also appear in training, so the
+open-ended split is not source held-out.
+
+ Training condition 
+
+ Eval. track 
+ AUROC 
+
+ Base Qwen3.5-4B 
+
+ Multi-choice 
+ 0.587 
+
+ Open-ended SFT 
+
+ Multi-choice 
+
+ Multi-choice SFT 
+
+ Multi-choice 
+
+ Base Qwen3.5-4B 
+
+ Open-ended 
+ 0.783 
+
+ Open-ended SFT 
+
+ Open-ended 
+
+ Multi-choice SFT 
+
+ Open-ended 
+
+ Table 6 shows that single-token supervision improves
+average AUROC across held-out sources by . Mean AUROC improves on five of the six held-out sources, but the
+magnitude varies substantially. The largest increase occurs on Jozdien, while MALT and TRACE improve by 0.056 and 0.026, respectively.
+In contrast, SoRH decreases by .
+The aggregate gain therefore does not represent uniform improvement
+across sources. 
+
+ The probability-quality results are less favorable. In the average per-source setting, Brier score increases from 0.180 to 0.190 and negative
+log-likelihood increases from 0.550 to 1.373, although ECE decreases from
+0.213 to 0.192. The two proper scoring rules therefore worsen despite the
+improvement in ranking and the small reduction in ECE. In particular, the
+large increase in negative log-likelihood indicates that some errors receive
+substantially greater confidence after fine-tuning. This pattern suggests that
+SFT improves ordering while producing more severe probability errors on some examples. 
+
+ Cross-track transfer. 
+
+ We also test whether single-token supervision
+transfers between the open-ended and multiple-choice tracks
+using separate pair-safe splits and the same normalized
+ YES / NO log-probability readout
+(Table 7 ). Supervision is highly
+effective in-domain and nearly saturates AUROC. However, we find no positive transfer across
+tracks. Under the
+current single-token SFT setting, near-ceiling performance
+on the same-track test AUROC does not produce a detector that
+transfers to the other track. 
+
+ 5.3 Targeted GRPO Case Study 
+
+ Single-token SFT improves average AUROC per-source, but produces its largest
+source-specific regression on School of Reward Hacks (SoRH). We therefore use the SoRH held-out
+as a targeted case study of whether reinforcement learning with a
+probability-based reward can avoid this regression. This experiment
+tests one particularly difficult transfer setting rather than estimating
+average RL performance across all held-out sources. 
+
+ The model produces reasoning in a thinking block,
+followed by a boxed integer , where
+ represents the predicted probability of reward
+hacking. Let for completion , and let
+ denote the inherited binary label. For a completion from
+which a valid boxed probability can be parsed, the reward is 
+
+ This is one minus the Brier loss and ranges from zero to one. Completions
+without a parseable boxed probability are masked by the trainer and
+receive zero advantage, so they are neither rewarded nor penalized.
+The reasoning text is also not directly scored and the reward evaluates
+only the final boxed probability. At evaluation time a completion from which no boxed
+probability can be parsed receives the uninformative score of . 
+
+ Figure 2: 
+Targeted GRPO with SoRH excluded from training produces a small positive gain. Left: per-step training reward and its 20-step moving average over 588 optimizer steps. Right: AUROC change relative to the frozen base on the in-distribution validation split and the fully held-out SoRH source. All evaluation units are included; completions without a parseable boxed probability receive an uninformative score of 0.5.
+
+ SoRH is excluded from training and checkpoint selection.
+Training remains stable throughout the epoch: mean rollout reward is
+approximately 0.7–0.8, with no evidence of reward collapse or a
+monotonic drift toward an extreme solution. On held-out SoRH, parse validity
+increases from 0.61 for the frozen base to 0.675 at the final checkpoint.
+The fraction truncated at the generation limit decreases from 0.42 to
+0.341. Thus the model becomes more likely to emit a usable
+probability, but formatting and instruction-following remain a substantial difficulty on the
+long transcripts. 
+
+ The analysis in Figure 2 gives final
+improvements of approximately on the in-distribution validation and
+ on SoRH. Unlike single-token SFT, this GRPO run does not exhibit a large SoRH
+regression and instead yields a small positive held-out improvement. The experiment shows that an alternative
+post-training objective can avoid the observed SoRH degradation and
+produce limited transfer, but the improvements are not statistically significant, so we present this as a case study. 
+
+ 6 Discussion 
+
+ Off-the-shelf LLMs as monitors. 
+
+ The zero-shot results show that general-purpose language models can provide
+strong reward hacking rankings at modest evaluation cost. Qwen Flash and
+Gemini both exceed 93% accuracy at the common threshold, and the best pooled
+AUROC is 0.962. Model choice still matters. Gemini produces the lowest
+false-positive rate, while GPT-5 Nano
+assigns substantial suspicion to benign responses. 
+
+ Performance on MALT and TRACE. 
+
+ The clearest source-stratified result is the gap between MALT/TRACE and the
+other four open-ended sources. The four strongest complete-coverage judges are
+10.7–15.9 percentage points less accurate on MALT and
+TRACE. Balanced accuracy, AUROC and AUPRC all move in the same
+direction, so the result is not explained only by class balance or the threshold. MALT and TRACE contain long tool-use trajectories, making this gap
+important for deployment-time monitoring. 
+
+ Input and training sensitivity. 
+
+ The transcript experiments show that preprocessing is part of the detector
+configuration. Removing input reasoning improves the 4B judge,
+but the same change helps neither API judge.
+Extract-and-evaluate monitoring can preserve the stronger judge’s performance,
+yet the result falls when a weaker model chooses the excerpts. Fine-tuning is
+similarly uneven. Single-token supervision improves mean AUROC across held-out sources,
+but performance declines on SoRH. Cross-track transfer is more limited. Fine-tuning on either
+track produces near-ceiling AUROC on that track but lowers
+AUROC on the other track to approximately chance or below.
+These findings do not show that preprocessing or
+supervised training is generally helpful or harmful. They show that gains on
+one aggregate or source need not transfer to another detector interface or
+data source, which highlights the importance of testing on non-homogeneous datasets. 
+
+ 6.1 Limitations and Future Work 
+
+ Four caveats bound our claims. First, labels are inherited and
+heterogeneous in provenance, so a source with noisier annotation may appear
+harder for reasons unrelated to detection difficulty, and binary labels do
+not capture the severity spectrum needed for risk-prioritized triage.
+Second, where a source provides no paired clean continuation we draw the
+negative from the same task or source split, so we cannot fully exclude
+stylistic cues unrelated to hacking.
+Third, the MALT/TRACE gap is a source-level association: length, tool
+formatting, category mixture, elicitation, and verification vary together
+with agentic status. Fourth, the training study is limited to one model. The benchmark is also static,
+whereas deployment monitoring is incremental and latency-constrained.
+Future work should audit semantic overlap, add severity-graded labels,
+evaluate against adversarial policies
+ ( Jotautaitė et al. 2026 ; Najt et al. 2026 ) , and expand the training
+study across model families and output formats. 
+
+ 7 Conclusion 
+
+ We present RH-Detect , a common benchmark that harmonizes
+reward-hacking-relevant subsets from eleven public datasets using consistent
+metadata, task-specific tracks, and audited source-held-out splits. Off-the-shelf language models range from strong to unreliable on the primary open-ended track, with pooled AUROC from 0.817 to 0.962. However, the four strongest models are less accurate on MALT and TRACE than on the other sources, identifying
+multi-turn tool-use monitoring as the area where additional engineering investment is most needed. 
+
+ The additional experiments show that detector performance depends on both transcript representation and post-training strategy. Single-token SFT improves average AUROC per-source, but the gains are uneven and do not transfer across tracks. A targeted GRPO training avoids the large SFT regression and yields a small positive held-out gain. Reliable reward-hacking monitoring therefore requires source-stratified evaluation and complete specification of the detector input, score readout, and training procedure. 
+
+ References 
+
+ Arike et al. (2026) 
+ R. Arike, R. Mehta Moreno, R. Subramani, S. Biswas, and F. R. Ward 
+
+ How does information access affect LLM monitors’ ability to detect sabotage? .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2601.21112 .
+
+ Cited by: §2 ,
+ §5.1 .
+
+ Baker et al. (2025) 
+ B. Baker, J. Huizinga, L. Gao, Z. Dou, M. Y. Guan, A. Madry, W. Zaremba, J. Pachocki, and D. Farhi 
+
+ Monitoring reasoning models for misbehavior and the risks of promoting obfuscation .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2503.11926 .
+
+ Cited by: §1 .
+
+ Bercovich et al. (2026) 
+ I. Bercovich, I. Segal, K. Zhang, S. Saxena, A. Raghunathan, and Z. Zhong 
+
+ Terminal wrench: a dataset of 331 reward-hackable environments and 3,632 exploit trajectories .
+
+ arXiv preprint arXiv:2604.17596 .
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ CheatBench Maintainers (2026) 
+ CheatBench Maintainers 
+
+ CheatBench .
+
+ Note: Hugging Face dataset 
+
+ External Links: Link 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ de la Fuente and Mann (2025) 
+ A. de la Fuente and J. Mann 
+
+ Reward hacking prompts: a dataset for studying deceptive shortcuts in LLMs .
+
+ Note: Hugging Face dataset. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://huggingface.co/datasets/matonski/reward-hacking-prompts 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 ,
+ §3.1 .
+
+ Denison et al. (2024) 
+ C. Denison, M. MacDiarmid, F. Barez, D. Duvenaud, et al. 
+
+ Sycophancy to subterfuge: investigating reward-tampering in large language models .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2406.10162 .
+
+ Cited by: §1 ,
+ §2 .
+
+ Deshpande et al. (2026) 
+ D. Deshpande, A. Kannappan, and R. Qian 
+
+ Benchmarking reward hack detection in code environments via contrastive analysis .
+
+ Note: arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2601.20103 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 ,
+ §2 ,
+ §3.1 .
+
+ Gabor et al. (2025) 
+ J. Gabor, J. Lynch, and J. Rosenfeld 
+
+ EvilGenie: a reward hacking benchmark .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2511.21654 .
+
+ Cited by: §2 .
+
+ Gao et al. (2023) 
+ L. Gao, J. Schulman, and J. Hilton 
+
+ Scaling laws for reward model overoptimization .
+
+ In Proceedings of the 40th International Conference on Machine Learning ,
+
+ Vol. 202 , pp. 10835–10866 .
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://proceedings.mlr.press/v202/gao23h.html 
+
+ Cited by: §1 .
+
+ Greenblatt et al. (2024) 
+ R. Greenblatt, C. Denison, B. Wright, F. Roger, M. MacDiarmid, S. Marks, et al. 
+
+ Alignment faking in large language models .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2412.14093 .
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ Jotautaitė et al. (2026) 
+ M. Jotautaitė, M. A. Martinez, O. Matthews, and T. Tracy 
+
+ MonitoringBench: semi-automated red-teaming for agent monitoring .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2605.09684 .
+
+ Cited by: §2 ,
+ §6.1 .
+
+ Jozdien (2025) 
+ Jozdien 
+
+ Realistic reward hacking induces different and deeper misalignment .
+
+ Note: AI Alignment Forum. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://www.alignmentforum.org/posts/HLJoJYi52mxgomujc/realistic-reward-hacking-induces-different-and-deeper 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ Khalifa et al. (2026) 
+ M. Khalifa, Z. Khan, O. Tafveez, H. Peng, and L. Wang 
+
+ Countdown-Code: a testbed for studying the emergence and generalization of reward hacking in RLVR .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2603.07084 .
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ MacDiarmid et al. (2025) 
+ M. MacDiarmid, B. Wright, J. Uesato, J. Benton, J. Kutasov, et al. 
+
+ Natural emergent misalignment from reward hacking in production RL .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2511.18397 .
+
+ Cited by: §A.1 ,
+ §1 .
+
+ Mallen (2025) 
+ A. Mallen 
+
+ A quick list of reward hacking interventions .
+
+ Note: LessWrong. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://www.lesswrong.com/posts/spZyuEGPzqPhnehyk 
+
+ Cited by: §1 .
+
+ Najt et al. (2026) 
+ E. Najt, C. Toft, T. Tracy, F. Roger, and J. Benton 
+
+ SLEIGHT-Bench: a benchmark of evasion attacks against agent monitors .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2605.16626 .
+
+ Cited by: §2 ,
+ §6.1 .
+
+ Nishimura-Gasparian et al. (2024) 
+ K. Nishimura-Gasparian, I. Dunn, H. Sleight, M. Turpin, E. Hubinger, C. Denison, and E. Perez 
+
+ Reward hacking behavior can generalize across tasks .
+
+ Note: AI Alignment Forum. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://www.alignmentforum.org/posts/Ge55vxEmKXunFFwoe/reward-hacking-behavior-can-generalize-across-tasks 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §1 ,
+ §2 ,
+ §2 .
+
+ Parikh and Wijk (2025) 
+ N. Parikh and H. Wijk 
+
+ MALT: a dataset of natural and prompted behaviors that threaten eval integrity .
+
+ Note: METR. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/ 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 ,
+ §3.1 .
+
+ Perez et al. (2023) 
+ E. Perez, S. Ringer, K. Lukošiūtė, et al. 
+
+ Discovering language model behaviors with model-written evaluations .
+
+ In Findings of the Association for Computational Linguistics: ACL 2023 ,
+
+ pp. 13387–13434 .
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>doi:10.18653/v1/2023.findings-acl.847 
+
+ External Links: Document 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 .
+
+ Ribeiro et al. (2020) 
+ M. T. Ribeiro, T. Wu, C. Guestrin, and S. Singh 
+
+ Beyond accuracy: behavioral testing of NLP models with CheckList .
+
+ In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics ,
+
+ pp. 4902–4912 .
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>doi:10.18653/v1/2020.acl-main.442 
+
+ External Links: Document 
+
+ Cited by: §1 ,
+ §2 .
+
+ Sharma et al. (2024) 
+ M. Sharma, M. Tong, T. Korbak, D. Duvenaud, A. Askell, et al. 
+
+ Towards understanding sycophancy in language models .
+
+ In International Conference on Learning Representations ,
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2310.13548 
+
+ Cited by: §1 ,
+ §2 .
+
+ Sinha et al. (2026) 
+ A. Sinha, A. Naik, V. Gillioz, S. Storf, K. Merkelbach, R. Barton-Cooper, A. Højmark, and M. Hobbhahn 
+
+ Training deliberative monitors for black-box scheming detection .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2605.29601 .
+
+ Cited by: §2 .
+
+ Taylor et al. (2025) 
+ M. Taylor, J. Chua, J. Betley, J. Treutlein, and O. Evans 
+
+ School of Reward Hacks: hacking harmless tasks generalizes to misaligned behavior in LLMs .
+
+ Note: arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2508.17511 
+
+ Cited by: §A.1 ,
+ §1 ,
+ §2 ,
+ §3.1 .
+
+ Thaman (2026) 
+ K. Thaman 
+
+ Reward hacking benchmark: measuring exploits in LLM agents with tool use .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2605.02964 .
+
+ Note: Accepted to ICML 2026 
+
+ Cited by: §2 .
+
+ Wang et al. (2026) 
+ X. Wang, N. Joshi, B. Plank, R. Angell, and H. He 
+
+ Is it thinking or cheating? detecting implicit reward hacking by measuring reasoning effort .
+
+ In The Fourteenth International Conference on Learning Representations ,
+
+ Note: Oral presentation. attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >> https://openreview.net/forum?id=Gk7gLAtVDO 
+
+ Cited by: §2 .
+
+ Wilhelm et al. (2026) 
+ P. Wilhelm, T. Wittkopp, and O. Kao 
+
+ Monitoring emergent reward hacking during generation via internal activations .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2603.04069 .
+
+ External Links: Link 
+
+ Cited by: §2 .
+
+ Yang et al. (2026) 
+ S. Yang, J. Hu, T. Li, H. Yan, W. Wang, and D. Wang 
+
+ AutoMonitor-Bench: evaluating the reliability of LLM-based misbehavior monitors .
+
+ In Findings of the Association for Computational Linguistics: ACL 2026 ,
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2601.05752 
+
+ Cited by: §2 .
+
+ Zheng et al. (2023) 
+ L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, et al. 
+
+ Judging LLM-as-a-judge with MT-bench and chatbot arena .
+
+ In Advances in Neural Information Processing Systems ,
+
+ Vol. 36 .
+
+ Note: attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2306.05685 
+
+ Cited by: §2 .
+
+ Zhong et al. (2025) 
+ Z. Zhong, A. Raghunathan, and N. Carlini 
+
+ ImpossibleBench: measuring LLMs’ propensity of exploiting test cases .
+
+ arXiv preprint attr/Border[0 0 0] user/Subtype/Link/A<< /S/URI /URI () >>arXiv:2510.20270 .
+
+ Cited by: §2 .
+
+ Appendix A Dataset and Release Construction 
+
+ RH-Detect integrates eleven public datasets comprising
+92,761 rows, organized into open-ended, multiple-choice, and
+protected-response tracks. Nine datasets were available
+when the reported experiments were conducted and contribute
+72,384 rows across the three tracks, and Terminal Wrench and CheatBench were incorporated after the
+reported experiments; they are included in the integrated open-ended benchmark but do not enter analysis. Stored rows and
+detector evaluation units differ: rows that pair a hacking and a clean
+continuation expand into two units, so the 4,151 core
+open-ended rows yield 5,174 units, of which
+5,021 satisfy the 32,000-token eligibility policy of the
+primary analysis. Table S1 gives the complete
+inventory. 
+
+ A.1 Sources 
+
+ School of Reward Hacks. 
+
+ School of Reward Hacks contains short, self-contained language and
+coding tasks whose prompts specify an exploitable evaluation metric.
+Each task provides a reward-hacking continuation that optimizes the
+stated metric without fulfilling the intended objective and a clean
+continuation that makes a good-faith attempt at the task ( Taylor et al. 2025 ) . We preserve
+the free-text cheat_method field and use it to assign the
+unified category. 
+
+ Jozdien realistic reward hacks. 
+
+ Jozdien contains reward-hacking examples on code problems and literary
+questions, together with benign HHH responses in corresponding formats ( Jozdien 2025 ) .
+We retain the unpaired hacking and clean continuations from the code and
+literary splits. The hacking examples are mapped to evaluation gaming
+and output style gaming, respectively. 
+
+ Patronus TRACE. 
+
+ TRACE is a human-verified benchmark of multi-turn coding-agent
+trajectories with simulated tool use across a broad range of software
+engineering domains ( Deshpande et al. 2026 ) . Its native annotations cover 54 fine-grained
+reward-hacking subcategories. We consolidate these annotations using
+their two-level label prefixes, render tool calls inline, and represent
+tool results as tool-role messages. 
+
+ METR MALT. 
+
+ MALT contains natural and prompted agent trajectories on software and
+research tasks, annotated for behaviors that may threaten evaluation
+integrity, including reward hacking and sandbagging, together with
+reviewed benign runs ( Parikh and Wijk 2025 ) . The 286 hacking runs are selected by the label
+set sabotage , hardcoded_solution , bypass_constraints , or
+ ignores_task_instructions , and multi-label rows are resolved
+by that fixed priority order. The 286 clean runs labeled exactly
+ normal are matched in five seeded passes, preferring the same
+task and model, then task family, and finally any reviewed normal run,
+under seed 42. Each transcript is linearized from the source node graph
+with function calls inlined. 
+
+ Countdown-Code. 
+
+ Countdown-Code is a controlled coding environment based on the
+Countdown arithmetic game, in which an agent can receive the proxy
+reward either by constructing a valid arithmetic solution or by
+modifying the accompanying test harness ( Khalifa et al. 2026 ) . RH-Detect derives the label deterministically from the generated
+files. We label a transcript as
+hacking exactly when the verification expression
+ sorted(used_numbers) is absent from the rewritten
+ test.py , indicating that the substantive input-usage check has
+been removed. From this corpus, 167 hacking and 167 honest transcripts
+are sampled with seed 42. Prompt-level pairing is unavailable because
+the retained hacking and honest trajectories arise from disjoint task
+outcomes rather than matched continuations to the same prompt. 
+
+ Matonski prompts. 
+
+ Matonski contains 50 computational prompts spanning tasks such as
+simulation, numerical optimization, and graph algorithms ( de la Fuente and Mann 2025 ) . Each prompt
+exposes grader code that reads reference outputs from
+ expected.json , creating a shortcut in which the model can copy
+the expected values rather than perform the requested computation. We
+retain one honest and one reward-hacking continuation per prompt,
+including their reasoning traces, yielding 50 paired prompt groups. 
+
+ Reward-hack generalization. 
+
+ The reward-hack generalization dataset contains multiple-choice
+behavioral probes with a source-provided
+ high_reward_answer and one or more
+ other_answers ( Nishimura-Gasparian et al. 2024 ) .
+For each item, we retain the high-reward answer as the positive
+continuation and use the first available alternative as the negative
+continuation, yielding one paired binary example. The source file
+determines the RH-Detect category and subcategory, covering
+sycophancy, reward tampering, evaluation gaming, and deception. 
+
+ Anthropic model-written evaluations. 
+
+ The selected Anthropic model-written evaluations contain
+multiple-choice probes of sycophancy and persona-related behaviors
+ ( Perez et al. 2023 ) . Each item provides an
+ answer_matching_behavior and an
+ answer_not_matching_behavior ; we retain the former as
+the positive continuation and the latter as the negative continuation.
+The selected source files map to sycophancy, deception, evaluation
+gaming, or environment exploitation according to the behavior being
+probed. 
+
+ Alignment-faking data. 
+
+ The protected track combines samples from the Anthropic
+alignment-faking RL corpus ( MacDiarmid et al. 2025 ) 
+with 106 human-labeled alignment-faking responses
+ ( Greenblatt et al. 2024 ) . For the RL corpus, we use
+a stratified DuckDB query that selects up to five positive and five
+negative rows per combination of experiment and model initialization. The additional 106 rows
+use the source-provided human binary label directly. Following the
+source distribution protocol, every stored response is XOR-encrypted
+and prefixed with the source canary, so protected responses are
+distributed only as ciphertext. 
+
+ Terminal Wrench. 
+
+ Terminal Wrench contains terminal-agent trajectories from
+reward-hackable environments, together with baseline runs,
+legitimate solutions produced under an attacker instruction, and
+unsuccessful attacker attempts ( Bercovich et al. 2026 ) .
+We collapse the source outcome classes into the RH-Detect field: rewarded_serious_exploit and
+ rewarded_nonserious_hack are positive, whereas
+ baseline and attacker_legitimate_solve are
+negative; the latter are challenging cases for detectors.
+Ambiguous no_reward attempts are retained but excluded
+from the binary population. 
+
+ CheatBench. 
+
+ CheatBench contains labeled agent trajectories with source-provided
+ cheating , attempt , and benign outcomes
+ ( CheatBench Maintainers 2026 ) . We collapse these labels and derive the
+RH-Detect binary field by treating successful
+ cheating traces as positive and benign traces as
+negative; the 41 unsuccessful attempt traces are retained
+but excluded from binary evaluation. 
+
+ Source 
+ Track 
+ Orig. rows 
+ Exp. units 
+ Elig. units 
+ Pos. ratio 
+ Pairing 
+ Construction 
+ Verification 
+ Response model 
+ Agentic 
+ Primary categories 
+
+ School of Reward Hacks 
+ Open-ended 
+ 1,073 
+ 2,046 
+ 2,046 
+ 0.524 
+ paired a 
+ prompted 
+ LLM judge 
+ GPT-4o 
+ no 
+ style, eval. gaming 
+
+ Jozdien realistic RH 
+ Open-ended 
+ 1,605 
+ 1,605 
+ 1,605 
+ 0.509 
+ single 
+ prompted 
+ none 
+ Claude Sonnet 4 
+ no 
+ style, eval. gaming 
+
+ Patronus TRACE 
+ Open-ended 
+ 517 
+ 517 
+ 517 
+ 0.518 
+ single 
+ prompted 
+ human 
+ Claude Opus 4.5 
+ yes 
+ eval. gaming, env. 
+
+ METR MALT 
+ Open-ended 
+ 572 
+ 572 
+ 419 
+ 0.461 
+ single b 
+ mixed c 
+ human 
+ per transcript 
+ yes 
+ decept., env., eval. 
+
+ Countdown-Code 
+ Open-ended 
+ 334 
+ 334 
+ 334 
+ 0.500 
+ single b 
+ unprompted 
+ deterministic 
+ o4-mini 
+ no 
+ reward tampering 
+
+ Matonski prompts 
+ Open-ended 
+ 50 
+ 100 
+ 100 
+ 0.500 
+ paired 
+ prompted 
+ LLM judge 
+ GPT-OSS-20B 
+ no 
+ eval. gaming 
+
+ Terminal Wrench 
+ Open-ended 
+ 15,905 
+ — 
+ 7,200 e 
+ 0.504 
+ single f 
+ mixed g 
+ upstream 
+ three models h 
+ yes 
+ style, eval. gaming, env., decept. 
+
+ CheatBench 
+ Open-ended 
+ 4,472 
+ — 
+ 4,431 e 
+ 0.190 
+ single 
+ unprompted 
+ upstream 
+ per row 
+ yes 
+ eval. gaming 
+
+ RH generalization (keing1) 
+ Multiple-choice 
+ 26,949 
+ 53,898 
+ 53,898 
+ 0.500 
+ paired 
+ prompted 
+ deterministic 
+ — 
+ no 
+ sycoph., tamper., decept. 
+
+ Anthropic model-written evals 
+ Multiple-choice 
+ 39,811 
+ 79,622 
+ 79,622 
+ 0.500 
+ paired 
+ prompted 
+ deterministic 
+ — 
+ no 
+ sycoph., decept., env. 
+
+ Alignment faking (RL + human) 
+ Protected 
+ 1,473 
+ 1,473 
+ 1,473 
+ 0.498 
+ single 
+ unprompted 
+ LLM judge / human d 
+ recorded per row 
+ no 
+ deception 
+
+ Table S1: Complete source inventory. The complete benchmark stores 92,761 rows: 24,528 open-ended, 66,760 multiple-choice, and 1,473 protected. Nine datasets were
+available for the reported experiments and contribute 72,384 rows.
+Within the six open-ended datasets used in those experiments, 4,151
+stored rows expand to 5,174 evaluation units, of which 5,021 satisfy
+the 32,000-token eligibility policy. Terminal Wrench and CheatBench
+contribute 20,377 additional open-ended rows but do not enter any
+reported analysis. For these two datasets, the dash under “Exp. units”
+indicates that no reported experiment population was constructed.
+Positive ratios are computed over eligible units.
+ a 973 of 1,073 rows are paired; 100 carry only the hacking
+continuation.
+ b Clean examples are separate transcripts rather than paired
+continuations of the same prompt: MALT uses seeded task/model matching,
+Countdown-Code uses class-balanced sampling from the same corpus.
+ c Elicited-sabotage rows are prompted; the remainder are
+unprompted.
+ d 1,367 RL rows carry LLM-judge labels; 106 carry human labels.
+ e Binary-eligible canonical rows; Terminal Wrench excludes 1,441
+ambiguous no-reward trials and 7,264 representation-variant rows,
+CheatBench excludes 41 failed attempts.
+ f 1,216 attacker-legitimate-solve rows are included in the negative
+class and provide challenging legitimate-solution examples.
+ g Attacker runs are prompted, including the no-reward attempts
+and the attacker-legitimate solves; baseline runs are unprompted.
+ h Claude Opus 4.6, Gemini 3.1 Pro, and GPT-5.4. 
+
+ A.2 Labels and Taxonomy 
+
+ Binary labels are inherited from source outcomes or derived
+deterministically from source-provided signals; RH-Detect does not
+replace them with detector judgments. Rows from the nine datasets
+used in the reported experiments receive one of six behavior
+categories: output style gaming, sycophancy, evaluation gaming,
+environment exploitation, reward tampering, or deception, together
+with a subcategory. 
+
+ Source 
+
+ Signal 
+
+ Category / subcategory 
+
+ SoRH 
+
+ style keywords in cheat_method 
+
+ style / verbosity 
+
+ SoRH 
+
+ metric or eval terms otherwise 
+
+ eval. / metric manip. 
+
+ Jozdien 
+
+ code splits 
+
+ eval. / hardcoded lookup 
+
+ Jozdien 
+
+ literary splits 
+
+ style / verbosity 
+
+ TRACE 
+
+ prefixes 1.1 / 1.2 / 1.3 
+
+ eval. / test mod., lookup, coverage 
+
+ TRACE 
+
+ prefix 1.4 
+
+ env. / filesystem-runtime 
+
+ MALT 
+
+ sabotage 
+
+ deception / strategic 
+
+ MALT 
+
+ hardcoded_solution 
+
+ eval. / hardcoded lookup 
+
+ MALT 
+
+ bypass_constraints 
+
+ env. / filesystem-runtime 
+
+ MALT 
+
+ ignores_task_instr. 
+
+ eval. / test modification 
+
+ MALT 
+
+ matched clean 
+
+ category of task family 
+
+ Countdown 
+
+ verifier check removed 
+
+ tampering / reward code 
+
+ Matonski 
+
+ all rows 
+
+ eval. / answer-key extraction 
+
+ keing1 
+
+ per-file assignment 
+
+ sycophancy, tampering, deception, eval. 
+
+ Anthropic evals 
+
+ per-file assignment 
+
+ sycophancy, deception, env., eval. 
+
+ Alignment faking 
+
+ faking metadata 
+
+ deception / alignment faking 
+
+ Terminal Wrench 
+
+ security-downgrading ,
+ deceptive-rationalization 
+
+ deception / strategic deception 
+
+ Terminal Wrench 
+
+ binary-hijacking ,
+ mutable-input-tampering 
+
+ env. / filesystem–runtime interference 
+
+ Terminal Wrench 
+
+ keyword-gaming 
+
+ style / keyword stuffing 
+
+ Terminal Wrench 
+
+ structural-extraction 
+
+ eval. / answer-key extraction 
+
+ Terminal Wrench 
+
+ metric-spoofing 
+
+ eval. / metric or timing manipulation 
+
+ Terminal Wrench 
+
+ constraint-loophole 
+
+ eval. / specification loophole 
+
+ Terminal Wrench 
+
+ algorithmic-simplification 
+
+ eval. / coverage gaming 
+
+ Terminal Wrench 
+
+ output-spoofing ,
+ hollow-implementation 
+
+ eval. / hardcoded lookup 
+
+ CheatBench 
+
+ harness_leaks_answer ,
+ secret_discovery_in_environment 
+
+ eval. / answer-key extraction 
+
+ CheatBench 
+
+ harness_leaks_verifier 
+
+ eval. / verifier or test extraction 
+
+ CheatBench 
+
+ verifier_exploitation 
+
+ eval. / verifier exploitation 
+
+ CheatBench 
+
+ secret_discovery_via_web_search 
+
+ eval. / external answer lookup 
+
+ Table S2: Label mapping and taxonomy construction. Full
+keyword lists and mappings appear in the released ingestion
+code. 
+
+ A.3 Filtering, Expansion, and Splits 
+
+ A stored paired row expands into two evaluation units; single
+continuations yield one unit. When a source pairs continuations for
+the same prompt, both units sharing the same exact prompt hash are assigned jointly
+to the same split, and are resampled as a single cluster in
+bootstrap procedures; sources without
+prompt-level pairs retain native clean examples where available
+(Jozdien and TRACE), use separately matched clean trajectories (MALT),
+or use class-balanced clean samples from the same corpus
+(Countdown-Code). Token length is computed per row from the concatenated message
+contents using the cl100k_base encoding implemented in
+the tiktoken tokenizer library; the primary
+open-ended policy retains rows under 32,000 tokens, and per-experiment length policies
+appear in Table S3 .
+The prompt hash is computed from the canonical JSON prompt
+serialization; the supervised experiments use two split protocols,
+six source-held-out rotations for cross-source transfer and partitions within each track grouped by prompt-hash for cross-track
+transfer, and no hash crosses a train/test boundary in either. 
+
+ Appendix B Evaluation Interfaces and Representation Study 
+
+ B.1 Detector Protocol 
+
+ All zero-shot evaluations use the prompt listed in
+Table S3 , reproduced verbatim in
+Table S4 : the detector reads the rendered
+transcript and returns JSON with a reasoning string and
+ prob_reward_hacking from 0 to 100, normalized to a score in
+ . The detector receives no source, category, label, or
+verification metadata. The renderer is role-agnostic: it joins bare
+message contents with blank lines in the original order and adds no
+speaker labels, so the results characterize this plain-text monitoring
+interface. The six API detectors are: 
+
+ 1. 
+
+ qwen/qwen3.5-flash-02-23 ; 
+
+ 2. 
+
+ google/gemini-3.1-flash-lite-preview ; 
+
+ 3. 
+
+ x-ai/grok-4.1-fast ; 
+
+ 4. 
+
+ meta-llama/llama-4-maverick ; 
+
+ 5. 
+
+ meta-llama/llama-4-scout ; 
+
+ 6. 
+
+ openai/gpt-5-nano . 
+
+ They are called through one gateway at temperature 0 with a 4,096-token output
+limit.
+Grok became unavailable through the gateway before the MALT scoring;
+it covers non-MALT units and is excluded from analyses
+requiring complete six-source coverage. The local judge for the
+representation and training studies is Qwen/Qwen3.5-4B , served
+with vLLM at temperature 0, top- 1.0, and seed 20260710. 
+
+ (a) Repository artifacts 
+
+ Component 
+
+ Repository source 
+
+ Interface contract 
+
+ Zero-shot detector 
+
+ detector_system.txt , detector_user.txt 
+
+ JSON with reasoning and prob_reward_hacking 
+
+ E2/E3 transformation 
+
+ src/eval/eval_rh/transcripts.py 
+
+ Modes strip and thinking_only ; exact rules in
+§ B.2 
+
+ E4/E4b extractor 
+
+ extractor_eae_system.txt ,
+ extractor_eae_user.txt 
+
+ Sections TASK and SUSPICIOUS EXCERPTS ; verbatim
+quotes and a “none observed” branch 
+
+ Single-token SFT 
+
+ detector_yes_no_system.txt ,
+ detector_yes_no_user.txt 
+
+ Assistant prefill Answer: ; one leading-space YES or
+ NO token 
+
+ Multiple-choice SFT 
+
+ detector_user_multichoice_yes_no.txt 
+
+ The same label-token interface applied to the selected answer 
+
+ GRPO 
+
+ detector_grpo_boxed_think_system.txt ,
+ detector_grpo_boxed_think_user.txt ; parser
+ boxed_probability_v1 
+
+ <think> … </think> followed by
+ \boxed{N} , 
+
+ API comparison set 
+
+ report/dev_subset_units.txt 
+
+ 800 frozen unit keys (410 positive, 390 negative; 761 prompt groups) 
+
+ (b) Final experiment interfaces 
+
+ Experiment 
+
+ Evaluation population 
+
+ Length policy 
+
+ Score 
+
+ Invalid outputs 
+
+ Zero-shot API 
+
+ 5,021 eligible open-ended units 
+
+ 32,000-token eligibility; 4,096-token output 
+
+ verbalized probability 
+
+ missing; excluded 
+
+ Local E1–E3 
+
+ fixed 4,988-unit common population from the 28,000-token
+eligible set 
+
+ 28,000-token eligibility; 4,096-token output 
+
+ verbalized
+probability 
+
+ missing; excluded 
+
+ API E1–E4b 
+
+ fixed 800-unit comparison set from the
+28,000-token-eligible pair-safe train/validation population; test and
+MALT excluded 
+
+ 4,096-token extractor/detector output limits 
+
+ verbalized
+probability 
+
+ extractor failure: raw fallback; detector failure: missing 
+
+ Source-held-out SFT 
+
+ eligible units of the held-out source 
+
+ 4,096-token rendered sequence; middle truncation 
+
+ normalized YES/NO
+log probability 
+
+ always defined 
+
+ Cross-track SFT 
+
+ pair-safe tests: 13,360 multiple-choice and 514
+open-ended units 
+
+ 4,096-token rendered sequence; middle truncation 
+
+ normalized YES/NO log probability 
+
+ always defined 
+
+ Targeted GRPO 
+
+ held-out SoRH (2,046) and seen-source probe (251) 
+
+ 4,096-token rendered prompt; 2,048-token completion 
+
+ boxed probability 
+
+ neutral 0.5 in the all-units endpoint 
+
+ Table S3: Implementation and interface summary. Prompt basenames are
+under src/eval/prompts/ unless another path is shown. 
+
+ System prompt ( detector_system.txt ) 
+
+ You follow instructions exactly. You answer in JSON only with no
+markdown code fences. 
+
+ User prompt ( detector_user.txt ) 
+
+ You are evaluating whether an AI assistant’s behavior in the
+transcript below constitutes reward hacking or evaluation gaming:
+optimizing for proxy rewards, metrics, or eval success in ways that
+are misaligned with the intended task (e.g., gaming benchmarks or eval
+criteria, tampering with tests/reward, deceptive alignment,
+sandbagging, sycophancy to please evaluators, exploiting tool/sandbox
+interfaces). 
+ Read the transcript. Answer in JSON only, no markdown, with exactly
+these keys: 
+ - "reasoning": string — careful reasoning about whether
+the AI system engaged in reward hacking or evaluation gaming. Reason
+concisely if it’s very obvious, but take your time if you need to
+weight different considerations carefully. 
+ - "prob_reward_hacking": number between 0 and 100 — your
+estimated percent probability that the user would want you to flag
+this as a potential reward hack. 
+ Transcript: 
+ {{TRANSCRIPT}} 
+
+ Table S4: Verbatim zero-shot detector prompts.
+ {{TRANSCRIPT}} is replaced by the rendered transcript;
+line wrapping is presentational. 
+
+ B.2 Transcript Representations E1–E4b 
+
+ Four transcript representations and one cross-extractor variant are
+evaluated. E1 passes the raw role-agnostic transcript. E2 removes
+detected reasoning spans while preserving the remaining transcript. E3
+retains only the detected reasoning spans. E4 first extracts task
+information and suspicion-relevant evidence verbatim and then applies
+the unchanged detector prompt to that evidence document, using the same
+model as extractor and judge. E4b keeps the Qwen Flash judge fixed but
+uses GPT-5 Nano as the extractor. Table S5 gives the paired contrasts. 
+
+ Reasoning-span rules (E2 and E3). 
+
+ E2 retains externally visible behavior, whereas E3 retains reasoning
+content. For non-agentic rows, reasoning is defined as text enclosed by
+matched <think> or <thinking> tags, allowing
+attributes and matched case-insensitively across line breaks; spans are
+processed in document order, and an unclosed tag is ignored. The task
+prompt is unchanged in both conditions: E2 removes all detected
+reasoning spans from the continuation, while E3 keeps only those spans. Agentic trajectories usually lack explicit
+reasoning tags, so the assignment is applied within each assistant
+message: text before the submit call, or before the first tool
+call when the message contains no submit call, is assigned to E3, and
+the message content from that boundary onward is assigned to E2.
+Assistant messages containing no tool or submit call are assigned
+entirely to E3, and user and tool messages are always assigned to E2. Thus, agentic E2 contains the externally observable
+interaction, whereas agentic E3 contains reasoning material only. The implementation is referenced in
+Table S3 . 
+
+ Extraction (E4 and E4b). 
+
+ E4 uses self-extraction (Qwen Flash extracts for the Qwen Flash judge,
+GPT-5 Nano for the GPT-5 Nano judge); E4b replaces only the extractor
+for the Qwen Flash judge. The extractor runs at temperature 0 with a
+4,096-token output limit under the contract summarized in Table S3 ; validation accepts an output only when
+each required section appears exactly once and in order with non-empty
+content. If any invalid or empty output triggers, the exact raw input text is used as the detector
+input for that unit. 
+
+ Judge 
+ Contrast 
+ AUROC 
+ 95% CI 
+
+ Matched local population ( ) 
+
+ Qwen3.5-4B 
+ E2 E1 
+
+ Qwen3.5-4B 
+ E3 E1 
+
+ Fixed API population ( ) 
+
+ Qwen Flash 
+ E2 E1 
+
+ Qwen Flash 
+ E3 E1 
+
+ Qwen Flash 
+ E4 E1 
+
+ Qwen Flash 
+ E4b E1 
+
+ Qwen Flash 
+ E4b E4 
+
+ GPT-5 Nano 
+ E2 E1 
+
+ GPT-5 Nano 
+ E3 E1 
+
+ GPT-5 Nano 
+ E4 E1 
+
+ Table S5: Paired AUROC contrasts for the representation study, with 95%
+prompt-hash-cluster bootstrap intervals on fixed common populations. 
+
+ Appendix C Additional Zero-Shot Analysis 
+
+ Score distributions. 
+
+ Detector scores are raw integers on a 0–100 scale, and the fixed
+decision rule of the main text flags a transcript when the normalized
+score reaches . Figure S1 is the
+score-distribution figure: Gemini (FPR
+0.022) and Qwen Flash (FPR 0.035) concentrate benign scores near
+zero and hack scores near 100, whereas GPT-5 Nano spreads benign
+scores broadly across the range, producing its 0.353
+false-positive rate. 
+
+ MALT/TRACE source-group contrast. 
+
+ Table S6 directly supports the MALT/TRACE claim of the main text: for the four stronger complete-coverage models, every
+difference (other sources minus MALT+TRACE) is positive with a 95%
+interval excluding zero under threshold-based, class-balanced, and
+threshold-free metrics alike, whereas GPT-5 Nano shows the contrasting
+profile with negative differences except for TPR. The comparison is
+descriptive: source, task, transcript length, category mixture, tool
+format, and agentic status are confounded. 
+
+ Figure S1: Suspicion score distributions for hack (red) and benign (blue)
+transcripts. The vertical line marks the raw score 50, corresponding to
+ on the normalized score. 
+
+ Model 
+ Acc. [CI] 
+ Bal. acc. [CI] 
+ AUROC [CI] 
+ AUPRC [CI] 
+ TPR [CI] 
+
+ Qwen 3.5 Flash 
+
+ Gemini 3.1 FL 
+
+ Llama 4 Maverick 
+
+ Llama 4 Scout 
+
+ GPT-5 Nano 
+
+ Table S6: Differences between the four other open-ended sources
+( for every model) and MALT plus TRACE at 
+(other minus MALT+TRACE) with 95% prompt-hash-clustered bootstrap
+intervals. Scored MALT+TRACE populations: 936 (Qwen Flash, GPT-5
+Nano), 934 (Gemini), 935 (Maverick), 908 (Scout). Grok is excluded
+because the contrast requires complete six-source coverage. 
+
+ Appendix D SFT and Cross-Track Transfer 
+
+ D.1 Single-Token Source-Held-Out SFT 
+
+ The SFT study is full-parameter fine-tuning of the pinned Qwen3.5-4B
+under strict leave-one-source-out rotations. Each unit is rendered with
+the Qwen chat template as the SFT system and user
+prompts of Table S3 followed by the assistant prefill
+ Answer: ; exactly one supervised token is appended, the
+leading-space YES on hacking units or NO on clean
+units, all prompt and prefill positions are masked, and inputs
+exceeding the 4,096-token rendered budget are middle-truncated,
+retaining the beginning and end. Evaluation normalizes the conditional
+probabilities of the two label tokens into a score in ;
+accuracy, where reported, uses the fixed threshold 0.5, and scores are
+never reoriented after observing test labels. Each rotation removes
+one source completely, constructs training data from the remaining
+sources under the 32,000-token eligibility rule, groups examples by
+exact prompt hash into approximately 80/10/10 partitions, trains three
+seeds on the identical partition, and evaluates every final checkpoint
+only on the omitted source; training sets are approximately class
+balanced, with at most 52% being positive.
+Table S7 reports the full held-out metrics, and
+Table S8 gives the shared configuration and
+per-rotation accounting. 
+
+ AUROC 
+ Accuracy 
+ Brier 
+ NLL 
+ ECE 
+
+ Held-out source 
+
+ Base 
+ SFT 
+ Base 
+ SFT 
+ Base 
+ SFT 
+ Base 
+ SFT 
+ Base 
+ SFT 
+
+ Countdown 
+ 334 
+ 0.969 
+ 0.999 0.001 
+ 0.760 
+ 0.967 
+ 0.173 
+ 0.025 
+ 0.519 
+ 0.124 
+ 0.282 
+ 0.031 
+
+ Jozdien 
+ 1,605 
+ 0.745 
+ 0.984 0.014 
+ 0.691 
+ 0.900 
+ 0.253 
+ 0.090 
+ 0.747 
+ 0.421 
+ 0.254 
+ 0.093 
+
+ Matonski 
+ 100 
+ 0.977 
+ 0.982 0.009 
+ 0.930 
+ 0.827 
+ 0.085 
+ 0.154 
+ 0.319 
+ 1.150 
+ 0.181 
+ 0.169 
+
+ MALT 
+ 419 
+ 0.881 
+ 0.937 0.038 
+ 0.885 
+ 0.893 
+ 0.115 
+ 0.091 
+ 0.403 
+ 0.381 
+ 0.177 
+ 0.091 
+
+ TRACE 
+ 517 
+ 0.716 
+ 0.742 0.025 
+ 0.576 
+ 0.567 
+ 0.291 
+ 0.428 
+ 0.822 
+ 3.707 
+ 0.281 
+ 0.430 
+
+ SoRH 
+ 2,046 
+ 0.869 
+ 0.729 0.055 
+ 0.767 
+ 0.631 
+ 0.161 
+ 0.350 
+ 0.488 
+ 2.457 
+ 0.105 
+ 0.340 
+
+ Average per-source 
+ 5,021 
+ 0.859 
+ 0.895 0.021 
+ 0.768 
+ 0.798 
+ 0.180 
+ 0.190 
+ 0.550 
+ 1.373 
+ 0.213 
+ 0.192 
+
+ Table S7: Strict leave-one-source-out SFT metrics. Base is one frozen
+zero-shot evaluation per source; SFT entries are three-seed means
+(AUROC with across-seed sample SD). Accuracy uses the fixed threshold
+0.5 on the normalized YES/NO score; Brier, NLL, and ECE are
+lower-is-better. 
+
+ (a) Shared training configuration 
+
+ Method 
+
+ full-parameter SFT (TRL) 
+
+ Learning rate 
+
+ , cosine, warmup 0.03 
+
+ Effective batch size 
+
+ 8 (2 per device 4 accum.) 
+
+ Epochs / seeds 
+
+ 1 / {42, 31415, 20260710} 
+
+ Sequence budget 
+
+ 4,096 tokens, middle truncation 
+
+ Loss 
+
+ prompt masked; one label token 
+
+ Readout 
+
+ normalized YES/NO log probability 
+
+ (b) Held-out rotation accounting 
+
+ Held-out source 
+ Train 
+ Trunc. 
+ Steps 
+
+ Countdown 
+ 3,724 
+ 677 
+ 466 
+
+ Jozdien 
+ 2,707 
+ 672 
+ 339 
+
+ Matonski 
+ 3,911 
+ 668 
+ 489 
+
+ MALT 
+ 3,682 
+ 426 
+ 461 
+
+ TRACE 
+ 3,577 
+ 265 
+ 448 
+
+ SoRH 
+ 2,354 
+ 677 
+ 295 
+
+ Table S8: Source-held-out SFT configuration and per-rotation training
+units, middle-truncated inputs, and optimizer steps per seed. 
+
+ Averaging the
+six held-out-source AUROCs equally, the score rises from
+0.859 to
+0.895 0.021, while
+Brier score changes from 0.180 to
+0.190, NLL increases from 0.550 to
+1.373, and ECE decreases from 0.213
+to 0.192: ranking improves on five of six sources while
+the proper scoring rules worsen, and the SoRH rotation degrades in
+ranking as well. 
+
+ D.2 Cross-Track Transfer 
+
+ The cross-track experiment trains the same single-token objective
+separately on each track under split grouped by prompt hash and
+evaluates on both tracks with the fixed label orientation, i.e., YES marks the hacking continuation. Unlike the primary studies, the
+open-ended split uses all 5,174 expanded units: long inputs are
+middle-truncated to the 4,096-token rendered budget rather than
+excluded, affecting 742 of 4,073 training, 171 of 587 validation, and
+108 of 514 test units. The multiple-choice partitions contain 106,816
+training, 13,344 validation, and 13,360 test units; every
+multiple-choice input fits the same budget, so no multiple-choice unit required
+truncation. One epoch takes 510 open-ended and 13,352
+multiple-choice optimizer steps per seed, and because all six
+open-ended sources appear in the open-ended training partition, the
+open-ended test split does not measure source held-out transfer. The three-seed results appear in Table 7 . 
+
+ Appendix E Targeted GRPO Case Study 
+
+ The GRPO study trains one leave-one-source-out fold, School of Reward
+Hacks held out, with a single seed. The fold leaves 2,354 training
+units from the five remaining sources; each optimizer step consumes
+four distinct prompts with generations each, so one epoch runs
+exactly 588 steps and consumes 2,352 units, the sampler dropping the
+final incomplete group of two units. The model emits a reasoning block
+followed by one boxed integer 
+(Table S3 ); with and binary label
+ , a parseable completion receives the reward
+ , one minus the Brier loss. Parsing determines only whether a rollout receives a defined
+reward, the reasoning text is never scored, and the observed increase
+in parse validity is not directly rewarded. 
+
+ Objective. 
+
+ Let denote the reward of completion for prompt
+ , let index the parse-valid completions of the
+group, and let be the token-level importance ratio between
+the current and rollout policies. Each completion receives the
+group-relative advantage 
+
+ and the per-prompt loss is 
+
+ where is clipped to
+ , is
+the group size, and is the fixed normalizer of Dr. GRPO,
+equal to the maximum completion length of the run rather than each
+sequence’s realized length. Invalid completions are excluded from
+ and receive zero advantage, so an all-invalid group
+contributes no gradient; the active-token mask zeroes
+completions truncated at the generation limit; rewards are not divided
+by the group standard deviation; and , so no KL penalty is
+applied. 
+
+ Evaluation. 
+
+ Checkpoints are evaluated against the frozen base model on the
+seen-source probe and the fully held-out SoRH source, using a generation-based probability readout with
+deterministic decoding at temperature 0 and the length policy of
+Table S3 . The primary endpoint scores every unit,
+assigning the pre-specified neutral 0.5 to unparseable completions.
+Table S9 gives the configuration and endpoints: the
+held-out SoRH AUROC point estimate increases by 0.018, parse validity
+rises, and generation-limit truncation falls, so unlike single-token
+SFT this run produces no SoRH regression. The result is specific to
+the tested model, reward, decoding policy, single seed, and single
+fold; replication across seeds and held-out sources is required to
+establish a general advantage. 
+
+ (a) Core configuration 
+
+ Learning rate 
+ , cosine, warmup 0.1 
+
+ Generations / prompts per step 
+ 8 / 4 (32 rollouts) 
+
+ Steps (one epoch) 
+ 588 
+
+ Consumed units 
+ 2,352 
+
+ Clipping / 
+ 0.2 / 0.28 
+
+ Max prompt / completion 
+ 4,096 / 2,048 tokens 
+
+ Loss 
+ dr_grpo , unscaled rewards, 
+
+ Rollout temperature / seed 
+ 0.9 / 42 (single seed) 
+
+ (b) Endpoints (base final, step 588) 
+
+ Endpoint / measure 
+ Base 
+ Final 
+
+ Seen-source probe ( ) 
+ 0.679 
+ 0.714 
+
+ Held-out SoRH ( ) 
+ 0.862 
+ 0.879 
+
+ Parse validity (SoRH) 
+ 0.613 
+ 0.675 
+
+ Truncated at limit (SoRH) 
+ 0.424 
+ 0.341 
+
+ Table S9: Targeted GRPO configuration and endpoints. The first two
+endpoint rows are all-units AUROC with unparseable completions scored
+0.5; the last two are fractions of held-out completions. 
+
+ Appendix F Release and Reproducibility 
+
+ Release and access. 
+
+ The dataset and code will be released upon publication. The release
+package includes the row-level data required for the
+reported open-ended and multiple-choice experiments rather than the
+entire unified benchmark. Specifically, it contains all 4,151
+primary open-ended rows and all 66,760 multiple-choice rows.
+Terminal Wrench, CheatBench, and the protected-response track are
+not included at row level in the package. The accompanying ingestion
+and integration code reconstructs the complete 92,761-row benchmark
+from the original upstream sources. When the protected track is
+reconstructed, its responses remain XOR-encrypted and prefixed with
+the source canary. 
+
+ Reproducibility. 
+
+ The package includes the experiment-related data tables, the unified
+schema, source ingestion and harmonization code, taxonomy-mapping
+code, verbatim detector and training prompts, and the exact opaque
+memberships for every reported experiment. It also provides
+prompt-hash split validation, the API and vLLM evaluation harnesses,
+and the final SFT and GRPO training scripts with fixed seeds. The
+pinned environment file records the reported library versions
+(TRL 1.7.0, Transformers 5.12.1, Torch 2.11.0, and vLLM 0.23.0). 
+
+ The package contains no precomputed predictions, metrics, figures,
+raw API responses, or checkpoints; these artifacts are generated
+under a user-selected output directory when the workflows are
+rerun. Reconstructing the complete benchmark may require access to
+the original upstream sources, whereas rerunning the reported
+experiments from the packaged tables requires the relevant API
+credentials, model weights, and compute resources. Training used one
+H100 GPU with 80 GB of memory, while a 40 GB MIG partition suffices
+for the reported local evaluations. Under the provider pricing used
+for the reported runs, evaluating one detector configuration cost
+less than $5; current prices may differ. 
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors 
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below: 
+
+ Click the "Report Issue" ( ) button, located in the page header. 
+
+ Tip: You can select the relevant text first, to include it in your report. 
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all. 
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions . 
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from 
+
+

@@ -1,0 +1,2574 @@
+SOURCE: https://arxiv.org/html/2404.16821
+
+How Far Are We to GPT-4V? Closing the Gap to Commercial Multimodal Models with Open-Source Suites
+
+ Report GitHub Issue
+
+ ×
+
+ Title:
+
+ Content selection saved. Describe the issue below:
+
+ Description:
+
+ Submit without GitHub
+ Submit in GitHub
+
+ arXiv is now an independent nonprofit!
+ Learn more
+ ×
+
+ Back to arXiv
+
+ Why HTML?
+
+ Report Issue
+
+ Back to Abstract
+
+ Download PDF
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+2.1 Proprietary Commercial MLLMs
+
+2.2 Open-Source MLLMs
+
+2.3 Vision Foundation Models for MLLMs
+
+3 InternVL 1.5
+
+3.1 Overall Architecture
+
+3.2 Strong Vision Encoder
+
+3.3 Dynamic High-Resolution
+
+3.4 High-Quality Bilingual Dataset
+
+4 Experiments
+
+4.1 Implementation Details.
+
+4.2 Comparison with State-of-the-Art MLLMs
+
+4.2.1 Quantitative Results on 18 Benchmarks
+
+4.3 Ablation Study
+
+4.3.1 Qualitative Results on Different Scenes
+
+5 Conclusion
+
+References
+
+ License: arXiv.org perpetual non-exclusive license
+
+arXiv:2404.16821v2 [cs.CV] 29 Apr 2024
+
+How Far Are We to GPT-4V? 
+Closing the Gap to Commercial Multimodal Models with Open-Source Suites
+
+Zhe Chen,
+Weiyun Wang,
+Hao Tian,
+Shenglong Ye,
+Zhangwei Gao,
+Erfei Cui,
+Wenwen Tong,
+
+Affiliation: SenseTime Research 
+
+Kongzhi Hu,
+Jiapeng Luo,
+Zheng Ma,
+Ji Ma,
+Jiaqi Wang,
+Xiaoyi Dong,
+Hang Yan,
+Hewei Guo,
+
+Affiliation: Shanghai AI Laboratory 
+
+Affiliation: SenseTime Research 
+
+Conghui He,
+Botian Shi,
+Zhenjiang Jin,
+Chao Xu,
+Bin Wang,
+Xingjian Wei,
+Wei Li,
+Wenjian Zhang,
+
+Affiliation: Shanghai AI Laboratory 
+
+Bo Zhang,
+Pinlong Cai,
+Licheng Wen,
+Xiangchao Yan,
+Min Dou,
+Lewei Lu,
+Xizhou Zhu,
+Tong Lu,
+
+Affiliation: Shanghai AI Laboratory 
+
+Affiliation: SenseTime Research 
+
+Affiliation: Tsinghua University 
+
+Dahua Lin,
+Yu Qiao,
+Jifeng Dai,
+Wenhai Wang
+
+Affiliation: 
+
+Affiliation: Shanghai AI Laboratory 
+
+Affiliation: Tsinghua University 
+
+Nanjing University 
+Fudan University 
+The Chinese University of Hong Kong
+Demo: https://internvl.opengvlab.comCode: https://github.com/OpenGVLab/InternVLModel: https://huggingface.co/OpenGVLab/InternVL-Chat-V1-5
+
+Abstract
+ 
+In this report, we introduce InternVL 1.5, an open-source multimodal large language model (MLLM) to bridge the capability gap between open-source and proprietary commercial models in multimodal understanding.
+We introduce three simple improvements:
+(1) Strong Vision Encoder: we explored a continuous learning strategy for the large-scale vision foundation model—InternViT-6B, boosting its visual understanding capabilities, and making it can be transferred and reused in different LLMs.
+(2) Dynamic High-Resolution: we divide images into tiles ranging from 1 to 40 of 448 \times 448 pixels according to the aspect ratio and resolution of the input images, which supports up to 4K resolution input.
+(3) High-Quality Bilingual Dataset: we carefully collected a high-quality bilingual dataset that covers common scenes, document images,
+and annotated them with English and Chinese question-answer pairs, significantly enhancing performance in OCR- and Chinese-related tasks.
+We evaluate InternVL 1.5 through a series of benchmarks and comparative studies.
+Compared to both open-source and proprietary commercial models, InternVL 1.5 shows competitive performance, achieving state-of-the-art results in 8 of 18 multimodal benchmarks.
+
+††
+
+ * equal contribution; \dagger interns at OpenGVLab, Shanghai AI Laboratory; 🖂 corresponding author (wangwenhai@pjlab.org.cn). 
+
+1 Introduction
+
+Figure 1: InternVL 1.5 versus proprietary commercial models.
+The results of these benchmarks show that InternVL 1.5 achieves performance comparable to leading proprietary models.
+
+Large language models (LLMs) have been instrumental in advancing artificial general intelligence (AGI) systems, demonstrating remarkable abilities in processing open-world language tasks.
+Leveraging the advancements in LLMs, multimodal large language models (MLLMs) [116, 5, 63, 62, 142, 18, 84, 23, 92] have made significant strides, facilitating complex vision-language dialogues and interactions that bridge the gap between textual and visual information.
+Despite these achievements, there remains a noticeable divide between the capabilities of open-source models and proprietary commercial models, e.g., GPT-4V [87], Gemini series [92, 107], and Qwen-VL-Max [5].
+
+This gap is mainly reflected in the following three aspects:
+(1) Parameter Scale: Recent proprietary commercial MLLMs [87, 92, 5, 102] typically scales not less than 100 billion parameters, while open-source models commonly employ a 300 million parameter vision foundation model (VFM), which is integrated with either a 7 billion or 13 billion LLMs.
+(2) Image Resolution: Proprietary commercial models typically employ a dynamic resolution approach, preserving the original aspect ratio to facilitate detailed scene and document understanding. In contrast, open-source models generally train with fixed resolutions [62, 18, 23, 142, 117, 71], such as 336 \times 336 and 448 \times 448, leading to a considerable gap in capabilities relative to commercial counterparts.
+(3) Multilingual Capability: Proprietary models often leverage extensive multilingual datasets for training, enhancing their performance across diverse languages. However, open-source models predominantly utilize English data, relying on the zero-shot capabilities of LLMs for other languages, e.g. LLaVA-NeXT [64]. This results in sub-optimal performance in non-English scene understanding and OCR tasks.
+
+To bridge the gap, we introduce InternVL 1.5, integrating three major improvements to enhance its performance and usability.
+(1) We implement a continuous learning approach to a large-scale VFM—InternViT-6B [18], refining it using high-quality image-text data. This process not only enhances the model’s ability to understand visual content but also improves its adaptability across various LLMs.
+In addition, using InternLM2-20B [11] as the language foundation model also offers robust initial language processing capabilities.
+(2) We adopt a dynamic high-resolution strategy that segments images into 448 \times 448 tiles, with the number of tiles ranging from 1 to 40 (i.e., 4K resolution) based on the aspect ratio and resolution of the images. To capture global context, we additionally include a thumbnail view.
+(3) We gather a diverse collection of public datasets, covering high-quality natural scenes, charts, documents, and conversations in both English and Chinese. Additionally, we develop a data translation pipeline using open-source LLMs, which can be easily extended to more languages.
+
+These designs endow our model with several advantages:
+(1) Flexible Resolution: Similar to the “low” or “high” modes available in GPT-4V [87], InternVL 1.5 enables users to select the optimal resolution for their images, such as using low-resolution for scene subject description and high-resolution (up to 4K resolution) for document understanding, effectively balancing computational efficiency with detail preservation.
+(2) Bilingual Proficiency: InternVL 1.5 exhibits robust bilingual capabilities, proficiently handling multimodal perception and understanding tasks in both English and Chinese. Notably, in tasks related to Chinese, our model generally outperforms the leading commercial model GPT-4V [87].
+(3) Strong Visual Representation: By implementing a continuous learning strategy, we enhance the visual representation capabilities of InternViT-6B [18], making it robust to flexible input resolution and various visual domains. Benefitting from InternViT-6B’s massive parameters, our model achieves a level of visual representation that rivals the linguistic capabilities of LLMs with more than 20 billion parameters. This synergy between visual and linguistic processing endows our system with robust multimodal capabilities.
+
+We evaluated InternVL 1.5 on 18 representative multimodal benchmarks, which are categorized into four specific groups: OCR-related, general multimodal, mathematical, and multi-turn conversation benchmarks.
+Compared to both open-source and proprietary models, InternVL 1.5 shows competitive performance, achieving state-of-the-art results in 8 of 18 benchmarks.
+Notably, as shown in Figure 1, it even surpasses leading proprietary models like Grok-1.5V [125], GPT-4V [87], Claude-3 Opus [3], and Gemini Pro 1.5 [92] in four specific benchmarks, particularly in OCR-related datasets such as TextVQA [100], ChartQA [81], and DocVQA [82].
+This evaluation indicates that InternVL 1.5 has effectively narrowed the gap between open-source models and leading commercial models. We hope that our approach and open-source model weights can contribute to the development of the MLLM community.
+
+Figure 2: Characteristics of InternVL 1.5.
+InternVL 1.5 features strong visual representation through continuous learning, flexible resolution capabilities, and robust bilingual proficiency in English and Chinese, positioning it as a competitive MLLM.
+
+2 Related Work
+
+2.1 Proprietary Commercial MLLMs
+
+Large language models (LLMs) [1, 112, 122, 113, 141, 108, 104, 25, 4, 7, 106, 123, 11, 8] have greatly advanced AGI by enabling complex language tasks previously thought human-exclusive.
+Building on this, the development of proprietary commercial MLLMs represents a significant evolution.
+For example, OpenAI’s GPT-4V [87] extends GPT-4’s capabilities by incorporating visual inputs, allowing it to handle both text and image content, which stands as a significant development in the domain of MLLMs.
+Afterward, Google’s Gemini series progresses from Gemini 1.0 [107] to Gemini 1.5 [92], enhancing MLLMs with the ability to process text, images, and audio and support up to 1 million tokens, which boosts performance significantly.
+The Qwen-VL-Plus/Max are Alibaba’s leading models in the Qwen-VL series [5], renowned for superior capacity in multimodal tasks without needing OCR tools.
+Recent advancements in proprietary MLLMs include Anthropic’s Claude-3V series [3], HyperGAI’s HPT Pro [35], Apple’s MM1 [84], StepFun’s Step-1V [102], and xAI’s Grok-1.5V [125].
+
+2.2 Open-Source MLLMs
+
+The development of open-source MLLMs [138, 139, 124, 103, 2, 43, 48, 55, 51, 56, 69, 70, 110, 118, 120, 13] has significantly influenced the AGI landscape by integrating and enhancing capabilities in processing both visual and textual data.
+Over the past year, many open-source MLLMs have become well-known, including the LLaVA series [63, 62, 64], MiniGPT-4 [142], VisionLLM [116], Qwen-VL [5], CogVLM [117], Shikra [15], and others [119, 90, 18, 23].
+However, these models are typically trained on images with small, fixed resolutions such as 336 \times 336, or 448 \times 448, which leads to sub-optimal performance on images with unusual aspect ratios or document data.
+To address this issue, many approaches have been explored for training on high-resolution images. Currently, there are two common technical routes: one involves designing a dual-branch image encoder [32, 77, 121, 76, 53], and the other involves dividing a high-resolution image into many low-resolution tiles [33, 47, 55, 57, 64, 68, 126, 127, 24].
+Despite these explorations in high-resolution training, these open-source models still exhibit significant gaps in understanding documents, charts, and infographics, as well as recognizing scene texts, compared to leading commercial models.
+
+Figure 3: Overall Architecture.
+InternVL 1.5 adopts the ViT-MLP-LLM architecture similar to popular MLLMs [62, 64], combining a pre-trained InternViT-6B [18] with InternLM2-20B [11] through a MLP projector.
+Here, we employ a simple pixel shuffle to reduce the number of visual tokens to one-quarter.
+
+2.3 Vision Foundation Models for MLLMs
+
+Vision foundation models (VFMs) are a focal point of research within the MLLM community. Currently, models like CLIP-ViT [91] and SigLIP [136] are prevalently utilized; however, many studies have been conducted to find the most suitable vision encoders for MLLMs [57, 111, 76, 71].
+For instance,
+Tong et al. [111] observed notable differences in the visual patterns of CLIP and DINOv2 [88], leading to the development of a mixture-of-features module that combines these two VFMs.
+LLaVA-HR [76] introduced a dual-branch vision encoder utilizing CLIP-ViT for low-resolution pathways and CLIP-ConvNext for high-resolution pathways.
+Similarly, DeepSeek-VL [71] adopted a dual vision encoder design, using SigLIP-L for low-resolution images and SAM-B for high-resolution images.
+In this report, we propose a continuous learning strategy for our vision foundation model—InternViT-6B [18], which continuously boosts the visual understanding capabilities and can be transferred and reused across different LLMs.
+
+3 InternVL 1.5
+
+3.1 Overall Architecture
+
+As illustrated in Figure 3, InternVL 1.5 employs an architecture akin to widely-used open-source MLLMs, specifically the “ViT-MLP-LLM” configuration referenced in various existing studies [62, 64, 23, 18, 142, 63, 71]. Our implementation of this architecture integrates a pre-trained InternViT-6B [18] with a pre-trained InternLM2-20B [11] using a randomly initialized MLP projector.
+
+During training, we implemented a dynamic resolution strategy, dividing images into tiles of 448 \times 448 pixels in sizes ranging from 1 to 12, based on the aspect ratio and resolution of the input images.
+During testing, this can be zero-shot scaled up to 40 tiles (i.e., 4K resolution).
+To enhance scalability for high resolution, we simply employed a pixel shuffle operation to reduce the number of visual tokens to one-quarter of the original.
+Therefore, in our model, a 448 \times 448 image is represented by 256 visual tokens.
+
+3.2 Strong Vision Encoder
+
+In existing MLLMs [62, 63, 64, 23, 142, 5, 78], the most commonly used vision foundation model is typically a contrastively pre-trained ViT [36, 18, 91, 136].
+However, these ViTs are commonly trained on image-text pairs crawled from the Internet at a fixed low resolution (e.g., 224 \times 224), so their performance degrades when tasked with processing high-resolution images or images from sources other than the Internet, such as document images.
+
+InternViT-6B-448px-V1.2. To address this issue,
+the InternVL 1.2 update involved continuous pre-training of the InternViT-6B model.
+First, we found that the features from the fourth-to-last layer perform best for multimodal tasks, so we directly discarded the weights of the last three layers, reducing InternViT-6B from 48 layers to 45 layers.
+Then, we increased the resolution of InternViT-6B from 224 to 448 and integrated it with Nous-Hermes-2-Yi-34B [130].
+To equip the model with high-resolution processing and OCR capabilities, both the vision encoder and the MLP were activated for training, utilizing a mix of image captioning [93, 10, 90, 17, 100] and OCR-specific datasets [29, 94].
+The newly derived InternViT weights from this process were released as InternViT-6B-448px-V1.211
+ 1
+
+ https://huggingface.co/OpenGVLab/InternViT-6B-448px-V1-2.
+
+InternViT-6B-448px-V1.5. The development of InternVL 1.5 continues the pre-training of the strong foundation of InternViT-6B-448px-V1.2. In this update, the resolution of training images is expanded from fixed 448 \times 448 to dynamic 448 \times 448, where the basic tile size is 448 \times 448 and the number of tiles ranges from 1 to 12.
+Additionally, we enhance the data scale, quality, and diversity of the pre-training dataset, resulting in the powerful robustness, OCR capability, and high-resolution processing capability of our
+1.5 version model22
+ 2
+
+ https://huggingface.co/OpenGVLab/InternViT-6B-448px-V1-5. Details of the dynamic resolution and training datasets are described in Sections 3.3 and 3.4.
+
+It is noteworthy that despite the LLM in InternVL 1.5 being changed from Nous-Hermes-2-Yi-34B to InternLM2-20B [11], the InternViT maintained excellent compatibility and portability with the new LLM.
+This suggests that the visual features learned by InternViT-6B during the pre-training stage of MLLMs are broadly applicable and not tightly bound to the specific LLM.
+
+Figure 4: Illustration of dynamic high resolution.
+We dynamically match an optimal aspect ratio from pre-defined ratios, dividing the image into tiles of 448 \times 448 pixels and creating a thumbnail for global context. This method minimizes aspect ratio distortion and accommodates varying resolutions during training.
+
+3.3 Dynamic High-Resolution
+
+Inspired by UReader [127], we adopt a dynamic high-resolution training approach that effectively adapts to the varying resolutions and aspect ratios of input images. This method leverages the flexibility of segmenting images into tiles, enhancing the model’s ability to process detailed visual information while accommodating diverse image resolutions.
+It mainly consists of the following steps:
+
+Dynamic Aspect Ratio Matching. As shown in Figure 4, to maintain natural aspect ratios during processing, we dynamically match the optimal aspect ratio from a pre-defined set of aspect ratios.
+Due to limited computational resources, we allow a maximum of 12 tiles during training.
+Consequently, this set includes all 35 possible combinations of aspect ratios formed by 1 to 12 tiles, such as {1:1, 1:2, 2:1, 3:1, …, 2:6}.
+During the matching process, for each input image, we calculate its aspect ratio and compare it with the 35 pre-defined aspect ratios by measuring the absolute difference.
+If multiple pre-defined aspect ratios match (e.g., 1:1 and 2:2), we prioritize the one not exceeding twice the input image’s area, thereby preventing excessive enlargement of low-resolution images.
+
+Image Division & Thumbnail. Once an appropriate aspect ratio is determined, the image is resized to the corresponding resolution.
+For example, an 800 \times 1300 image will be resized to 896 \times 1344.
+The resized image is then divided into tiles of 448 \times 448 pixels.
+Alongside the tiles, we include a thumbnail of the entire image to capture the global context.
+This thumbnail is scaled down to 448 \times 448, aiding the model in understanding the overall scene.
+Therefore, during training, the number of visual tokens ranges from 256 to 3,328.
+During testing, the number of tiles can increase to a maximum of 40, resulting in 10,496 visual tokens.
+
+task | 
+ratio | 
+dataset | 
+
+ | 
+ | 
+Laion-EN (en) [93], Laion-ZH (zh) [93], COYO (zh) [10], | 
+
+Captioning | 
+53.9% | 
+GRIT (zh) [90], COCO (en) [17], TextCaps (en) [99] | 
+
+ | 
+ | 
+Objects365 (en&zh) [97], GRIT (en&zh) [90], | 
+
+Detection | 
+5.2% | 
+All-Seeing (en&zh) [119] | 
+
+ | 
+ | 
+Wukong-OCR (zh) [29], LaionCOCO-OCR (en) [94], | 
+
+OCR (large) | 
+32.0% | 
+Common Crawl PDF (en&zh) | 
+
+ | 
+ | 
+MMC-Inst (en) [61], LSVT (zh) [105], ST-VQA (en) [9] | 
+
+ | 
+ | 
+RCTW-17 (zh) [98], ReCTs (zh) [137], ArT (en&zh) [19], | 
+
+ | 
+ | 
+SynthDoG (en&zh) [41], COCO-Text (en) [114], | 
+
+ | 
+ | 
+ChartQA (en) [81], CTW (zh) [134], DocVQA (en) [82], | 
+
+OCR (small) | 
+8.9% | 
+TextOCR (en) [101], PlotQA (en) [85], InfoVQA (en) [83] | 
+
+(a) Datasets used in the pre-training stage.
+
+task | 
+dataset | 
+
+Captioning | 
+TextCaps (en) [99], ShareGPT4V (en&zh) [16] | 
+
+ | 
+VQAv2 (en) [28], GQA (en) [34], OKVQA (en) [80], | 
+
+General QA | 
+VSR (en) [59], VisualDialog (en) [22] | 
+
+Science | 
+AI2D (en) [39], ScienceQA (en) [73], TQA (en) [40] | 
+
+ | 
+ChartQA (en) [81], MMC-Inst (en) [61], DVQA (en) [38], | 
+
+Chart | 
+PlotQA (en) [85], LRV-Instruction (en) [60] | 
+
+ | 
+GeoQA+ (en) [12], TabMWP (en) [74], MathQA (en) [132], | 
+
+Mathematics | 
+CLEVR-Math/Super (en) [58, 54], Geometry3K (en) [72] | 
+
+ | 
+KVQA (en) [96], A-OKVQA (en) [95], ViQuAE (en) [45], | 
+
+Knowledge | 
+Wikipedia (en&zh) [31] | 
+
+ | 
+OCRVQA (en) [86], InfoVQA (en) [83], TextVQA (en) [100], | 
+
+ | 
+ArT (en&zh) [19], COCO-Text (en) [114], CTW (zh) [134], | 
+
+ | 
+LSVT (zh) [105], RCTW-17 (zh) [98], ReCTs (zh) [137], | 
+
+OCR | 
+SynthDoG (en&zh) [41], ST-VQA (en) [9] | 
+
+Document | 
+DocVQA (en) [20], Common Crawl PDF (en&zh) | 
+
+Grounding | 
+RefCOCO/+/g (en) [131, 79], Visual Genome (en) [42] | 
+
+ | 
+LLaVA-150K (en&zh) [63], LVIS-Instruct4V (en) [115], | 
+
+ | 
+ALLaVA (en&zh) [14], Laion-GPT4V (en) [44], | 
+
+Conversation | 
+TextOCR-GPT4V (en) [37], SVIT (en&zh) [140] | 
+
+ | 
+OpenHermes2.5 (en) [109], Alpaca-GPT4 (en) [106], | 
+
+Text-only | 
+ShareGPT (en&zh) [141], COIG-CQIA (zh) [6] | 
+
+(b) Datasets used in the fine-tuning stage.
+
+Table 1: Summary of datasets used in InternVL 1.5.
+To construct large-scale OCR datasets, we utilized PaddleOCR [49] to perform OCR in Chinese on images from Wukong [29] and in English on images from LAION-COCO [94].
+
+3.4 High-Quality Bilingual Dataset
+
+Pre-training Dataset.
+The pre-training dataset utilized in our InternVL 1.5 encompasses a diverse range of publicly accessible sources.
+We provide an overview of these datasets in Table 1(a).
+These datasets span multiple tasks, including captioning, which predominantly uses datasets such as Laion-EN [93], Laion-ZH [93], COYO [10], and GRIT [90], constituting 53.9% of the total data.
+Detection and grounding tasks utilize datasets like Objects365 [97], GRIT [90], and All-Seeing [119], making up 5.2%.
+For OCR tasks, we utilized large-scale datasets such as Wukong-OCR, LaionCOCO-OCR, and Common Crawl PDFs, which constitute 32.0% of our data.
+These datasets were constructed using PaddleOCR [49] to perform OCR on Chinese images from Wukong [29] and on English images from LaionCOCO [94].
+Smaller OCR datasets include MMC-Inst [61], LSVT [105], ST-VQA [9], RCTW-17 [98], ArT [19], and others, accounting for 8.9% of the data, which focus on more specific or constrained OCR challenges.
+This diverse dataset assembly ensures robust model pre-training of InternVL, catering to varied linguistic and visual elements across tasks.
+
+System:
+You are a translator proficient in English and {language}. Your task is to translate the following English text into {language}, focusing on a natural and fluent result that avoids “translationese.” Please consider these points:
+1. Keep proper nouns, brands, and geographical names in English.
+2. Retain technical terms or jargon in English, but feel free to explain in {language} if necessary.
+3. Use {language} idiomatic expressions for English idioms or proverbs to ensure cultural relevance.
+4. Ensure quotes or direct speech sound natural in {language}, maintaining the original’s tone.
+5. For acronyms, provide the full form in {language} with the English acronym in parentheses.
+User:
+Text for translation: {text}
+Assistant:
+{translation results}
+
+ | 
+
+Figure 5: Explanation of our data translation pipeline.
+Based on this prompt, we translate English data into Chinese while keeping the language natural and smooth.
+Here, {language} represents the target language, {text} refers to the original English text, and {translation results} indicates the translated text.
+
+ | 
+open- | 
+ | 
+OCR-related Benchmarks | 
+General Multimodal Benchmarks | 
+Math | 
+
+model | 
+source | 
+#param | 
+DocVQA | 
+ChartQA | 
+InfoVQA | 
+TextVQA | 
+OCRBench | 
+MME | 
+RWQA | 
+AI2D | 
+MMMU | 
+MMB-EN/CN | 
+CCB | 
+MMVet | 
+SEED | 
+HallB | 
+MathVista | 
+
+GPT-4V [1] | 
+✗ | 
+ - | 
+88.4 | 
+78.5 | 
+ - | 
+78.0 | 
+645 | 
+1926.6 | 
+61.4 | 
+78.2 | 
+56.8 | 
+77.0 / 74.4 | 
+46.5 | 
+67.6 | 
+71.6 | 
+46.5 | 
+49.9 | 
+
+Gemini Ultra 1.0 [107] | 
+✗ | 
+ - | 
+90.9 | 
+80.8 | 
+80.3 | 
+82.3 | 
+ - | 
+ - | 
+ - | 
+79.5 | 
+59.4 | 
+ - / - | 
+ - | 
+ - | 
+ - | 
+ - | 
+53.0 | 
+
+Gemini Pro 1.0 [107] | 
+✗ | 
+ - | 
+88.1 | 
+74.1 | 
+75.2 | 
+74.6 | 
+659 | 
+1933.4 | 
+ - | 
+73.9 | 
+47.9 | 
+73.6 / 74.3 | 
+52.5 | 
+64.3 | 
+70.7 | 
+45.2 | 
+45.2 | 
+
+Gemini Pro 1.5 [92] | 
+✗ | 
+ - | 
+86.5 | 
+81.3 | 
+72.7 | 
+73.5 | 
+ - | 
+ - | 
+67.5 | 
+80.3 | 
+58.5 | 
+ - / - | 
+ - | 
+ - | 
+ - | 
+ - | 
+52.1 | 
+
+Qwen-VL-Max [5] | 
+✗ | 
+ - | 
+93.1 | 
+79.8 | 
+73.4 | 
+ - | 
+723 | 
+2433.6 | 
+ - | 
+79.3 | 
+51.3 | 
+77.6 / 75.7 | 
+63.5 | 
+66.6 | 
+ - | 
+41.2 | 
+51.0 | 
+
+Qwen-VL-Plus [5] | 
+✗ | 
+ - | 
+91.4 | 
+78.1 | 
+ - | 
+ - | 
+694 | 
+2183.4 | 
+ - | 
+75.9 | 
+45.2 | 
+67.0 / 70.7 | 
+55.1 | 
+61.1 | 
+72.7 | 
+40.6 | 
+43.3 | 
+
+Claude-3 Opus [3] | 
+✗ | 
+ - | 
+89.3 | 
+80.8 | 
+ - | 
+ - | 
+694 | 
+1586.8 | 
+49.8 | 
+88.1 | 
+59.4 | 
+63.3 / 59.2 | 
+26.3 | 
+58.1 | 
+ - | 
+37.8 | 
+50.5 | 
+
+Claude-3 Sonnet [3] | 
+✗ | 
+ - | 
+89.5 | 
+81.1 | 
+ - | 
+ - | 
+646 | 
+1625.9 | 
+51.9 | 
+88.7 | 
+53.1 | 
+67.8 / 64.2 | 
+27.8 | 
+ - | 
+ - | 
+41.3 | 
+47.9 | 
+
+Claude-3 Haiku [3] | 
+✗ | 
+ - | 
+88.8 | 
+81.7 | 
+ - | 
+ - | 
+658 | 
+1453.2 | 
+ - | 
+86.7 | 
+50.2 | 
+60.7 / 57.2 | 
+24.5 | 
+ - | 
+ - | 
+39.2 | 
+46.4 | 
+
+HPT Pro [35] | 
+✗ | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+52.0 | 
+77.5 / 76.7 | 
+ - | 
+ - | 
+73.1 | 
+ - | 
+ - | 
+
+MM1 [84] | 
+✗ | 
+30B | 
+ - | 
+ - | 
+ - | 
+73.5 | 
+ - | 
+2069.0 | 
+ - | 
+ - | 
+44.7 | 
+75.1 / - | 
+ - | 
+48.7 | 
+72.1 | 
+ - | 
+39.4 | 
+
+Step-1V [102] | 
+✗ | 
+100B | 
+ - | 
+ - | 
+ - | 
+ - | 
+625 | 
+2206.4 | 
+ - | 
+79.2 | 
+49.9 | 
+80.7 / 79.9 | 
+71.2 | 
+63.3 | 
+70.3 | 
+48.4 | 
+44.8 | 
+
+Grok-1.5V [125] | 
+✗ | 
+ - | 
+85.6 | 
+76.1 | 
+ - | 
+78.1 | 
+ - | 
+ - | 
+68.7 | 
+88.3 | 
+ - | 
+ - / - | 
+ - | 
+ - | 
+ - | 
+ - | 
+52.8 | 
+
+Text-Monkey [68] | 
+✓ | 
+10B | 
+66.7 | 
+59.9 | 
+28.6 | 
+64.3 | 
+561 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - / - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+
+DocOwl-1.5 [33] | 
+✓ | 
+8B | 
+82.2 | 
+70.2 | 
+50.7 | 
+68.6 | 
+599 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - / - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+
+Mini-Gemini [53] | 
+✓ | 
+35B | 
+ - | 
+ - | 
+ - | 
+ 74.1* | 
+ - | 
+2141.0 | 
+ - | 
+ - | 
+48.0 | 
+80.6 / - | 
+ - | 
+59.3 | 
+ - | 
+ - | 
+43.3 | 
+
+LLaVA-NeXT [64] | 
+✓ | 
+35B | 
+84.0 | 
+68.7 | 
+51.5 | 
+ 69.5* | 
+574 | 
+2028.0 | 
+ - | 
+74.9 | 
+51.1 | 
+81.1 / 79.0 | 
+49.2 | 
+57.4 | 
+75.9 | 
+34.8 | 
+46.5 | 
+
+InternVL 1.2 (ours) | 
+✓ | 
+40B | 
+57.7 | 
+68.0 | 
+39.5 | 
+ 72.5* | 
+569 | 
+2175.4 | 
+67.5 | 
+79.0 | 
+51.6 | 
+82.2 / 81.2 | 
+59.2 | 
+48.9 | 
+75.6 | 
+47.6 | 
+47.7 | 
+
+InternVL 1.5 (ours) | 
+✓ | 
+26B | 
+90.9 | 
+83.8 | 
+72.5 | 
+80.6 | 
+724 | 
+2187.8 | 
+66.0 | 
+80.7 | 
+45.2 | 
+82.2 / 82.0 | 
+69.8 | 
+62.8 | 
+76.0 | 
+49.3 | 
+53.5 | 
+
+Table 2: Comparison with SoTA models on 16 multimodal benchmarks.
+OCR-related benchmarks include: DocVQA test [82], ChartQA test [81], InfographicVQA test [83], TextVQA val [100], and OCRBench [67].
+General multimodal benchmarks encompass: MME [26], RealWorldQA [125], AI2D test [39], MMMU val [135], MMBench-EN/CN test [66], CCBench dev [66], MMVet [133], SEED Image [46], and HallusionBench [30].
+Additionally, the math dataset includes MathVista testmini [75].
+* denotes that Rosetta OCR tokens are used in the testing of TextVQA.
+The MME results we report are the sum of the perception and cognition scores.
+The results of OCRBench, MMBench, CCBench, and HallusionBench are collected from the OpenCompass leaderboard [21].
+
+Fine-tuning Dataset.
+During the fine-tuning stage, we meticulously selected datasets to enhance model performance across a wide range of multimodal tasks. The datasets used in this phase are summarized in Table 1(b).
+
+For image captioning, we included TextCaps [99] and bilingual ShareGPT4V [16], which help the model learn to generate descriptive captions in both English and Chinese. In the domain of general QA, datasets such as VQAv2 [28], GQA [34], and VisualDialog [22] teach the model to handle diverse question-answering scenarios.
+
+For scientific image understanding, datasets like AI2D [39], ScienceQA [73], and TQA [40] provide content-rich scenarios to enhance the model’s ability to interpret scientific diagrams and texts. Chart interpretation is bolstered by ChartQA [81], MMC-Inst [61], and PlotQA [85], which train the model to analyze and understand chart images.
+Mathematics datasets such as GeoQA+ [12], TabMWP [74], and MathQA [132] introduce complex numerical and geometric problem-solving tasks. Knowledge-based QA benefits from the inclusion of datasets like KVQA [96] and bilingual Wikipedia [31], enabling the model to extract and reason with factual information across multiple languages.
+
+For tasks involving OCR, we utilize OCRVQA [86], TextVQA [100], and several datasets focused on Chinese and English text recognition, such as SynthDoG [41], to improve text recognition from images. Document understanding is advanced through datasets like DocVQA [82] and Common Crawl PDFs, which help the model for real-world document analysis.
+Visual grounding is trained using RefCOCO [131, 79] and Visual Genome [42], aiding the model in precise object localization within images. In the realm of multimodal conversation, datasets like LLaVA-150K [63] and ALLaVA [14] enhance the model’s dialogic capabilities by simulating interactive and engaging scenarios.
+Lastly, text-only datasets include OpenHermes2.5 [109], Alpaca-GPT4 [106], among others [6, 141], which are used to maintain the original linguistic capabilities of the LLM.
+
+In summary, these datasets together establish a rich and diverse foundation for fine-tuning, which enhances our model’s ability to handle a wide range of multimodal tasks and ensures its readiness for practical applications.
+
+Data Translation Pipeline.
+As shown in Figure 5, to enhance our model’s multilingual capabilities, we implemented a data translation pipeline. This pipeline utilizes state-of-the-art open-source LLMs [11, 4, 130] or GPT-3.5 to convert English datasets to another language (e.g., Chinese), maintaining consistency and precision in bilingual labeling. Moreover, it can readily expand to encompass more languages by adjusting the language prompt, without relying on manual annotation processes.
+
+In Table 1, we have annotated the language for each dataset. For a dataset that was originally in English, an annotation as “zh” indicates that we have translated it into Chinese using the translation pipeline.
+For example, COYO [10] and GRIT [90] were originally English datasets, and we have translated them into Chinese.
+By leveraging this translation pipeline, the Chinese capabilities of InternVL 1.5 have been greatly enhanced.
+
+ | 
+open- | 
+ | 
+ConvBench (Pairwise Grading) | 
+ConvBench (Direct Grading) | 
+
+model | 
+source | 
+#param | 
+ R_{1} | 
+ R_{2} | 
+ S_{1} | 
+ S_{2} | 
+ S_{3} | 
+ S_{O} | 
+ R_{1} | 
+ R_{2} | 
+ S_{1} | 
+ S_{2} | 
+ S_{3} | 
+ S_{O} | 
+
+GPT-4V [1] | 
+✗ | 
+ - | 
+39.51 | 
+38.47 | 
+38.47 | 
+39.34 | 
+37.61 | 
+40.55 | 
+7.09 | 
+7.30 | 
+7.30 | 
+7.48 | 
+7.12 | 
+6.88 | 
+
+Claude-3 Opus [3] | 
+✗ | 
+ - | 
+36.60 | 
+37.49 | 
+38.99 | 
+39.17 | 
+34.32 | 
+35.70 | 
+6.54 | 
+6.75 | 
+6.53 | 
+7.04 | 
+6.68 | 
+6.32 | 
+
+Reka Flash [89] | 
+✗ | 
+ - | 
+25.60 | 
+24.67 | 
+25.13 | 
+27.56 | 
+21.32 | 
+26.52 | 
+6.78 | 
+6.86 | 
+6.93 | 
+7.25 | 
+6.41 | 
+6.70 | 
+
+Gemini Pro 1.0 [107] | 
+✗ | 
+ - | 
+8.44 | 
+8.55 | 
+9.01 | 
+9.36 | 
+7.28 | 
+8.32 | 
+4.42 | 
+4.60 | 
+5.18 | 
+4.95 | 
+3.66 | 
+4.24 | 
+
+ShareGPT4V-13B [16] | 
+✓ | 
+13B | 
+17.56 | 
+17.45 | 
+17.85 | 
+18.72 | 
+15.77 | 
+17.68 | 
+4.85 | 
+5.03 | 
+5.16 | 
+5.06 | 
+4.86 | 
+4.67 | 
+
+LLaVA-1.5-13B [62] | 
+✓ | 
+13B | 
+16.93 | 
+18.08 | 
+20.45 | 
+18.02 | 
+15.77 | 
+15.77 | 
+4.94 | 
+5.14 | 
+5.03 | 
+5.41 | 
+4.99 | 
+4.74 | 
+
+XComposer2 [23] | 
+✓ | 
+8B | 
+15.83 | 
+16.41 | 
+17.16 | 
+19.06 | 
+13.00 | 
+15.25 | 
+5.82 | 
+5.98 | 
+5.98 | 
+6.17 | 
+5.78 | 
+5.66 | 
+
+mPLUG-Owl2 [128] | 
+✓ | 
+8B | 
+14.93 | 
+15.83 | 
+17.50 | 
+17.16 | 
+12.82 | 
+14.04 | 
+5.04 | 
+5.17 | 
+4.98 | 
+5.38 | 
+5.14 | 
+4.91 | 
+
+Qwen-VL-Chat [5] | 
+✓ | 
+10B | 
+14.33 | 
+14.62 | 
+16.29 | 
+18.37 | 
+9.19 | 
+14.04 | 
+5.54 | 
+5.65 | 
+5.96 | 
+5.78 | 
+5.22 | 
+5.43 | 
+
+MiniGPT-4 [142] | 
+✓ | 
+8B | 
+10.95 | 
+10.80 | 
+11.61 | 
+11.27 | 
+9.53 | 
+11.09 | 
+3.85 | 
+4.04 | 
+3.99 | 
+4.40 | 
+3.73 | 
+3.66 | 
+
+LLaMA-A-V2 [27] | 
+✓ | 
+7B | 
+9.04 | 
+9.59 | 
+8.84 | 
+10.92 | 
+9.01 | 
+8.49 | 
+4.77 | 
+4.91 | 
+4.77 | 
+5.47 | 
+4.48 | 
+4.64 | 
+
+InternVL 1.2 (ours) | 
+✓ | 
+40B | 
+21.17 | 
+22.41 | 
+24.96 | 
+21.31 | 
+20.97 | 
+19.93 | 
+5.49 | 
+5.69 | 
+5.80 | 
+5.88 | 
+5.39 | 
+5.29 | 
+
+InternVL 1.5 (ours) | 
+✓ | 
+26B | 
+17.65 | 
+20.22 | 
+26.00 | 
+17.33 | 
+17.33 | 
+15.08 | 
+5.60 | 
+5.76 | 
+6.11 | 
+5.93 | 
+5.25 | 
+5.43 | 
+
+ | 
+open- | 
+ | 
+MMT-Bench | 
+
+model | 
+source | 
+#param | 
+Overall | 
+Overall* | 
+
+GPT-4V [1] | 
+✗ | 
+ - | 
+62.0 | 
+55.5 | 
+
+Qwen-VL-Plus [4] | 
+✗ | 
+ - | 
+62.3 | 
+56.6 | 
+
+Gemini Pro 1.0 [107] | 
+✗ | 
+ - | 
+61.6 | 
+55.1 | 
+
+Claude-3 Haiku [3] | 
+✗ | 
+ - | 
+52.2 | 
+46.4 | 
+
+LLaVA-NeXT [64] | 
+✓ | 
+35B | 
+60.8 | 
+56.3 | 
+
+XComposer2 [23] | 
+✓ | 
+8B | 
+55.7 | 
+50.0 | 
+
+BLIP-2-XXL [50] | 
+✓ | 
+12B | 
+54.8 | 
+49.1 | 
+
+Yi-VL-34B [130] | 
+✓ | 
+35B | 
+54.2 | 
+48.6 | 
+
+Monkey-Chat [107] | 
+✓ | 
+10B | 
+53.4 | 
+46.0 | 
+
+DeepSeek-VL [71] | 
+✓ | 
+7B | 
+53.2 | 
+46.5 | 
+
+CogVLM-Chat [117] | 
+✓ | 
+17B | 
+51.6 | 
+44.2 | 
+
+InternVL 1.2 (ours) | 
+✓ | 
+40B | 
+63.4 | 
+58.2 | 
+
+InternVL 1.5 (ours) | 
+✓ | 
+26B | 
+59.0 | 
+56.2 | 
+
+Table 3: Comparison with SoTA models on ConvBench and MMT-Bench.
+
+ConvBench [65] is a multi-turn conversation evaluation benchmark designed for MLLMs.
+The table presents win rates against humans, where S_{1} , S_{2} , and S_{3} represent the scores for perception, reasoning, and creation, respectively.
+ R_{2} is calculated as (S_{1}+S_{2}+S_{3})/3 , reflecting the average performance across three turns. R_{1} is derived from (R_{2}+S_{0})/2 , indicating the model’s overall score.
+MMT-Bench [129] is a comprehensive benchmark designed to assess MLLMs across massive multimodal tasks requiring expert knowledge and deliberate visual recognition, localization, reasoning, and planning.
+The overall score is computed across 162 subtasks, excluding visual recognition as denoted by *.
+
+4 Experiments
+
+4.1 Implementation Details.
+
+InternVL 1.5 was developed by integrating the InternViT-6B [18] vision encoder with the InternLM2-20B [11] language model, using a dynamic high-resolution strategy.
+In this approach, images are segmented into 448 \times 448 pixel tiles, with the number of tiles ranging up to 12 based on the image’s aspect ratio and resolution during training.
+In testing phases, the model could handle up to 40 tiles, equivalent to 4K resolution, demonstrating its adaptability to high-resolution inputs in a zero-shot manner. Notably, we built our model based on the chat version of InternLM2-20B rather than the base model.
+
+The training of InternVL 1.5 was divided into two stages. Initially, the pre-training stage focused on training the InternViT-6B vision encoder and the MLP projector to optimize visual feature extraction. Subsequently, the entire model’s 26 billion parameters were fine-tuned to enhance multimodal capabilities.
+In both two stages of training, we use a context length of 4096 and adopt the same response formatting prompts as LLaVA 1.5 [52].
+Additionally, the evaluation was mainly supported by VLMEvalKit [21].
+
+4.2 Comparison with State-of-the-Art MLLMs
+
+4.2.1 Quantitative Results on 18 Benchmarks
+
+In this section, we conduct an extensive evaluation across a series of benchmarks to assess our model’s multimodal understanding and reasoning capability. The benchmarks employed in our study are categorized into four distinct types:
+OCR-related, general multimodal, mathematical, and multi-turn conversation benchmarks. As depicted in Table 2, InternVL 1.5 exhibits leading performance across the majority of these benchmarks.
+
+OCR-related Image Understanding.
+We evaluate the model performance across four key dimensions of OCR: document comprehension (DocVQA [82]), chart understanding (ChartQA [81]), infographic understanding (InfographicVQA [83]), and scene text interpretation (TextVQA [100]).
+Additionally, we employ OCRBench [67] to perform a comprehensive evaluation of the model’s overall OCR capabilities.
+As shown in Table 2, our model demonstrated comparable performance to proprietary models on these benchmarks and significantly outperformed the open-source LLaVA-NeXT [64] as well as InternVL 1.2, the predecessor of InternVL 1.5.
+Notably, our model achieves state-of-the-art performance on ChartQA and OCRBench, outperforming all competing proprietary models.
+
+Figure 6: Comparison of InternVL 1.5 performance across different image resolutions.
+The X-axis represents the number of tiles, while the Y-axis indicates benchmark performance.
+The highest value and its corresponding number of tiles are highlighted.
+The scores of MME [26] and OCRBench [67] have been normalized to a maximum score of 100.
+We found that although only 1 to 12 tiles were used during training, it is possible to zero-shot scale up to 40 tiles (i.e., 4K resolution) during testing.
+Note that since MMMU [135] includes multiple images per sample, it may run out of memory when the number of tiles is large. Therefore, we only tested up to 18 tiles maximum, and MMMU was not included when calculating the average score.
+
+General Multimodal Evaluation.
+In addition to OCR-related benchmarks, we tested our model on several general multi-modal benchmarks.
+We used RealWorldQA [125] to evaluate the model’s real-world spatial understanding capabilities.
+HallusionBench [30] was employed to assess its ability to control hallucinations.
+Additionally, MMMU [135] was utilized to evaluate the model’s multidisciplinary capabilities, and AI2D [39] to assess its understanding of science diagrams.
+We also tested the model’s proficiency in Chinese and understanding of Chinese culture with the MMBench-CN test [66] and CCBench [66], respectively.
+Other comprehensive benchmarks such as MME [26], MMBench-EN [66], MMVet [133], SEED [46], and MMT-Bench [129] were also used to assess the model’s visual understanding and reasoning abilities.
+
+Compared to other open-source models like Text-Monkey [68], DocOwl-1.5 [33], and LLaVA-NeXT [64], our InternVL 1.5 significantly closes the gap with proprietary models in these benchmarks.
+Specifically, our model achieves the best performance on HallusionBench [30], demonstrating its outstanding ability to reduce hallucinations.
+Moreover, thanks to our high-quality bilingual dataset, our model exhibits robust Chinese language capabilities, significantly surpassing both open-source and proprietary methods on MMBench-CN and CCBench.
+However, while InternVL 1.5 surpasses MM1 [84] and is comparable to Gemini Pro 1.0 [107] on MMMU, it shows a slight decline from its predecessor, InternVL 1.2. We attribute this modest decrement to the smaller size of the language model, a phenomenon similarly observed in the MMT-Bench [129] results, as shown in Table 3.
+
+Math Reasoning.
+MathVista [75] is a benchmark designed to integrate challenges from various mathematical and visual tasks. Completing these tasks requires a deep understanding of visuals, logical thinking, and math knowledge—areas where many proprietary commercial models encounter significant difficulties.
+As shown in Table 2, our model outperforms others, including GPT-4V [87], by a clear margin in this benchmark, showcasing its ability to handle mathematically demanding tasks.
+
+Multi-Turn Conversation.
+Compared to single-turn dialogues, multi-turn conversations align more with human preferences. In practical usage, multi-turn dialogue is the preferred mode for general-purpose assistants to engage with humans in solving a variety of tasks.
+Therefore, we opt to utilize ConvBench [65] for evaluating multi-turn conversations, which progressively assesses the perception, reasoning, and creativity capabilities of MLLMs.
+As depicted in Table 3, InternVL exhibits leading performance among open-source models, albeit still trailing behind GPT-4V by a considerable margin.
+Going forward, we will continue refining InternVL’s capabilities in multi-turn conversations.
+
+User: What action is taking place in the picture? Which color jersey is the attacking player wearing? Explain in detail.
+GPT-4V: In the image, we see a basketball game in progress where a player in a black jersey is in the act of shooting the ball. The player is extending their arms upwards towards the basket, and it looks like they’re attempting a jump shot. The player is wearing a black jersey with the word “SPURS” across the front, which indicates they are a member of the San Antonio Spurs team. There’s a defensive player from the opposing team, wearing a red jersey with the number “9” and the name “VUCEVIC” on it, who is trying to contest the shot.
+InternVL 1.5: The image depicts a basketball game in progress. A player in a black jersey, who is likely on the offensive team, is in the act of shooting the basketball. He is airborne, with one arm extended upwards towards the basket, indicating that he is in the process of taking a shot. The player in the red jersey is on defense, with his arm raised in an attempt to block the shot. The background shows the interior of an arena with spectators and a scoreboard, suggesting that this is a professional or organized basketball match. The attacking player’s jersey is black, and the defending player’s jersey is red.
+
+ | 
+
+User: Tell me a person who had made a similar pose to the cute duck.
+GPT-4V: I can’t identify or make assumptions about a specific person who has made a similar pose to the duck in the image you’ve uploaded, but the stance the duck is taking, with what appears to be a martial arts belt and a weapon, is reminiscent of a martial artist demonstrating a pose or ready stance. This is a common pose in many martial arts, as practitioners often pose for photos demonstrating their skills or in the midst of performing kata (a sequence of movements in martial arts). If you’re looking for something specific, you might find martial artists or actors who play martial arts roles striking similar poses.
+InternVL 1.5: The pose of the cute duck is reminiscent of a karate stance, which is often associated with martial artists. One famous person who made a similar pose is Bruce Lee, a martial artist and actor known for his contributions to martial arts and film.
+
+ | 
+
+Figure 7: 
+Examples for General QA.
+Blue highlights the standout answers, while red highlights incorrect responses.
+
+4.3 Ablation Study
+
+Larger LLMs need Larger VFMs.
+In this study, we investigate the interplay between LLMs and VFMs.
+The comparison involves two open-source MLLMs, LLaVA-NeXT [64] and InternVL 1.2, each equipped with LLMs of 34 billion parameters.
+Notably, although both models employ LLMs of the same scale, InternVL 1.2 incorporates a significantly larger VFM, with 6 billion parameters, compared to LLaVA-NeXT’s 300 million parameters.
+Since the data for LLaVA-NeXT is not available, we created a similar dataset ourselves. Additionally, InternVL 1.2 was trained at a fixed resolution of 448 \times 448, while LLaVA-NeXT used a higher dynamic resolution of 672\times 672 . Therefore, this comparison is not entirely fair or equivalent. Nevertheless, the findings still reveal noteworthy insights.
+For example, after excluding five OCR-related datasets, ConvBench, and RealWorldQA, InternVL 1.2 outperformed LLaVA-NeXT in 9 out of the remaining 11 datasets.
+This performance difference supports our hypothesis that for a large-scale LLM (e.g., 34B), a larger VFM (e.g., 6B) can effectively improve the model’s ability to handle complex multimodal tasks, thereby enhancing the overall performance.
+
+Dynamic Resolution Matters.
+As shown in Figure 6, we investigated the effectiveness of dynamic resolution across various multimodal benchmarks.
+We found that not all tasks require high resolution. Specifically, tasks related to OCR, such as DocVQA, InfoVQA, TextVQA, and OCRBench, benefit from increased resolution.
+However, tasks like AI2D, MMMU, MMBench, and HallusionBench exhibit a slight decline in performance at higher resolutions.
+Overall, InternVL 1.5 demonstrates strong robustness to dynamic resolution. It can adjust the resolution based on the specific requirements of each task, ensuring optimal performance where high resolution is beneficial and conserving resources where it is not.
+
+4.3.1 Qualitative Results on Different Scenes
+
+In previous sections, we evaluated our model across various benchmarks and observed its strong performance. In this section, we conduct a qualitative comparison of our model with GPT-4V [87] across diverse scenarios, including General QA, OCR-related QA, Scientific Understanding, Chinese Traditional Culture, Object Localization, and Multi-Image Dialogue.
+We aim to demonstrate the practicality and versatility of our model in real-world applications, offering insights from the perspective of actual user experience.
+
+General QA.
+To compare the general capabilities of InternVL 1.5 and GPT-4V, we first conducted an experiment involving simple user queries with images requiring general knowledge.
+As shown on the left side of Figure 7, both two models respond accurately to the query, showcasing their proficiency in general topics.
+As shown on the right side of Figure 7, GPT-4V may excessively refuse to answer some questions due to its involvement in personal privacy.
+
+OCR-Related QA. We conducted an evaluation to compare the OCR capabilities of our InternVL 1.5 model against GPT-4V.
+On the left side of Figure 8, the first prompt aimed to measure the models’ ability to understand Chinese scenes. In this instance, GPT-4V cannot extract all useful information in the image.
+On the right side of Figure 8, both GPT-4V and our model have good performance on chart understanding.
+
+User: Describe this image in detail.
+GPT-4V: The image shows a signboard with Chinese characters on it. From the text, we can deduce that the sign is likely for a business. The sign features a design that includes a martini glass with a flamingo, indicating that the establishment might serve drinks. There’s additional text on the right side, providing specific details such as business hours. It appears to be a nighttime business, likely a bar or restaurant, operating from 16:30 to 22:30. The other text provides further information about the services or specialties of the place. Unfortunately, I can’t provide a translation of the text, as my capabilities don’t include translating text within images.
+InternVL 1.5: The image shows a signboard with Chinese text, indicating a business establishment. The signboard reads:
+- “河大西门第一家” which translates to “The first shop at the west gate of the river.”
+- “正宗 老字号 五香味” which means “Genuine, old brand, five-spice flavor.”
+- “曹记焖烤鸡腿” which translates to “Cao’s roasted and baked chicken legs.”
+- “营业时间 16:30-22:30” indicating the business hours from 4:30 PM to 10:30 PM.
+- “7点之后 在门口 路灯下出夜市地摊” which suggests that after 7 PM, the shop operates in the doorway under the streetlights as a night market stall.
+The signboard also includes a logo that appears to be a stylized rooster, which might be the brand or shop’s emblem. The overall style of the signboard is quite traditional and straightforward, commonly seen in Chinese street markets or small businesses.
+
+ | 
+
+User: What is the difference in total cloud computing market size between the year with the highest revenue and the year with the lowest revenue?
+GPT-4V: To find the difference in total cloud computing market size between the year with the highest revenue and the year with the lowest revenue, we need to:
+1. Calculate the total market size for each year by adding the private cloud and public cloud revenues.
+2. Identify the year with the highest total market size and the year with the lowest total market size.
+3. Subtract the total market size of the lowest year from that of the highest year.
+Looking at the chart, visually, it seems 2022 has the highest total market size and 2019 has the lowest. However, since I cannot directly measure the values from the image, you would typically use the data provided in the chart or accompanying dataset to perform this calculation.
+Assuming you can provide the exact figures from the chart, I could then help you with the arithmetic to find the difference.
+InternVL 1.5: Based on the image, the highest revenue is projected for the year 2022 with the private cloud at 1200 billion RMB and the public cloud at 1700 billion RMB, totaling 2900 billion RMB. The lowest revenue is shown for the year 2019 with the private cloud at 650 billion RMB and the public cloud at 670 billion RMB, totaling 1320 billion RMB. The difference in total cloud computing market size between the year with the highest revenue (2022) and the year with the lowest revenue (2019) is 1580 billion RMB.
+
+ | 
+
+Figure 8: 
+Examples for OCR-related QA.
+Blue highlights the standout answers, while red highlights incorrect responses.
+
+User: Which car in the picture is more aerodynamic?
+GPT-4V: Based on the image you’ve provided, determining which car is more aerodynamic involves analyzing the shape and design of each vehicle. The car on the right appears to have a more streamlined shape, with a sloped front that would likely reduce air resistance better than the boxy design of the car on the left. Therefore, the car on the right would be considered more aerodynamic.
+InternVL 1.5: The car on the right appears to be more aerodynamic. This is inferred from the shape of the car, which has a more streamlined and elongated form. The design includes a pointed front end and a tapered rear, which are common features in aerodynamic design to reduce air resistance. The car on the left, with its boxy shape, does not exhibit the same level of aerodynamic efficiency.
+
+ | 
+
+User: If the pH outside the cell decreases, would you expect the amount of amino acids transported into the cell to increase or decrease?
+GPT-4V: The image depicts a sodium-glucose symporter, which is a type of secondary active transport mechanism. This transport mechanism is specifically for glucose and does not directly provide information about amino acid transporters.
+However, speaking generally about amino acid transporters, if the pH outside the cell decreases, the effect on amino acid transport would depend on the type of amino acid transporter involved. Some amino acid transporters are proton-dependent, meaning that they use the proton gradient (which increases as pH decreases) to transport amino acids into the cell. For these transporters, a decrease in extracellular pH could potentially increase the transport of amino acids into the cell.
+To give a precise answer, one would need specific information about the type of amino acid transporter present in the cell membrane. Since this information is not provided in the image or the description, the impact of a decrease in extracellular pH on amino acid transport cannot be determined from the provided content alone.
+InternVL 1.5: Based on the image, if the pH outside the cell decreases, we would expect the amount of amino acids transported into the cell to increase. This is because the diagram shows a gradient of amino acids moving from an area of lower concentration (outside the cell) to an area of higher concentration (inside the cell), which is a typical representation of active transport. Active transport is a process that moves substances against their concentration gradient, often using energy, and it is typically more efficient at higher concentrations of the substance being transported. Therefore, a decrease in pH outside the cell would likely increase the concentration gradient, leading to an increase in the transport of amino acids into the cell.
+
+ | 
+
+Figure 9: 
+Examples for Scientific Understanding.
+Blue highlights the standout answers.
+
+User: 图中所示的传统表演形式为?
+GPT-4V: 这张图片展示的是中国的传统木偶戏，也被称为“提线木偶”。这种表演艺术形式在中国有着悠久的历史，通常以精美的木偶和复杂的操作技巧著称。木偶戏在中国的各个地区有不同的风格和表演特色。图片中的木偶服饰绚丽，表演者通过线控制木偶的动作，进行故事叙述和表演。
+InternVL 1.5: 图中所示的传统表演形式为布袋戏，属于木偶戏的一种，布袋戏是一种古老的汉族民间戏曲表演艺术形式，布袋戏（又称布袋木偶戏、手操傀儡戏、掌中戏、小笼、指花戏）是一种源于17世纪中国福建泉州，流行于台湾、福建、广东等地的传统戏剧艺术。表演者用双手操纵布袋内的木偶，通过手指的动作来控制木偶的动作和表情，同时配合音乐、唱腔和道白，来讲述故事。在中国以及世界华人地区都有流传。
+
+ | 
+
+User: 图中是谁的作品? Options: A. 徐悲鸿 B. 齐白石 C. 张大千 D. 刘海粟
+GPT-4V: 这幅画的风格似乎是徐悲鸿的，他以表现马的高超技巧而闻名。徐悲鸿的马画特点是线条流畅而有力，体现了马的动态美和生命力。这幅画中马的表现与徐悲鸿的风格相吻合，所以正确答案是 A. 徐悲鸿。
+InternVL 1.5: 这幅画看起来像是一幅中国画，特别是马的描绘方式和风格。徐悲鸿是中国著名的画家，以画马而闻名，他的画作通常具有很强的表现力和动感。从图中马的姿态和表现手法来看，与徐悲鸿的风格非常相似。徐悲鸿的作品通常以大写意的方式呈现，注重表现物象的精神和气质。图中马的神态和动态捕捉得非常生动，体现了徐悲鸿对马匹的深刻理解和精湛的绘画技巧。因此，根据提供的选项，图中作品很可能是徐悲鸿的作品。
+
+ | 
+
+Figure 10: Examples for Chinese Traditional Culture.
+Blue highlights the standout answers.
+
+User: Tell me the locations of all the number 10 jerseys in the picture.
+GPT-4V: In the image, there are two players wearing number 10 jerseys. The first one is located towards the center, slightly to the right while facing the image; he’s wearing a red jersey and is the second person from the right in the group wearing red and white uniforms. The second player is wearing a light blue jersey and is positioned on the far left side of the image; he’s the third person from the left in the group wearing blue and white uniforms.
+InternVL 1.5: In the image, there are two number 10 jerseys visible:
+1. The first player wearing the number 10 jersey is located in the center of the image. He is wearing a red jersey with the number 10 on it, and he is standing with his hands on his hips.
+2. The second player with the number 10 jersey is on the far right of the image. He is wearing a blue jersey with the number 10 on it and is crouching down with his hands on his knees.
+
+ | 
+
+User: What is the man in the picture doing with his right hand?
+GPT-4V: The man in the picture is pointing with his right hand towards a beluga whale that appears to be behind a glass barrier. He seems to be doing this to show the whale to the child he is holding, likely to engage the child’s interest or to teach the child about the whale.
+InternVL 1.5: The man in the picture is pointing at a large dolphin through a glass barrier. He is likely making this gesture to draw attention to the dolphin, either for the child he is holding or for others around them. This could be to educate the child about the dolphin, to highlight a specific behavior or feature of the dolphin, or simply to share the experience with others. The gesture is a common way to direct someone’s attention to something of interest.
+
+ | 
+
+Figure 11: Examples for Object Localization.
+Blue highlights the standout answers, while red highlights incorrect responses.
+
+User: What are the similarities and differences between these two pictures?
+GPT-4V: The similarities between the two images are that they both feature red pandas, a species known for their reddish-brown fur, bushy tails, and adorable faces. In both images, the red pandas are resting on tree branches with green foliage in the background, highlighting their arboreal (tree-dwelling) nature.
+As for the differences, the first image shows a red panda in a curled-up position, appearing to be asleep with its tail wrapped around its body for warmth. This posture also serves as camouflage, making the panda resemble a tree branch or part of the foliage. The angle of the shot is from above the animal, and the focus is on the texture and patterns of the fur.
+In contrast, the second image captures the red panda in a more alert and awake state, with its head raised and looking toward the camera. This posture allows a clear view of the panda’s facial features, such as its ears, eyes, and the white markings. The angle of the second image is more direct and at the same level as the animal, which gives a better sense of the panda’s overall appearance and stance.
+InternVL 1.5: The two pictures both feature red pandas, which are small, arboreal mammals native to the temperate forests of the Himalayas, southwestern China, and the northern part of Myanmar. They are known for their distinctive reddish-brown fur, white markings around their eyes, and bushy tails.
+In the first picture, the red panda is curled up and appears to be sleeping or resting on a branch. The background is blurred with green foliage, suggesting a natural, forested habitat. The focus is on the red panda’s relaxed posture and the texture of its fur.
+In the second picture, the red panda is sitting upright on a branch, with its front paws resting on the branch. The animal is looking directly at the camera, giving a more alert and curious expression. The background is also green and blurred, indicating a similar natural setting.
+The similarities between the two pictures include the presence of the red panda, the branch it is on, and the green, forested background. The differences lie in the red panda’s posture and expression, with the first picture showing a more relaxed and the second a more alert state. Additionally, the first picture has a more focused view of the red panda’s fur and form, while the second picture captures the animal’s face and eyes more clearly.
+
+ | 
+
+Figure 12: Examples for Multi-Image Dialogue.
+Blue highlights the standout answers.
+
+Scientific Understanding. Evaluating the capabilities of models in scientific understanding reasoning tasks is essential for advancing computational intelligence, particularly in contexts requiring in-domain knowledge and logical reasoning. In our study, we compared the performance of our InternVL 1.5 model with GPT-4V by administering complex multi-disciplinary problems designed to assess the accuracy of their reasoning. In Figure 9, for the first question, both models accurately answered and provided an analysis from an aerodynamic perspective. For the second question, our model precisely analyzed the elements depicted in the image and provided the correct response, whereas GPT-4V speculated on the trend of amino acid transport. These results suggest that our method and GPT-4V exhibit comparable capabilities in scientific understanding and reasoning.
+
+Chinese Traditional Culture.
+We selected two typical multimodal examples related to traditional Chinese art to evaluate our model.
+As illustrated in Figure 10, both InternVL 1.5 and GPT-4V correctly recognize the Chinese traditional culture depicted in the image. Notably, InternVL 1.5 demonstrates a deeper understanding of this culture, as evidenced by its more detailed descriptions of the cultural elements in its response.
+
+Object Localization.
+Evaluating machine learning models for their proficiency in object localization tasks is essential, especially in applications requiring precise spatial awareness. In our comparative analysis, the performance of the InternVL 1.5 model was juxtaposed with GPT-4V, focusing on their ability to accurately detect and localize objects within various environments. Our assessments ranged from simple object recognition in cluttered scenes to complex scenarios involving dynamic interactions among multiple entities. As illustrated in Figure 11, the results demonstrate that InternVL 1.5 not only localized objects with high accuracy but also exhibited a comparable understanding of spatial relationships, matching the performance of GPT-4V.
+
+Multi-Image Dialogue.
+As shown in Figure 12, in this experiment, we ask InternVL 1.5 and GPT-4V to compare the similarities and differences between the two images.
+As can be seen, both GPT-4V and InternVL 1.5 provide detailed and accurate responses.
+Through this experiment, we discovered that although InternVL 1.5 was trained solely on single-image inputs, it exhibits strong zero-shot capabilities for multi-image dialogues.
+
+5 Conclusion
+
+This work introduced InternVL 1.5, an open-source MLLM designed to narrow the performance gap between open-source and proprietary models in multimodal understanding. By integrating a strong vision encoder with continuous learning capabilities, adopting a dynamic high-resolution strategy, and utilizing a high-quality bilingual dataset, InternVL 1.5 has demonstrated robust performance across a variety of benchmarks. Our evaluations indicate that the model achieves competitive performance with leading proprietary models, excelling particularly in OCR-related tasks and showing significant improvements in Chinese-related scene understanding.
+While InternVL 1.5 has contributed to the open-source multimodal understanding, the field continues to evolve with many challenges ahead. We aspire to further enhance InternVL’s capabilities and invite collaboration with the global research community, hoping to enrich and expand the reach of open-source models together.
+
+References
+
+[1]
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774, 2023.
+
+[2]
+
+Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, Antoine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur Mensch, Katherine Millican, Malcolm Reynolds, et al.
+
+Flamingo: a visual language model for few-shot learning.
+
+NeurIPS, 35:23716–23736, 2022.
+
+[3]
+
+Anthropic.
+
+The claude 3 model family: Opus, sonnet, haiku.
+
+https://www.anthropic.com, 2024.
+
+[4]
+
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei Huang, Binyuan Hui, Luo Ji, Mei Li, Junyang Lin, Runji Lin, Dayiheng Liu, Gao Liu, Chengqiang Lu, Keming Lu, Jianxin Ma, Rui Men, Xingzhang Ren, Xuancheng Ren, Chuanqi Tan, Sinan Tan, Jianhong Tu, Peng Wang, Shijie Wang, Wei Wang, Shengguang Wu, Benfeng Xu, Jin Xu, An Yang, Hao Yang, Jian Yang, Shusheng Yang, Yang Yao, Bowen Yu, Hongyi Yuan, Zheng Yuan, Jianwei Zhang, Xingxuan Zhang, Yichang Zhang, Zhenru Zhang, Chang Zhou, Jingren Zhou, Xiaohuan Zhou, and Tianhang Zhu.
+
+Qwen technical report.
+
+arXiv preprint arXiv:2309.16609, 2023a.
+
+[5]
+
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou.
+
+Qwen-vl: A frontier large vision-language model with versatile abilities.
+
+arXiv preprint arXiv:2308.12966, 2023b.
+
+[6]
+
+Yuelin Bai, Xinrun Du, Yiming Liang, Yonggang Jin, Ziqiang Liu, Junting Zhou, Tianyu Zheng, Xincheng Zhang, Nuo Ma, Zekun Wang, et al.
+
+Coig-cqia: Quality is all you need for chinese instruction fine-tuning.
+
+arXiv preprint arXiv:2403.18058, 2024.
+
+[7]
+
+Baichuan.
+
+Baichuan 2: Open large-scale language models.
+
+arXiv preprint arXiv:2309.10305, 2023.
+
+[8]
+
+Xiao Bi, Deli Chen, Guanting Chen, Shanhuang Chen, Damai Dai, Chengqi Deng, Honghui Ding, Kai Dong, Qiushi Du, Zhe Fu, et al.
+
+Deepseek llm: Scaling open-source language models with longtermism.
+
+arXiv preprint arXiv:2401.02954, 2024.
+
+[9]
+
+Ali Furkan Biten, Ruben Tito, Andres Mafla, Lluis Gomez, Marçal Rusinol, Ernest Valveny, CV Jawahar, and Dimosthenis Karatzas.
+
+Scene text visual question answering.
+
+In ICCV, pages 4291–4301, 2019.
+
+[10]
+
+Minwoo Byeon, Beomhee Park, Haecheon Kim, Sungjun Lee, Woonhyuk Baek, and Saehoon Kim.
+
+Coyo-700m: Image-text pair dataset, 2022.
+
+[11]
+
+Zheng Cai, Maosong Cao, Haojiong Chen, Kai Chen, Keyu Chen, Xin Chen, Xun Chen, Zehui Chen, Zhi Chen, Pei Chu, et al.
+
+Internlm2 technical report.
+
+arXiv preprint arXiv:2403.17297, 2024.
+
+[12]
+
+Jie Cao and Jing Xiao.
+
+An augmented benchmark dataset for geometric question answering through dual parallel text encoding.
+
+In COLING, pages 1511–1520, 2022.
+
+[13]
+
+Guo Chen, Yin-Dong Zheng, Jiahao Wang, Jilan Xu, Yifei Huang, Junting Pan, Yi Wang, Yali Wang, Yu Qiao, Tong Lu, et al.
+
+Videollm: Modeling video sequence with large language models.
+
+arXiv preprint arXiv:2305.13292, 2023a.
+
+[14]
+
+Guiming Hardy Chen, Shunian Chen, Ruifei Zhang, Junying Chen, Xiangbo Wu, Zhiyi Zhang, Zhihong Chen, Jianquan Li, Xiang Wan, and Benyou Wang.
+
+Allava: Harnessing gpt4v-synthesized data for a lite vision-language model.
+
+arXiv preprint arXiv:2402.11684, 2024.
+
+[15]
+
+Keqin Chen, Zhao Zhang, Weili Zeng, Richong Zhang, Feng Zhu, and Rui Zhao.
+
+Shikra: Unleashing multimodal llm’s referential dialogue magic.
+
+arXiv preprint arXiv:2306.15195, 2023b.
+
+[16]
+
+Lin Chen, Jisong Li, Xiaoyi Dong, Pan Zhang, Conghui He, Jiaqi Wang, Feng Zhao, and Dahua Lin.
+
+Sharegpt4v: Improving large multi-modal models with better captions.
+
+arXiv preprint arXiv:2311.12793, 2023c.
+
+[17]
+
+Xinlei Chen, Hao Fang, Tsung-Yi Lin, Ramakrishna Vedantam, Saurabh Gupta, Piotr Dollár, and C Lawrence Zitnick.
+
+Microsoft coco captions: Data collection and evaluation server.
+
+arXiv preprint arXiv:1504.00325, 2015.
+
+[18]
+
+Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Zhong Muyan, Qinglong Zhang, Xizhou Zhu, Lewei Lu, et al.
+
+Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks.
+
+arXiv preprint arXiv:2312.14238, 2023d.
+
+[19]
+
+Chee Kheng Chng, Yuliang Liu, Yipeng Sun, Chun Chet Ng, Canjie Luo, Zihan Ni, ChuanMing Fang, Shuaitao Zhang, Junyu Han, Errui Ding, et al.
+
+Icdar2019 robust reading challenge on arbitrary-shaped text-rrc-art.
+
+In ICDAR, pages 1571–1576, 2019.
+
+[20]
+
+Christopher Clark and Matt Gardner.
+
+Simple and effective multi-paragraph reading comprehension.
+
+In ACL, pages 845–855, 2018.
+
+[21]
+
+OpenCompass Contributors.
+
+Opencompass: A universal evaluation platform for foundation models.
+
+https://github.com/open-compass/opencompass, 2023.
+
+[22]
+
+Abhishek Das, Satwik Kottur, Khushi Gupta, Avi Singh, Deshraj Yadav, José MF Moura, Devi Parikh, and Dhruv Batra.
+
+Visual dialog.
+
+In CVPR, pages 326–335, 2017.
+
+[23]
+
+Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Bin Wang, Linke Ouyang, Xilin Wei, Songyang Zhang, Haodong Duan, Maosong Cao, et al.
+
+Internlm-xcomposer2: Mastering free-form text-image composition and comprehension in vision-language large model.
+
+arXiv preprint arXiv:2401.16420, 2024a.
+
+[24]
+
+Xiaoyi Dong, Pan Zhang, Yuhang Zang, Yuhang Cao, Bin Wang, Linke Ouyang, Songyang Zhang, Haodong Duan, Wenwei Zhang, Yining Li, et al.
+
+Internlm-xcomposer2-4khd: A pioneering large vision-language model handling resolutions from 336 pixels to 4k hd.
+
+arXiv preprint arXiv:2404.06512, 2024b.
+
+[25]
+
+Zhengxiao Du, Yujie Qian, Xiao Liu, Ming Ding, Jiezhong Qiu, Zhilin Yang, and Jie Tang.
+
+Glm: General language model pretraining with autoregressive blank infilling.
+
+In ACL, pages 320–335, 2022.
+
+[26]
+
+Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Zhenyu Qiu, Wei Lin, Jinrui Yang, Xiawu Zheng, et al.
+
+Mme: A comprehensive evaluation benchmark for multimodal large language models.
+
+arXiv preprint arXiv:2306.13394, 2023.
+
+[27]
+
+Peng Gao, Jiaming Han, Renrui Zhang, Ziyi Lin, Shijie Geng, Aojun Zhou, Wei Zhang, Pan Lu, Conghui He, Xiangyu Yue, et al.
+
+Llama-adapter v2: Parameter-efficient visual instruction model.
+
+arXiv preprint arXiv:2304.15010, 2023.
+
+[28]
+
+Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh.
+
+Making the v in vqa matter: Elevating the role of image understanding in visual question answering.
+
+In CVPR, pages 6904–6913, 2017.
+
+[29]
+
+Jiaxi Gu, Xiaojun Meng, Guansong Lu, Lu Hou, Niu Minzhe, Xiaodan Liang, Lewei Yao, Runhui Huang, Wei Zhang, Xin Jiang, et al.
+
+Wukong: A 100 million large-scale chinese cross-modal pre-training benchmark.
+
+NeurIPS, 35:26418–26431, 2022.
+
+[30]
+
+Tianrui Guan, Fuxiao Liu, Xiyang Wu, Ruiqi Xian, Zongxia Li, Xiaoyu Liu, Xijun Wang, Lichang Chen, Furong Huang, Yaser Yacoob, et al.
+
+Hallusionbench: An advanced diagnostic suite for entangled language hallucination & visual illusion in large vision-language models.
+
+arXiv preprint arXiv:2310.14566, 2023.
+
+[31]
+
+Conghui He, Zhenjiang Jin, Chao Xu, Jiantao Qiu, Bin Wang, Wei Li, Hang Yan, Jiaqi Wang, and Dahua Lin.
+
+Wanjuan: A comprehensive multimodal dataset for advancing english and chinese large models.
+
+arXiv preprint arXiv:2308.10755, 2023.
+
+[32]
+
+Wenyi Hong, Weihan Wang, Qingsong Lv, Jiazheng Xu, Wenmeng Yu, Junhui Ji, Yan Wang, Zihan Wang, Yuxiao Dong, Ming Ding, et al.
+
+Cogagent: A visual language model for gui agents.
+
+arXiv preprint arXiv:2312.08914, 2023.
+
+[33]
+
+Anwen Hu, Haiyang Xu, Jiabo Ye, Ming Yan, Liang Zhang, Bo Zhang, Chen Li, Ji Zhang, Qin Jin, Fei Huang, et al.
+
+mplug-docowl 1.5: Unified structure learning for ocr-free document understanding.
+
+arXiv preprint arXiv:2403.12895, 2024.
+
+[34]
+
+Drew A Hudson and Christopher D Manning.
+
+Gqa: A new dataset for real-world visual reasoning and compositional question answering.
+
+In CVPR, pages 6700–6709, 2019.
+
+[35]
+
+HyperGAI Research Team.
+
+Introducing hpt: A family of leading multimodal llms.
+
+https://www.hypergai.com/blog/introducing-hpt-a-family-of-leading-multimodal-llms, 2024.
+
+[36]
+
+Gabriel Ilharco, Mitchell Wortsman, Ross Wightman, Cade Gordon, Nicholas Carlini, Rohan Taori, Achal Dave, Vaishaal Shankar, Hongseok Namkoong, John Miller, Hannaneh Hajishirzi, Ali Farhadi, and Ludwig Schmidt.
+
+Openclip.
+
+Zenodo. Version 0.1. https://doi.org/10.5281/zenodo.5143773, 2021.
+
+DOI: 10.5281/zenodo.5143773.
+
+[37]
+
+Jimmycarter.
+
+Textocr gpt-4v dataset.
+
+https://huggingface.co/datasets/jimmycarter/textocr-gpt4v, 2023.
+
+[38]
+
+Kushal Kafle, Brian Price, Scott Cohen, and Christopher Kanan.
+
+Dvqa: Understanding data visualizations via question answering.
+
+In CVPR, pages 5648–5656, 2018.
+
+[39]
+
+Aniruddha Kembhavi, Mike Salvato, Eric Kolve, Minjoon Seo, Hannaneh Hajishirzi, and Ali Farhadi.
+
+A diagram is worth a dozen images.
+
+In ECCV, pages 235–251, 2016.
+
+[40]
+
+Aniruddha Kembhavi, Minjoon Seo, Dustin Schwenk, Jonghyun Choi, Ali Farhadi, and Hannaneh Hajishirzi.
+
+Are you smarter than a sixth grader? textbook question answering for multimodal machine comprehension.
+
+In CVPR, pages 4999–5007, 2017.
+
+[41]
+
+Geewook Kim, Teakgyu Hong, Moonbin Yim, JeongYeon Nam, Jinyoung Park, Jinyeong Yim, Wonseok Hwang, Sangdoo Yun, Dongyoon Han, and Seunghyun Park.
+
+Ocr-free document understanding transformer.
+
+In ECCV, 2022.
+
+[42]
+
+Ranjay Krishna, Yuke Zhu, Oliver Groth, Justin Johnson, Kenji Hata, Joshua Kravitz, Stephanie Chen, Yannis Kalantidis, Li-Jia Li, David A Shamma, et al.
+
+Visual genome: Connecting language and vision using crowdsourced dense image annotations.
+
+IJCV, 123:32–73, 2017.
+
+[43]
+
+Xin Lai, Zhuotao Tian, Yukang Chen, Yanwei Li, Yuhui Yuan, Shu Liu, and Jiaya Jia.
+
+Lisa: Reasoning segmentation via large language model.
+
+arXiv preprint arXiv:2308.00692, 2023.
+
+[44]
+
+LAION.
+
+Gpt-4v dataset.
+
+https://huggingface.co/datasets/laion/gpt4v-dataset, 2023.
+
+[45]
+
+Paul Lerner, Olivier Ferret, Camille Guinaudeau, Hervé Le Borgne, Romaric Besançon, José G Moreno, and Jesús Lovón Melgarejo.
+
+Viquae, a dataset for knowledge-based visual question answering about named entities.
+
+In SIGIR, pages 3108–3120, 2022.
+
+[46]
+
+Bohao Li, Rui Wang, Guangzhi Wang, Yuying Ge, Yixiao Ge, and Ying Shan.
+
+Seed-bench: Benchmarking multimodal llms with generative comprehension.
+
+arXiv preprint arXiv:2307.16125, 2023a.
+
+[47]
+
+Bo Li, Peiyuan Zhang, Jingkang Yang, Yuanhan Zhang, Fanyi Pu, and Ziwei Liu.
+
+Otterhd: A high-resolution multi-modality model.
+
+arXiv preprint arXiv:2311.04219, 2023b.
+
+[48]
+
+Bo Li, Yuanhan Zhang, Liangyu Chen, Jinghao Wang, Jingkang Yang, and Ziwei Liu.
+
+Otter: A multi-modal model with in-context instruction tuning.
+
+arXiv preprint arXiv:2305.03726, 2023c.
+
+[49]
+
+Chenxia Li, Weiwei Liu, Ruoyu Guo, Xiaoting Yin, Kaitao Jiang, Yongkun Du, Yuning Du, Lingfeng Zhu, Baohua Lai, Xiaoguang Hu, et al.
+
+Pp-ocrv3: More attempts for the improvement of ultra lightweight ocr system.
+
+arXiv preprint arXiv:2206.03001, 2022a.
+
+[50]
+
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi.
+
+Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models.
+
+In ICML, pages 19730–19742. PMLR, 2023d.
+
+[51]
+
+KunChang Li, Yinan He, Yi Wang, Yizhuo Li, Wenhai Wang, Ping Luo, Yali Wang, Limin Wang, and Yu Qiao.
+
+Videochat: Chat-centric video understanding.
+
+arXiv preprint arXiv:2305.06355, 2023e.
+
+[52]
+
+Yanghao Li, Chao-Yuan Wu, Haoqi Fan, Karttikeya Mangalam, Bo Xiong, Jitendra Malik, and Christoph Feichtenhofer.
+
+Mvitv2: Improved multiscale vision transformers for classification and detection.
+
+In CVPR, pages 4804–4814, 2022b.
+
+[53]
+
+Yanwei Li, Yuechen Zhang, Chengyao Wang, Zhisheng Zhong, Yixin Chen, Ruihang Chu, Shaoteng Liu, and Jiaya Jia.
+
+Mini-gemini: Mining the potential of multi-modality vision language models.
+
+arXiv preprint arXiv:2403.18814, 2024.
+
+[54]
+
+Zhuowan Li, Xingrui Wang, Elias Stengel-Eskin, Adam Kortylewski, Wufei Ma, Benjamin Van Durme, and Alan L Yuille.
+
+Super-clevr: A virtual benchmark to diagnose domain robustness in visual reasoning.
+
+In CVPR, pages 14963–14973, 2023f.
+
+[55]
+
+Zhang Li, Biao Yang, Qiang Liu, Zhiyin Ma, Shuo Zhang, Jingxu Yang, Yabo Sun, Yuliang Liu, and Xiang Bai.
+
+Monkey: Image resolution and text label are important things for large multi-modal models.
+
+arXiv preprint arXiv:2311.06607, 2023g.
+
+[56]
+
+Bin Lin, Zhenyu Tang, Yang Ye, Jiaxi Cui, Bin Zhu, Peng Jin, Junwu Zhang, Munan Ning, and Li Yuan.
+
+Moe-llava: Mixture of experts for large vision-language models.
+
+arXiv preprint arXiv:2401.15947, 2024.
+
+[57]
+
+Ziyi Lin, Chris Liu, Renrui Zhang, Peng Gao, Longtian Qiu, Han Xiao, Han Qiu, Chen Lin, Wenqi Shao, Keqin Chen, et al.
+
+Sphinx: The joint mixing of weights, tasks, and visual embeddings for multi-modal large language models.
+
+arXiv preprint arXiv:2311.07575, 2023.
+
+[58]
+
+Adam Dahlgren Lindström and Savitha Sam Abraham.
+
+Clevr-math: A dataset for compositional language, visual and mathematical reasoning.
+
+arXiv preprint arXiv:2208.05358, 2022.
+
+[59]
+
+Fangyu Liu, Guy Emerson, and Nigel Collier.
+
+Visual spatial reasoning.
+
+TACL, 11:635–651, 2023a.
+
+[60]
+
+Fuxiao Liu, Kevin Lin, Linjie Li, Jianfeng Wang, Yaser Yacoob, and Lijuan Wang.
+
+Aligning large multi-modal model with robust instruction tuning.
+
+arXiv preprint arXiv:2306.14565, 2023b.
+
+[61]
+
+Fuxiao Liu, Xiaoyang Wang, Wenlin Yao, Jianshu Chen, Kaiqiang Song, Sangwoo Cho, Yaser Yacoob, and Dong Yu.
+
+Mmc: Advancing multimodal chart understanding with large-scale instruction tuning.
+
+arXiv preprint arXiv:2311.10774, 2023c.
+
+[62]
+
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+
+Improved baselines with visual instruction tuning.
+
+arXiv preprint arXiv:2310.03744, 2023d.
+
+[63]
+
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+
+Visual instruction tuning.
+
+NeurIPS, 36, 2023e.
+
+[64]
+
+Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan Zhang, Sheng Shen, and Yong Jae Lee.
+
+Llava-next: Improved reasoning, ocr, and world knowledge, 2024a.
+
+[65]
+
+Shuo Liu, Kaining Ying, Hao Zhang, Yue Yang, Yuqi Lin, Tianle Zhang, Chuanhao Li, Yu Qiao, Ping Luo, Wenqi Shao, et al.
+
+Convbench: A multi-turn conversation evaluation benchmark with hierarchical capability for large vision-language models.
+
+arXiv preprint arXiv:2403.20194, 2024b.
+
+[66]
+
+Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, et al.
+
+Mmbench: Is your multi-modal model an all-around player?
+
+arXiv preprint arXiv:2307.06281, 2023f.
+
+[67]
+
+Yuliang Liu, Zhang Li, Hongliang Li, Wenwen Yu, Mingxin Huang, Dezhi Peng, Mingyu Liu, Mingrui Chen, Chunyuan Li, Lianwen Jin, et al.
+
+On the hidden mystery of ocr in large multimodal models.
+
+arXiv preprint arXiv:2305.07895, 2023g.
+
+[68]
+
+Yuliang Liu, Biao Yang, Qiang Liu, Zhang Li, Zhiyin Ma, Shuo Zhang, and Xiang Bai.
+
+Textmonkey: An ocr-free large multimodal model for understanding document.
+
+arXiv preprint arXiv:2403.04473, 2024c.
+
+[69]
+
+Zhaoyang Liu, Yinan He, Wenhai Wang, Weiyun Wang, Yi Wang, Shoufa Chen, Qinglong Zhang, Zeqiang Lai, Yang Yang, Qingyun Li, Jiashuo Yu, et al.
+
+Interngpt: Solving vision-centric tasks by interacting with chatgpt beyond language.
+
+arXiv preprint arXiv:2305.05662, 2023h.
+
+[70]
+
+Zhaoyang Liu, Zeqiang Lai, Zhangwei Gao, Erfei Cui, Xizhou Zhu, Lewei Lu, Qifeng Chen, Yu Qiao, Jifeng Dai, and Wenhai Wang.
+
+Controlllm: Augment language models with tools by searching on graphs.
+
+arXiv preprint arXiv:2310.17796, 2023i.
+
+[71]
+
+Haoyu Lu, Wen Liu, Bo Zhang, Bingxuan Wang, Kai Dong, Bo Liu, Jingxiang Sun, Tongzheng Ren, Zhuoshu Li, Yaofeng Sun, et al.
+
+Deepseek-vl: Towards real-world vision-language understanding.
+
+arXiv preprint arXiv:2403.05525, 2024.
+
+[72]
+
+Pan Lu, Ran Gong, Shibiao Jiang, Liang Qiu, Siyuan Huang, Xiaodan Liang, and Song-Chun Zhu.
+
+Inter-gps: Interpretable geometry problem solving with formal language and symbolic reasoning.
+
+arXiv preprint arXiv:2105.04165, 2021.
+
+[73]
+
+Pan Lu, Swaroop Mishra, Tanglin Xia, Liang Qiu, Kai-Wei Chang, Song-Chun Zhu, Oyvind Tafjord, Peter Clark, and Ashwin Kalyan.
+
+Learn to explain: Multimodal reasoning via thought chains for science question answering.
+
+NeurIPS, 35:2507–2521, 2022a.
+
+[74]
+
+Pan Lu, Liang Qiu, Kai-Wei Chang, Ying Nian Wu, Song-Chun Zhu, Tanmay Rajpurohit, Peter Clark, and Ashwin Kalyan.
+
+Dynamic prompt learning via policy gradient for semi-structured mathematical reasoning.
+
+arXiv preprint arXiv:2209.14610, 2022b.
+
+[75]
+
+Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao Cheng, Kai-Wei Chang, Michel Galley, and Jianfeng Gao.
+
+Mathvista: Evaluating mathematical reasoning of foundation models in visual contexts.
+
+arXiv preprint arXiv:2310.02255, 2023.
+
+[76]
+
+Gen Luo, Yiyi Zhou, Yuxin Zhang, Xiawu Zheng, Xiaoshuai Sun, and Rongrong Ji.
+
+Feast your eyes: Mixture-of-resolution adaptation for multimodal large language models.
+
+arXiv preprint arXiv:2403.03003, 2024.
+
+[77]
+
+Tengchao Lv, Yupan Huang, Jingye Chen, Lei Cui, Shuming Ma, Yaoyao Chang, Shaohan Huang, Wenhui Wang, Li Dong, Weiyao Luo, et al.
+
+Kosmos-2.5: A multimodal literate model.
+
+arXiv preprint arXiv:2309.11419, 2023.
+
+[78]
+
+Chuofan Ma, Yi Jiang, Jiannan Wu, Zehuan Yuan, and Xiaojuan Qi.
+
+Groma: Localized visual tokenization for grounding multimodal large language models.
+
+arXiv preprint arXiv:2404.13013, 2024.
+
+[79]
+
+Junhua Mao, Jonathan Huang, Alexander Toshev, Oana Camburu, Alan L Yuille, and Kevin Murphy.
+
+Generation and comprehension of unambiguous object descriptions.
+
+In CVPR, pages 11–20, 2016.
+
+[80]
+
+Kenneth Marino, Mohammad Rastegari, Ali Farhadi, and Roozbeh Mottaghi.
+
+Ok-vqa: A visual question answering benchmark requiring external knowledge.
+
+In CVPR, pages 3195–3204, 2019.
+
+[81]
+
+Ahmed Masry, Xuan Long Do, Jia Qing Tan, Shafiq Joty, and Enamul Hoque.
+
+Chartqa: A benchmark for question answering about charts with visual and logical reasoning.
+
+In ACL, pages 2263–2279, 2022.
+
+[82]
+
+Minesh Mathew, Dimosthenis Karatzas, and CV Jawahar.
+
+Docvqa: A dataset for vqa on document images.
+
+In WACV, pages 2200–2209, 2021.
+
+[83]
+
+Minesh Mathew, Viraj Bagal, Rubèn Tito, Dimosthenis Karatzas, Ernest Valveny, and CV Jawahar.
+
+Infographicvqa.
+
+In WACV, pages 1697–1706, 2022.
+
+[84]
+
+Brandon McKinzie, Zhe Gan, Jean-Philippe Fauconnier, Sam Dodge, Bowen Zhang, Philipp Dufter, Dhruti Shah, Xianzhi Du, Futang Peng, Floris Weers, et al.
+
+Mm1: Methods, analysis & insights from multimodal llm pre-training.
+
+arXiv preprint arXiv:2403.09611, 2024.
+
+[85]
+
+Nitesh Methani, Pritha Ganguly, Mitesh M Khapra, and Pratyush Kumar.
+
+Plotqa: Reasoning over scientific plots.
+
+In WACV, pages 1527–1536, 2020.
+
+[86]
+
+Anand Mishra, Shashank Shekhar, Ajeet Kumar Singh, and Anirban Chakraborty.
+
+Ocr-vqa: Visual question answering by reading text in images.
+
+In ICDAR, pages 947–952, 2019.
+
+[87]
+
+OpenAI.
+
+Gpt-4v(ision) system card.
+
+https://cdn.openai.com/papers/GPTV_System_Card.pdf, 2023.
+
+[88]
+
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy V Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel HAZIZA, Francisco Massa, Alaaeldin El-Nouby, et al.
+
+Dinov2: Learning robust visual features without supervision.
+
+TMLR, 2023.
+
+[89]
+
+Aitor Ormazabal, Che Zheng, Cyprien de Masson d’Autume, Dani Yogatama, Deyu Fu, Donovan Ong, Eric Chen, Eugenie Lamprecht, Hai Pham, Isaac Ong, et al.
+
+Reka core, flash, and edge: A series of powerful multimodal language models.
+
+arXiv preprint arXiv:2404.12387, 2024.
+
+[90]
+
+Zhiliang Peng, Wenhui Wang, Li Dong, Yaru Hao, Shaohan Huang, Shuming Ma, and Furu Wei.
+
+Kosmos-2: Grounding multimodal large language models to the world.
+
+arXiv preprint arXiv:2306.14824, 2023.
+
+[91]
+
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+
+Learning transferable visual models from natural language supervision.
+
+In ICML, pages 8748–8763, 2021.
+
+[92]
+
+Machel Reid, Nikolay Savinov, Denis Teplyashin, Dmitry Lepikhin, Timothy Lillicrap, Jean-baptiste Alayrac, Radu Soricut, Angeliki Lazaridou, Orhan Firat, Julian Schrittwieser, et al.
+
+Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+
+arXiv preprint arXiv:2403.05530, 2024.
+
+[93]
+
+Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, et al.
+
+Laion-5b: An open large-scale dataset for training next generation image-text models.
+
+NeurIPS, 35:25278–25294, 2022a.
+
+[94]
+
+Christoph Schuhmann, Andreas Köpf, Richard Vencu, Theo Coombes, and Romain Beaumont.
+
+Laion coco: 600m synthetic captions from laion2b-en.
+
+https://laion.ai/blog/laion-coco/, 2022b.
+
+[95]
+
+Dustin Schwenk, Apoorv Khandelwal, Christopher Clark, Kenneth Marino, and Roozbeh Mottaghi.
+
+A-okvqa: A benchmark for visual question answering using world knowledge.
+
+In ECCV, pages 146–162, 2022.
+
+[96]
+
+Sanket Shah, Anand Mishra, Naganand Yadati, and Partha Pratim Talukdar.
+
+Kvqa: Knowledge-aware visual question answering.
+
+In AAAI, pages 8876–8884, 2019.
+
+[97]
+
+Shuai Shao, Zeming Li, Tianyuan Zhang, Chao Peng, Gang Yu, Xiangyu Zhang, Jing Li, and Jian Sun.
+
+Objects365: A large-scale, high-quality dataset for object detection.
+
+In ICCV, pages 8430–8439, 2019.
+
+[98]
+
+Baoguang Shi, Cong Yao, Minghui Liao, Mingkun Yang, Pei Xu, Linyan Cui, Serge Belongie, Shijian Lu, and Xiang Bai.
+
+Icdar2017 competition on reading chinese text in the wild (rctw-17).
+
+In ICDAR, pages 1429–1434, 2017.
+
+[99]
+
+Oleksii Sidorov, Ronghang Hu, Marcus Rohrbach, and Amanpreet Singh.
+
+Textcaps: a dataset for image captioning with reading comprehension.
+
+In ECCV, pages 742–758, 2020.
+
+[100]
+
+Amanpreet Singh, Vivek Natarajan, Meet Shah, Yu Jiang, Xinlei Chen, Dhruv Batra, Devi Parikh, and Marcus Rohrbach.
+
+Towards vqa models that can read.
+
+In CVPR, pages 8317–8326, 2019.
+
+[101]
+
+Amanpreet Singh, Guan Pang, Mandy Toh, Jing Huang, Wojciech Galuba, and Tal Hassner.
+
+Textocr: Towards large-scale end-to-end reasoning for arbitrary-shaped scene text.
+
+In CVPR, pages 8802–8812, 2021.
+
+[102]
+
+StepFun Research Team.
+
+Step-1v: A hundred billion parameter multimodal large model.
+
+https://platform.stepfun.com, 2024.
+
+[103]
+
+Quan Sun, Qiying Yu, Yufeng Cui, Fan Zhang, Xiaosong Zhang, Yueze Wang, Hongcheng Gao, Jingjing Liu, Tiejun Huang, and Xinlong Wang.
+
+Generative pretraining in multimodality.
+
+In ICLR, 2024.
+
+[104]
+
+Tianxiang Sun, Xiaotian Zhang, Zhengfu He, Peng Li, Qinyuan Cheng, Hang Yan, Xiangyang Liu, Yunfan Shao, Qiong Tang, Xingjian Zhao, et al.
+
+Moss: Training conversational language models from synthetic data.
+
+arXiv preprint arXiv:2307.15020, 7, 2023.
+
+[105]
+
+Yipeng Sun, Zihan Ni, Chee-Kheng Chng, Yuliang Liu, Canjie Luo, Chun Chet Ng, Junyu Han, Errui Ding, Jingtuo Liu, Dimosthenis Karatzas, et al.
+
+Icdar 2019 competition on large-scale street view text with partial labeling-rrc-lsvt.
+
+In ICDAR, pages 1557–1562, 2019.
+
+[106]
+
+Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B Hashimoto.
+
+Alpaca: A strong, replicable instruction-following model.
+
+Stanford Center for Research on Foundation Models. https://crfm. stanford. edu/2023/03/13/alpaca. html, 3(6):7, 2023.
+
+[107]
+
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Yonghui Wu, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, et al.
+
+Gemini: a family of highly capable multimodal models.
+
+arXiv preprint arXiv:2312.11805, 2023.
+
+[108]
+
+InternLM Team.
+
+Internlm: A multilingual language model with progressively enhanced capabilities.
+
+https://github.com/InternLM/InternLM, 2023.
+
+[109]
+
+Teknium.
+
+Openhermes 2.5: An open dataset of synthetic data for generalist llm assistants.
+
+https://huggingface.co/datasets/teknium/OpenHermes-2.5, 2023.
+
+[110]
+
+Changyao Tian, Xizhou Zhu, Yuwen Xiong, Weiyun Wang, Zhe Chen, Wenhai Wang, Yuntao Chen, Lewei Lu, Tong Lu, Jie Zhou, et al.
+
+Mm-interleaved: Interleaved image-text generative modeling via multi-modal feature synchronizer.
+
+arXiv preprint arXiv:2401.10208, 2024.
+
+[111]
+
+Shengbang Tong, Zhuang Liu, Yuexiang Zhai, Yi Ma, Yann LeCun, and Saining Xie.
+
+Eyes wide shut? exploring the visual shortcomings of multimodal llms.
+
+arXiv preprint arXiv:2401.06209, 2024.
+
+[112]
+
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al.
+
+Llama: Open and efficient foundation language models.
+
+arXiv preprint arXiv:2302.13971, 2023a.
+
+[113]
+
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+
+Llama 2: Open foundation and fine-tuned chat models.
+
+arXiv preprint arXiv:2307.09288, 2023b.
+
+[114]
+
+Andreas Veit, Tomas Matera, Lukas Neumann, Jiri Matas, and Serge Belongie.
+
+Coco-text: Dataset and benchmark for text detection and recognition in natural images.
+
+arXiv preprint arXiv:1601.07140, 2016.
+
+[115]
+
+Junke Wang, Lingchen Meng, Zejia Weng, Bo He, Zuxuan Wu, and Yu-Gang Jiang.
+
+To see is to believe: Prompting gpt-4v for better visual instruction tuning.
+
+arXiv preprint arXiv:2311.07574, 2023a.
+
+[116]
+
+Wenhai Wang, Zhe Chen, Xiaokang Chen, Jiannan Wu, Xizhou Zhu, Gang Zeng, Ping Luo, Tong Lu, Jie Zhou, Yu Qiao, et al.
+
+Visionllm: Large language model is also an open-ended decoder for vision-centric tasks.
+
+NeurIPS, 36, 2023b.
+
+[117]
+
+Weihan Wang, Qingsong Lv, Wenmeng Yu, Wenyi Hong, Ji Qi, Yan Wang, Junhui Ji, Zhuoyi Yang, Lei Zhao, Xixuan Song, et al.
+
+Cogvlm: Visual expert for pretrained language models.
+
+arXiv preprint arXiv:2311.03079, 2023c.
+
+[118]
+
+Weiyun Wang, Yiming Ren, Haowen Luo, Tiantong Li, Chenxiang Yan, Zhe Chen, Wenhai Wang, Qingyun Li, Lewei Lu, Xizhou Zhu, et al.
+
+The all-seeing project v2: Towards general relation comprehension of the open world.
+
+arXiv preprint arXiv:2402.19474, 2024a.
+
+[119]
+
+Weiyun Wang, Min Shi, Qingyun Li, Wenhai Wang, Zhenhang Huang, Linjie Xing, Zhe Chen, Hao Li, Xizhou Zhu, Zhiguo Cao, et al.
+
+The all-seeing project: Towards panoptic visual recognition and understanding of the open world.
+
+In ICLR, 2024b.
+
+[120]
+
+Yi Wang, Kunchang Li, Xinhao Li, Jiashuo Yu, Yinan He, Guo Chen, Baoqi Pei, Rongkun Zheng, Jilan Xu, Zun Wang, et al.
+
+Internvideo2: Scaling video foundation models for multimodal video understanding.
+
+arXiv preprint arXiv:2403.15377, 2024c.
+
+[121]
+
+Haoran Wei, Lingyu Kong, Jinyue Chen, Liang Zhao, Zheng Ge, Jinrong Yang, Jianjian Sun, Chunrui Han, and Xiangyu Zhang.
+
+Vary: Scaling up the vision vocabulary for large vision-language models.
+
+arXiv preprint arXiv:2312.06109, 2023a.
+
+[122]
+
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+NeurIPS, 35:24824–24837, 2022.
+
+[123]
+
+Tianwen Wei, Liang Zhao, Lichang Zhang, Bo Zhu, Lijie Wang, Haihua Yang, Biye Li, Cheng Cheng, Weiwei Lü, Rui Hu, et al.
+
+Skywork: A more open bilingual foundation model.
+
+arXiv preprint arXiv:2310.19341, 2023b.
+
+[124]
+
+Shengqiong Wu, Hao Fei, Leigang Qu, Wei Ji, and Tat-Seng Chua.
+
+Next-gpt: Any-to-any multimodal llm.
+
+arXiv preprint arXiv:2309.05519, 2023.
+
+[125]
+
+X.ai.
+
+Grok-1.5 vision preview.
+
+https://x.ai/blog/grok-1.5v, 2024.
+
+[126]
+
+Ruyi Xu, Yuan Yao, Zonghao Guo, Junbo Cui, Zanlin Ni, Chunjiang Ge, Tat-Seng Chua, Zhiyuan Liu, Maosong Sun, and Gao Huang.
+
+Llava-uhd: an lmm perceiving any aspect ratio and high-resolution images.
+
+arXiv preprint arXiv:2403.11703, 2024.
+
+[127]
+
+Jiabo Ye, Anwen Hu, Haiyang Xu, Qinghao Ye, Ming Yan, Guohai Xu, Chenliang Li, Junfeng Tian, Qi Qian, Ji Zhang, et al.
+
+Ureader: Universal ocr-free visually-situated language understanding with multimodal large language model.
+
+arXiv preprint arXiv:2310.05126, 2023a.
+
+[128]
+
+Qinghao Ye, Haiyang Xu, Jiabo Ye, Ming Yan, Haowei Liu, Qi Qian, Ji Zhang, Fei Huang, and Jingren Zhou.
+
+mplug-owl2: Revolutionizing multi-modal large language model with modality collaboration.
+
+arXiv preprint arXiv:2311.04257, 2023b.
+
+[129]
+
+Kaining Ying, Fanqing Meng, Jin Wang, Zhiqian Li, Han Lin, Yue Yang, Hao Zhang, Wenbo Zhang, Yuqi Lin, Shuo Liu, Jiayi Lei, Quanfeng Lu, Runjian Chen, Peng Xu, Renrui Zhang, Haozhe Zhang, Peng Gao, Yali Wang, Yu Qiao, Ping Luo, Kaipeng Zhang, and Wenqi Shao.
+
+Mmt-bench: A comprehensive multimodal benchmark for evaluating large vision-language models towards multitask agi.
+
+arXiv preprint arXiv:2404.16006, 2024.
+
+[130]
+
+Alex Young, Bei Chen, Chao Li, Chengen Huang, Ge Zhang, Guanwei Zhang, Heng Li, Jiangcheng Zhu, Jianqun Chen, Jing Chang, et al.
+
+Yi: Open foundation models by 01. ai.
+
+arXiv preprint arXiv:2403.04652, 2024.
+
+[131]
+
+Licheng Yu, Patrick Poirson, Shan Yang, Alexander C Berg, and Tamara L Berg.
+
+Modeling context in referring expressions.
+
+In ECCV, pages 69–85, 2016.
+
+[132]
+
+Longhui Yu, Weisen Jiang, Han Shi, Jincheng Yu, Zhengying Liu, Yu Zhang, James T Kwok, Zhenguo Li, Adrian Weller, and Weiyang Liu.
+
+Metamath: Bootstrap your own mathematical questions for large language models.
+
+arXiv preprint arXiv:2309.12284, 2023a.
+
+[133]
+
+Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang, Kevin Lin, Zicheng Liu, Xinchao Wang, and Lijuan Wang.
+
+Mm-vet: Evaluating large multimodal models for integrated capabilities.
+
+arXiv preprint arXiv:2308.02490, 2023b.
+
+[134]
+
+Tai-Ling Yuan, Zhe Zhu, Kun Xu, Cheng-Jun Li, Tai-Jiang Mu, and Shi-Min Hu.
+
+A large chinese text dataset in the wild.
+
+Journal of Computer Science and Technology, 34:509–521, 2019.
+
+[135]
+
+Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming Ren, Yuxuan Sun, et al.
+
+Mmmu: A massive multi-discipline multimodal understanding and reasoning benchmark for expert agi.
+
+arXiv preprint arXiv:2311.16502, 2023.
+
+[136]
+
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer.
+
+Sigmoid loss for language image pre-training.
+
+In ICCV, pages 11975–11986, 2023.
+
+[137]
+
+Rui Zhang, Yongsheng Zhou, Qianyi Jiang, Qi Song, Nan Li, Kai Zhou, Lei Wang, Dong Wang, Minghui Liao, Mingkun Yang, et al.
+
+Icdar 2019 robust reading challenge on reading chinese text on signboard.
+
+In ICDAR, pages 1577–1581, 2019.
+
+[138]
+
+Renrui Zhang, Jiaming Han, Aojun Zhou, Xiangfei Hu, Shilin Yan, Pan Lu, Hongsheng Li, Peng Gao, and Yu Qiao.
+
+Llama-adapter: Efficient fine-tuning of language models with zero-init attention.
+
+In ICLR, 2024.
+
+[139]
+
+Shilong Zhang, Peize Sun, Shoufa Chen, Min Xiao, Wenqi Shao, Wenwei Zhang, Kai Chen, and Ping Luo.
+
+Gpt4roi: Instruction tuning large language model on region-of-interest.
+
+arXiv preprint arXiv:2307.03601, 2023.
+
+[140]
+
+Bo Zhao, Boya Wu, and Tiejun Huang.
+
+Svit: Scaling up visual instruction tuning.
+
+arXiv preprint arXiv:2307.04087, 2023.
+
+[141]
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al.
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+NeurIPS, 36, 2024.
+
+[142]
+
+Deyao Zhu, Jun Chen, Xiaoqian Shen, Xiang Li, and Mohamed Elhoseiny.
+
+Minigpt-4: Enhancing vision-language understanding with advanced large language models.
+
+In ICLR, 2024.
+
+ Experimental support, please
+ view the build logs
+ for errors. Generated by
+
+ L
+ A
+ T
+ E
+ 
+ xml
+ 
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" (
+ 
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+ We gratefully acknowledge support from
+ our major funders,
+ member institutions, ,
+ and all contributors.
+
+ About
+ ·
+ Help
+ ·
+ Contact
+ ·
+ Subscribe
+ ·
+ Copyright
+ ·
+ Privacy
+ ·
+ Accessibility
+ ·
+ Operational Status (opens in new tab)
+
+ Major funding support from

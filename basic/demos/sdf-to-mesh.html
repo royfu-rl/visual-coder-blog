@@ -1,0 +1,101 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*{margin:0;box-sizing:border-box}html,body{height:100%;overflow:hidden;background:#0f1115;font:12px -apple-system,system-ui,sans-serif}
+canvas{display:block}
+.bar{position:fixed;left:8px;top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.bar button{border:1px solid #2c3340;background:#181c24;color:#c9d1dc;border-radius:7px;padding:5px 10px;font:inherit;cursor:pointer}
+.bar button.on{background:#2f6bff;border-color:#2f6bff;color:#fff}
+.info{position:fixed;left:0;bottom:0;right:0;padding:6px 9px;color:#9aa3af;line-height:1.5;background:rgba(15,17,21,.85)}
+.info b{color:#fff}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<div class="bar"><button data-s="0" class="on">1 场</button><button data-s="1">2 网格</button><button data-s="2">3 重拓扑</button></div>
+<div class="info" id="info"></div>
+<script type="module">
+import * as THREE from 'three';
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
+
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+cam.position.set(0, 0.1, 4.4);
+const r = new THREE.WebGLRenderer({ antialias: true });
+r.setPixelRatio(Math.min(devicePixelRatio, 2)); r.setSize(innerWidth, innerHeight);
+document.body.appendChild(r.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(2, 3, 2); scene.add(sun);
+const root = new THREE.Group(); root.position.y = 0.3; scene.add(root);
+
+// 形状：一个斜放的胶囊，SDF = 到中轴线段的距离 - 半径。斜放是为了让采样格子和形状不对齐，抽出的三角面才像真实产物那样碎
+const R = 0.42, H = 0.5, TILT = 0.45, c = Math.cos(TILT), sn = Math.sin(TILT);
+const sdf = (x, y, z) => { const u = c * x + sn * y, v = -sn * x + c * y; return Math.hypot(u, Math.max(Math.abs(v) - H, 0), z) - R; };
+
+// 1 场：网格点上的 SDF 值，只画表面附近的点（蓝 = 在内部，灰 = 在外部）
+const pts = [], cols = [], N = 26, S = 1.1;
+for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) {
+  const x = (i / (N - 1) * 2 - 1) * S, y = (j / (N - 1) * 2 - 1) * S, z = (k / (N - 1) * 2 - 1) * S;
+  const d = sdf(x, y, z);
+  if (Math.abs(d) > 0.12) continue;
+  pts.push(x, y, z);
+  d < 0 ? cols.push(0.18, 0.42, 1) : cols.push(0.55, 0.6, 0.67);
+}
+const pg = new THREE.BufferGeometry();
+pg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+pg.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+const field = new THREE.Points(pg, new THREE.PointsMaterial({ size: 0.035, vertexColors: true }));
+
+// 2 网格：marching cubes 从同一个场里抽出三角面，布线是碎的
+const RES = 34;
+const mc = new MarchingCubes(RES, new THREE.MeshStandardMaterial({ color: 0x2f6bff, roughness: .4 }), false, false, 60000);
+mc.isolation = 0.5;
+for (let i = 0; i < RES; i++) for (let j = 0; j < RES; j++) for (let k = 0; k < RES; k++) {
+  const x = (i / (RES - 1) * 2 - 1) * S, y = (j / (RES - 1) * 2 - 1) * S, z = (k / (RES - 1) * 2 - 1) * S;
+  mc.field[i + j * RES + k * RES * RES] = 0.5 - sdf(x, y, z) * 2.5;   // 场值大于 isolation 即在内部
+}
+mc.update(); mc.scale.setScalar(S);
+const mcGeo = new THREE.BufferGeometry();
+mcGeo.setAttribute('position', new THREE.BufferAttribute(mc.positionArray.slice(0, mc.count * 3), 3));
+const mcTris = mc.count / 3;
+const mcWire = new THREE.LineSegments(new THREE.WireframeGeometry(mcGeo), new THREE.LineBasicMaterial({ color: 0x9fb8ff, transparent: true, opacity: .55 }));
+mcWire.scale.setScalar(S);
+const mcSolid = new THREE.Mesh(mcGeo, new THREE.MeshStandardMaterial({ color: 0x1d2a4d, polygonOffset: true, polygonOffsetFactor: 1 }));
+mcSolid.scale.setScalar(S); mcGeo.computeVertexNormals();
+const meshStage = new THREE.Group(); meshStage.add(mcSolid, mcWire);
+
+// 3 重拓扑：同一个胶囊，换成人工建模式的四边面（经线 × 纬线）
+const LON = 16, prof = [];
+for (let a = 0; a <= 6; a++) { const t = -Math.PI / 2 + a / 6 * Math.PI / 2; prof.push([R * Math.cos(t), -H + R * Math.sin(t)]); }
+for (let a = 0; a <= 6; a++) { const t = a / 6 * Math.PI / 2; prof.push([R * Math.cos(t), H + R * Math.sin(t)]); }
+const ring = (p, l) => { const f = l / LON * Math.PI * 2; return [p[0] * Math.cos(f), p[1], p[0] * Math.sin(f)]; };
+const lines = []; let quads = 0;
+for (let p = 0; p < prof.length; p++) for (let l = 0; l < LON; l++) {
+  lines.push(...ring(prof[p], l), ...ring(prof[p], l + 1));                  // 纬线
+  if (p + 1 < prof.length) { lines.push(...ring(prof[p], l), ...ring(prof[p + 1], l)); quads++; }  // 经线
+}
+const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
+const retopo = new THREE.Group(); retopo.rotation.z = TILT;
+retopo.add(new THREE.Mesh(new THREE.CapsuleGeometry(R * 0.995, 2 * H, 6, LON), new THREE.MeshStandardMaterial({ color: 0x1d2a4d })));
+retopo.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x7ee2a8 })));
+
+const stages = [field, meshStage, retopo];
+const notes = [
+  `模型输出的不是网格，而是一个<b>场</b>：空间里每个点离表面多远（SDF）。<b>蓝点在内部，灰点在外部</b>，表面就在两者交界。`,
+  `marching cubes 这个<b>固定算法</b>从场里抽出表面，得到 <b>${mcTris.toLocaleString()} 个碎三角面</b>。能打开、能打印，但布线是乱的，美术没法改。`,
+  `重拓扑后，同一个形状只需 <b>${quads} 个四边面</b>，经线纬线整齐成环，可以细分、绑骨、手改。商用产品宣传的「可编辑」靠的是这一步。`,
+];
+const info = document.getElementById('info');
+function show(s) {
+  root.clear(); root.add(stages[s]); info.innerHTML = notes[s];
+  document.querySelectorAll('.bar button').forEach(b => b.classList.toggle('on', +b.dataset.s === s));
+}
+document.querySelectorAll('.bar button').forEach(b => b.onclick = () => show(+b.dataset.s));
+show(0);
+
+let px = 0, py = 0, down = false;
+r.domElement.addEventListener('pointerdown', e => { down = true; px = e.clientX; py = e.clientY; });
+addEventListener('pointerup', () => down = false);
+addEventListener('pointermove', e => { if (!down) return;
+  root.rotation.y += (e.clientX - px) * 0.01; root.rotation.x += (e.clientY - py) * 0.01; px = e.clientX; py = e.clientY; });
+addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); r.setSize(innerWidth, innerHeight); });
+(function loop() { requestAnimationFrame(loop); if (!down) root.rotation.y += 0.004; r.render(scene, cam); })();
+</script></body></html>
+

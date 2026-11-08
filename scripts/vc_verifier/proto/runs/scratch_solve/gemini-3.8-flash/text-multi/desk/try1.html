@@ -1,0 +1,93 @@
+<!doctype html><html><body style="margin:0">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b2129);
+const cam = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.1, 100);
+cam.position.set(1.9, 1.9, 2.9); cam.lookAt(0, 0.85, 0);
+const r = new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth, innerHeight); document.body.appendChild(r.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(3, 5, 2); scene.add(sun);
+const M = c => new THREE.MeshStandardMaterial({color: c});
+const wood = M(0x9c6b3f), dark = M(0x2b3038), screen = M(0x4fc3f7), mug = M(0xe05a4a), lampC = M(0xf2c14e), keys = M(0x8a93a0);
+
+// 1. 木色桌子 (桌面与四条方形桌腿)
+const deskH = 0.8;
+const topThickness = 0.05;
+const deskTop = new THREE.Mesh(new THREE.BoxGeometry(1.6, topThickness, 0.9), wood);
+deskTop.position.set(0, deskH, 0);
+scene.add(deskTop);
+
+const legGeo = new THREE.BoxGeometry(0.06, deskH, 0.06);
+[[-0.72, -0.37], [0.72, -0.37], [-0.72, 0.37], [0.72, 0.37]].forEach(([x, z]) => {
+  const leg = new THREE.Mesh(legGeo, wood);
+  leg.position.set(x, deskH / 2, z);
+  scene.add(leg);
+});
+
+const surfaceY = deskH + topThickness / 2; // 桌面高度 0.825
+
+// 2. 显示器 (圆形底座、方形立杆、后仰蓝色屏幕)
+const monBase = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.015, 32), dark);
+monBase.position.set(0, surfaceY + 0.0075, -0.22);
+scene.add(monBase);
+
+const standH = 0.32;
+const monStand = new THREE.Mesh(new THREE.BoxGeometry(0.04, standH, 0.03), dark);
+monStand.position.set(0, surfaceY + standH / 2, -0.22);
+scene.add(monStand);
+
+// 屏幕悬挂于立杆上部，使立杆下段清晰可见支撑着屏幕
+const monScreen = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.38, 0.02), screen);
+monScreen.position.set(0, surfaceY + 0.25, -0.195);
+monScreen.rotation.x = -0.08; // 屏幕略微后仰
+scene.add(monScreen);
+
+// 3. 键盘 (桌面中前部平放)
+const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.012, 0.15), keys);
+keyboard.position.set(0, surfaceY + 0.006, 0.18);
+scene.add(keyboard);
+
+// 4. 马克杯 (桌面右前方)
+const cupGroup = new THREE.Group();
+cupGroup.position.set(0.45, surfaceY, 0.2);
+const cupBody = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.036, 0.09, 24), mug);
+cupBody.position.y = 0.045;
+cupGroup.add(cupBody);
+const handle = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.006, 12, 24, Math.PI), mug);
+handle.position.set(0.04, 0.045, 0);
+handle.rotation.z = -Math.PI / 2;
+cupGroup.add(handle);
+scene.add(cupGroup);
+
+// 5. 台灯 (桌面右后方：圆形底座、斜向细杆、朝向桌面中心的黄色锥形灯罩)
+const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.015, 24), dark);
+const lampBasePos = new THREE.Vector3(0.55, surfaceY + 0.0075, -0.25);
+lampBase.position.copy(lampBasePos);
+scene.add(lampBase);
+
+const shadeH = 0.14;
+const shadeR = 0.08;
+const targetCenter = new THREE.Vector3(0, surfaceY, 0);
+// 灯罩尖端位置，斜杆正连在灯罩顶点处
+const apexPos = new THREE.Vector3(0.42, surfaceY + 0.35, -0.15);
+const aimDir = targetCenter.clone().sub(apexPos).normalize();
+
+// 细杆从底座连接至灯罩尖顶
+const rodVec = apexPos.clone().sub(lampBasePos);
+const rodLen = rodVec.length();
+const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, rodLen, 16), dark);
+rod.position.copy(lampBasePos).addScaledVector(rodVec, 0.5);
+rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), rodVec.clone().normalize());
+scene.add(rod);
+
+// 锥形灯罩尖端在 apexPos，开口准确朝向桌面中心
+const shadeGeo = new THREE.ConeGeometry(shadeR, shadeH, 24);
+shadeGeo.rotateX(-Math.PI / 2); // 锥底开口朝向局部 +Z，尖端朝向 -Z
+const shade = new THREE.Mesh(shadeGeo, lampC);
+shade.position.copy(apexPos).addScaledVector(aimDir, shadeH / 2);
+shade.lookAt(targetCenter);
+scene.add(shade);
+
+(function loop(){ requestAnimationFrame(loop); r.render(scene, cam); })();
+</script></body></html>

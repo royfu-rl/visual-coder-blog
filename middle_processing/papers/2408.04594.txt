@@ -1,0 +1,2524 @@
+
+Img-Diff: Contrastive Data Synthesis for Multimodal Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 
+Introduction
+2 
+Background and Related Works
+2.1 
+Multimodal Large Language Models
+2.2 
+Image Difference Datasets
+2.3 
+Models for Image Difference Captioning
+3 
+Methodology
+3.1 
+Overview
+3.2 
+Image Pairs Generation
+3.3 
+Difference Area Generator
+3.3.1 
+Overview
+3.3.2 
+Image Similarity Filter
+3.3.3 
+Image-text Matching Filter
+3.3.4 
+Difference Detector
+3.4 
+Difference Captions Generator
+3.4.1 
+Overview
+3.4.2 
+Stage1: Object Labeling   Filtering
+3.4.3 
+Captions Similarity Filter
+3.4.4 
+Stage2: Difference Captions Generating
+3.5 
+Data Statistics
+4 
+Evaluation and Main Results
+4.1 
+Evaluation Settings
+4.2 
+Results on the MMVP Benchmark
+4.3 
+Results on the Spot-the-Diff Benchmark
+4.4 
+Results on Image-Editing-Request
+4.5 
+Results on MLLM Benchmarks
+5 
+Evaluation of Data Quality and Diversity
+5.1 
+Data Quality
+5.2 
+Data Diversity
+6 
+More Empirical Supports and Details
+Further Experiments and Analysis.
+Implementation Details.
+The “Object Removal” Exploration.
+7 
+Conclusion
+References
+8 
+Overview
+9 
+Comparison with Existing Image Difference Datasets
+9.1 
+Characteristics Comparison
+9.2 
+Performance Comparison
+10 
+Prioritizing Quality Over Quantity
+10.1 
+Discussion on Data Quantity for MLLMs
+10.2 
+Expanding Dataset Does Not Yield Linear Performance Gains
+11 
+Expanding Diversity with Lexicons
+12 
+Performance Based on Contrastive Chain-of-Thought
+13 
+Testing on MLLMs at Different Scales
+14 
+Ablation Studies
+Image Similarity (IS)
+Bounding Box Image-Text Matching (BITM)
+Captions Similarity (CS) and Captions Image-Text Matching (CITM)
+15 
+Additional Details of Experiments
+15.1 
+Preprocessing of image pairs before inputting into MLLMs during training and inference
+15.2 
+Training Process for MLLMs
+15.3 
+Model Selection
+15.3.1 
+Overview
+15.3.2 
+Selection of the Semantic Segmentation Model
+15.3.3 
+Model Size
+15.4 
+Filtering Thresholds
+15.5 
+Resource and Time Consumption
+16 
+The “Object Removal” Exploration
+16.1 
+Overview
+16.2 
+Generation Process
+16.2.1 
+Workflow
+16.2.2 
+Image Similarity Filter
+16.2.3 
+Erase Objects
+16.2.4 
+MLLM Captioning
+16.3 
+Evaluation
+16.3.1 
+Results on MLLM Benchmarks
+16.3.2 
+Results on Image Difference Benchmarks
+16.3.3 
+Further Analysis
+17 
+Examples
+    License: arXiv.org perpetual non-exclusive license
+arXiv:2408.04594v3 [cs.CV] 19 Dec 2024
+Img-Diff: Contrastive Data Synthesis for Multimodal Large Language Models
+Qirui Jiao
+Affiliation: 
+Sun Yat-Sen University
+Email: 
+jiaoqr3@mail2.sysu.edu.cn
+Daoyuan Chen
+Affiliation: 
+Alibaba Group
+Email: 
+sheny76@mail.sysu.edu.cn
+Yilun Huang
+Affiliation: 
+Alibaba Group
+Email: 
+daoyuanchen.cdy@alibaba-inc.com
+Bolin Ding
+Affiliation: 
+Alibaba Group
+Email: 
+lielin.hyl@alibaba-inc.com
+Yaliang Li
+Affiliation: 
+Alibaba Group
+Email: 
+bolin.ding@alibaba-inc.com
+Ying Shen
+Affiliation: 
+Sun Yat-Sen University
+Email: 
+yaliang.li@alibaba-inc.com
+Abstract
+High-performance Multimodal Large Language Models (MLLMs) are heavily dependent on data quality. To advance fine-grained image recognition within MLLMs, we introduce a novel data synthesis method inspired by contrastive learning and image difference captioning. Our key idea involves challenging the model to discern both matching and distinct elements by scrutinizing object differences in detailed regions across similar images.
+We begin by generating pairs of similar images that emphasize object variations. Following this, we employ a Difference Area Generator to pinpoint object differences, and subsequently, a Difference Captions Generator to articulate these differences. This process results in a high-quality dataset of ”object replacement” samples, termed 
+Img-Diff
+, which can be scaled as needed due to its automated nature.
+We leverage this generated dataset to fine-tune state-of-the-art (SOTA) MLLMs, such as InternVL2, achieving substantial improvements across various image difference and Visual Question Answering tasks. Notably, the trained models significantly outperform existing SOTA models like GPT-4V and Gemini on the MMVP benchmark.
+Additionally, we conduct comprehensive evaluations to validate the dataset’s diversity, quality, and robustness, offering several insights into the synthesis of such contrastive datasets.
+We release our codes and dataset to encourage further research on multimodal data synthesis and MLLMs’ fundamental capabilities for image understanding.
+Figure 1
+: 
+Three “object replacement” examples within 
+Img-Diff
+, highlighting fine-grined difference in both vision and language.
+1 
+Introduction
+The emergence of large language models (LLMs) has revolutionized natural language processing 
+[
+49
+, 
+64
+]
+, also paved the way for the development of Multimodal Large Language Models (MLLMs) that seamlessly integrate linguistic and visual understanding.
+Improving the performance of MLLMs hinges on two primary avenues: evolving model architectures and enhancing dataset quality 
+[
+54
+]
+.
+The majority of state-of-the-art (SOTA) MLLMs 
+[
+43
+, 
+42
+, 
+44
+, 
+3
+, 
+38
+]
+ employ a two-phase training strategy, commencing with a pre-training phase involving extensive image-text pairs for modality alignment, followed by a fine-tuning phase aimed at optimizing visual question answering (VQA) capabilities with specific instruction tuning datasets.
+The efficacy of pre-training datasets profoundly affects MLLMs’ capabilities in performing core visual tasks.
+Concurrently, the quality of visual instruction tuning datasets plays a crucial role in MLLMs’ overall performance in VQA tasks and diverse downstream applications.
+With the evolution of visual instruction tuning datasets, several recent studies have explored the integration of object detection and Optical Character Recognition (OCR) datasets, such as RefCOCO 
+[
+29
+]
+, Visual Genome 
+[
+32
+]
+, OCR-VQA 
+[
+50
+]
+, and TextVQA 
+[
+60
+]
+, effectively enhancing MLLMs’ proficiency in tasks requiring detailed image perception.
+In this paper, we focus on a new direction for enhancing MLLM datasets, driven by the potential of object variations in image pairs to refine models’ image recognition capabilities, as demonstrated by advancements in contrastive learning and image difference captioning 
+[
+76
+, 
+5
+, 
+52
+, 
+26
+]
+.
+Specifically, we introduce a general-purpose yet challenging dataset named 
+Img-Diff
+, which sets itself apart from existing visual instruction tuning datasets by generating pairs of highly similar images featuring subtle object alterations.
+Rather than compelling MLLMs to focus solely on a single image, our dataset challenges them to analyze paired images and articulate the differences within designated regions, meanwhile taking the high-quality textual descriptions of the difference as learning signals.
+By doing so, we aim to empower MLLMs with enhanced capabilities of fine-grained image recognition.
+To evaluate the effectiveness of our data synthesis method, we integrate the generated dataset into the original visual instruction tuning datasets of LLaVA-1.5 
+[
+42
+]
+, MGM 
+[
+38
+]
+, and InternVL2 
+[
+12
+]
+, and conduct fine-tuning.
+Subsequently, we evaluate their performance on image difference benchmarks, including MMVP 
+[
+63
+]
+, Spot-the-Diff 
+[
+26
+]
+, and Image-Edit-Request 
+[
+62
+]
+, as well as widely recognized MLLM benchmarks. Our evaluation results reveal that after fine-tuning with the 
+Img-Diff
+ dataset, the MLLMs achieve notable enhancements in image difference benchmarks, aligning their performance with state-of-the-art (SOTA) models. For instance, they notably surpass the SOTA models GPT-4V 
+[
+1
+]
+ and Gemini 
+[
+16
+]
+ on the MMVP benchmark, achieving an improvement of up to 12. Moreover, the models exhibit comprehensive improvements across eight well-recognized MLLM benchmarks, achieving an average score improvement of up to 3.06%, underscoring the useful role our dataset plays in bolstering MLLMs’ competencies in both image difference recognition and fine-grained image analysis.
+We further evaluate the diversity and quality of our dataset, ensuring it encompasses a broad array of object categories while showcasing rich variability.
+Through meticulous manual labeling, we affirm the high quality of our dataset.
+Furthermore, we conduct ablation studies to examine the effects of various filtering intensities.
+We also investigate an alternative methodology for constructing image difference data focusing on “object removal”, assessing its effectiveness and presenting fruitful insights on the construction of contrastive data.
+Our contributions are summarized as follows:
+•
+We present a novel data synthesis method and an effect-proven 
+Img-Diff
+ dataset, comprising pairs of highly similar images, with a focus on processes such as segmentation, filtering, and detailed captioning of image differences.
+•
+We conduct visual instruction tuning on LLaVA-1.5-7B, MGM-7B, and InternVL2-8B using our dataset, and rigorously assess the fine-tuned models’ performance on many widely-used MLLM benchmarks and image difference benchmarks. Our dataset brings substantial performance improvements to the fine-tuned MLLMs.
+•
+We provide a comprehensive evaluation of the diversity and quality of the generated dataset, confirming its richness and high standard. Through ablation studies, we identify good empirical filtering thresholds for such contrastive dataset.
+•
+We open-source our dataset and codes at 
+https://github.com/modelscope/data-juicer/tree/ImgDiff
+ to facilitate ongoing research, encouraging innovative endeavors in MLLM datasets and image difference methods.
+2 
+Background and Related Works
+2.1 
+Multimodal Large Language Models
+Multimodal Large Language Models (MLLMs) have exhibited remarkable advancements since their introduction 
+[
+1
+, 
+44
+, 
+45
+, 
+16
+, 
+38
+]
+. Research highlights two key factors that primarily influence the effectiveness of MLLMs: model architecture and dataset quality 
+[
+54
+, 
+8
+]
+.
+With respect to model architecture, notable approaches 
+[
+2
+, 
+25
+, 
+33
+, 
+36
+, 
+3
+]
+ leverage learnable queries to extract essential information from CLIP 
+[
+55
+, 
+15
+]
+ image features. Alternatively, LLaVA 
+[
+43
+, 
+42
+, 
+44
+]
+ and MGM 
+[
+38
+]
+ utilize projection-based interfaces to facilitate interactions between text and image modalities. Furthermore, LLaMA-Adapter 
+[
+77
+]
+ and LaVIN 
+[
+48
+]
+ implement parameter-efficient tuning mechanisms to transfer image-related information to the LLM. A recent work also show usefullness of object detection model for MLLMs 
+[
+27
+]
+.
+From the perspective of datasets, there are two prevalent strategies: enhancing the quality of pre-training data and improving visual instruction tuning data. The former aims for better semantic alignment between images and text by introducing abundant image-text pairs, enabling MLLMs to proficiently address fundamental visual tasks, such as image captioning. As for the latter, recent research has increasingly concentrated on refining visual instruction tuning datasets, enhancing MLLMs’ performance across various question-answering tasks. Works like LLaVA 
+[
+43
+, 
+42
+, 
+44
+]
+, SPHINX 
+[
+41
+]
+, MGM 
+[
+38
+]
+, and InternVL2 
+[
+12
+]
+ leverage high-quality fine-tuning datasets characterized by extensive task diversity, allowing models to excel in tasks related to image perception, reasoning, and optical character recognition. Additionally, methods such as Shikra 
+[
+10
+]
+, ASM 
+[
+70
+]
+, and PINK 
+[
+71
+]
+ utilize substantial amounts of object detection data to enhance the models’ localization capabilities.
+In contrast to previous works, our research introduces a fully automated data synthesis method and generate a dataset that emphasizes image differences, showing empirical effectiveness and great potential to augment MLLMs’ VQA proficiency, object localization capabilities, and discernment of image distinctions.
+2.2 
+Image Difference Datasets
+Datasets focused on image differences typically consist of pairs of similar images supplemented with textual descriptions of their variations. For instance, the Spot-the-Diff dataset 
+[
+26
+]
+ contains pairs of street scenes captured at different times by the same surveillance cameras. The CLEVR-Change dataset 
+[
+52
+]
+ delineates scene variations of geometric objects against a clean backdrop. The CUB-Bird dataset 
+[
+69
+]
+ focuses on the nuanced differences among various bird species found in natural habitats. The Image-Edit-Request 
+[
+62
+]
+ dataset features edited images, accompanied by descriptions of modifications made.
+Leveraging advancements in image editing technologies, some studies have employed generative models and editing techniques to create datasets centered on image differences. A prime example is InstructPix2Pix 
+[
+6
+]
+, which utilizes the Prompt-to-Prompt 
+[
+20
+]
+ image editing technique to direct Stable-Diffusion-1.5 
+[
+56
+]
+ in generating pairs of similar images, while employing GPT-3 
+[
+49
+]
+ to craft the edited text as reference captions for image differences.
+Our approach, referring to InstructPix2Pix, employs the Prompt-to-Prompt technique alongside an advanced generative model Stable-Diffusion-XL 
+[
+53
+]
+, which produces more realistic images, to generate pairs of similar images. Unlike InstructPix2Pix, we incorporate multiple filtering stages to ensure data quality, with a particular emphasis on producing difference captions that focus on specific regions rather than the entire image, which ensures greater accuracy.
+2.3 
+Models for Image Difference Captioning
+Image Difference Captioning (IDC) represents a specialized domain within image captioning characterized by its focus on subtle variations between images. As for the pioneering work in IDC, Spot-the-Diff 
+[
+26
+]
+ presents potential change clusters and employs an LSTM 
+[
+21
+]
+ decoder to generate difference captions. DUDA 
+[
+52
+]
+ explores image differences at the semantic level, using a ResNet 
+[
+19
+]
+ and an LSTM to compute dynamic attention weights and produce captions. VARD 
+[
+65
+]
+ introduces a viewpoint-adaptive representation disentanglement network based on LSTM for differentiating between real and pseudo changes. Meanwhile, NCT 
+[
+66
+]
+ employs a transformer 
+[
+67
+]
+ to integrate neighboring features, and CLIP4IDC 
+[
+18
+]
+ uses BERT-like training methodologies, adapting a CLIP model for IDC tasks.
+With the emergence of MLLMs, VIXEN 
+[
+5
+]
+ marks the inaugural use of these models for IDC tasks, mapping the features of differential images to text space and employing an LLM to generate image difference captions.
+Our data synthesis method and dataset is specifically designed for MLLMs. We build our data in accordance with the instruction-following format established by mainstream MLLMs such as LLaVA-1.5 and MGM, highlighting a new direction for exploration aimed at enhancing MLLMs from a data-centric perspective.
+Figure 2
+: 
+The generation process for “object replacement” data.
+Figure 3
+: 
+An overview of the Difference Area Generator and its three internal components: Image Similarity Filter, Image-text Matching Filter, and Difference Detector.
+3 
+Methodology
+3.1 
+Overview
+In recent years, contrastive learning have significantly enhanced the image-text understanding of vision-language models 
+[
+55
+, 
+76
+]
+. These methods typically involve constructing batches of images and texts, requiring the model to distinguish between matching and non-matching image-text pairs, which improves its ability to differentiate between semantically similar and dissimilar pairs.
+Our method leverages the principles of contrastive learning to generate MLLM image-text data. Specifically, it focuses on replacing objects within image pairs, encouraging MLLMs to identify similarities and differences in specific regions. This method aims to enhance models’ capacity to recognize fine-grained differences in images, guided by textual descriptions that highlight detailed distinctions.
+As shown in 
+Figure
+2
+, the process of generating “object replacement” data can be divided into 
+three key parts
+.
+The first part involves creating similar images and forming image pairs, where the only difference between the images in pairs is the objects replaced (
+Section
+3.2
+). The second part, named the “
+Difference Area Generator
+”, extracts bounding box regions that contain object differences between the images in pairs (
+Section
+3.3
+). The third part, termed as the “
+Difference Captions Generator
+” (
+Section
+3.4
+), utilizes an MLLM to generate descriptive text for the areas with object differences and creates question-answer pairs.
+This process incorporates multiple filtering operations, with specific thresholds outlined in 
+Section
+15.4
+, which we determine through experimental comparisons in 
+Section
+14
+. Additional experimental details, including model selection and the time consumption, are also presented in 
+Section
+15
+.
+For readability, we present data examples in 
+Section
+17
+.
+To enhance reproducibility and reusability, our proposed components and end-to-end construction workflow are implemented as data processing operators and configurable data recipes within Data-Juicer 
+[
+7
+, 
+9
+]
+.
+3.2 
+Image Pairs Generation
+The first step of our data synthesis method is to generate pairs of similar images as candidates. The process is shown in 
+Figure
+2
+.
+We employ a generative model called Stable-Diffusion-XL 
+[
+53
+]
+ and an image editing technique called Prompt-to-Prompt 
+[
+20
+]
+ to generate image pairs that highlight object replacement.
+We start by obtaining image captions from caption databases, which contain descriptions biased towards real photos. Then, we use an LLM to perform object replacement in the captions. The prompt used is “
+Here is a sentence: ‘INPUT’. Please only replace one of the objects in this sentence with another object.
+” Here, 
+INPUT
+ refers to the original caption. Next, based on the caption pairs, we use the Stable-Diffusion-XL and the Prompt-to-Prompt to generate image pairs with only few objects replaced.
+Figure 4
+: 
+An overview of the Difference Captions Generator and its two stages.
+3.3 
+Difference Area Generator
+3.3.1 
+Overview
+The Difference Area Generator aims to identify the locations of object differences between the two images in pairs. Although object detection models are capable of detecting objects in images, the range of object categories is quite limited 
+[
+74
+, 
+28
+]
+. Therefore, to increase the number of detectable object categories and enhance dataset diversity, we develop the Difference Area Generator based on segmentation and image similarity comparisons.
+The process is illustrated in 
+Figure
+3
+.
+We first use an Image Similarity Filter to obtain image pairs with high similarity but not identical. Next, we use the FastSAM 
+[
+78
+]
+ to perform image segmentation on each image. After that, we crop the images based on the bounding box information obtained from segmentation and use an Image-text Matching Filter to filter the cropped sub-images for the presence of valid objects. Finally, we use a Difference Detector to determine whether there are indeed differences between the bounding box regions of the two images and perform IoU (Intersection over Union) filtering to remove overlapping bounding boxes, ultimately obtaining valid bounding box information.
+3.3.2 
+Image Similarity Filter
+The Image Similarity Filter aims to filter image pairs based on the degree of similarity. The module first uses CLIP 
+[
+55
+]
+ to extract image features from each image in pairs and then calculates the cosine similarity score. If their score falls within the pre-set threshold, the image pair will be considered valid. Specifically, we use the module twice in the Difference Area Generator. Before the segmentation, we use the module to ensure that the images in pairs are highly similar but not the same. In the Difference Detector stage, after cropping, we use the module to filter the sub-image pairs and keep only the differing ones.
+3.3.3 
+Image-text Matching Filter
+The Image-text Matching Filter determines whether an image contains valid objects (i.e. the replaced or replacing objects). This module first uses BLIP 
+[
+35
+]
+ to extract image features, which are then compared with textual features of object names. When the image-text matching score falls within the pre-set threshold, we consider the image to contain valid objects.
+In the mid-stage of the Difference Area Generator, after cropping, we use the module to determine whether these sub-images contain valid objects and get valid bounding boxes.
+3.3.4 
+Difference Detector
+The Difference Detector determines whether there are differences between the bounding box regions of the two images. Based on a given bounding box, we first crop two sub-images from both image A and image B. The two sub-images are then filtered through the Image Similarity Filter and the bounding box is considered effective only if the difference is significant enough. After processing all bounding boxes, we use the IoU method to filter out overlapping bounding boxes. Only the bounding boxes with a higher degree of difference are retained.
+3.4 
+Difference Captions Generator
+3.4.1 
+Overview
+After obtaining the valid bounding box regions, we use the Difference Captions Generator to generate descriptions for the differences inside these areas (with each round of the process focusing on only one bounding box in one image pair). Evidently, an image pair can contain multiple object differences but a single difference caption cannot fully capture all of them. Therefore, we highlight specific regions with red boxes and provide targeted difference captions to ensure greater accuracy.
+The module consists of two stages: the first stage generates captions for the content in the bounding box regions and then filters the bounding boxes using an Image-text Matching Filter and a Captions Similarity Filter. The second stage uses the content captions and the images highlighted with red boxes to generate difference captions. The overview is shown in 
+Figure
+4
+.
+3.4.2 
+Stage1: Object Labeling   Filtering
+In Stage 1, for each image pair, we first select N bounding box regions with the lowest similarity between images (N is set to 5 in this project) as candidate regions. Then, for each bounding box, we use the MLLM LLaVA-NEXT 
+[
+44
+]
+ to describe its corresponding regions and then apply two filtering processes: the first filter is an Image-text Matching Filter, which checks whether the content of the regions matches the captions; the second filter is an Captions Similarity Filter, which assesses whether there are differences between the two captions. Once the filtering is complete, we obtain valid bounding boxes and captions for subsequent difference captioning.
+3.4.3 
+Captions Similarity Filter
+The Captions Similarity Filter determines whether the two captions of the same bounding box coordinates are different. We use CLIP to obtain text features and calculate the cosine similarity between them. When the score is low enough, we consider the two captions to be different.
+3.4.4 
+Stage2: Difference Captions Generating
+In Stage 2, for each valid bounding box of each image pair, we first draw two red boxes into the images based on the bounding box coordinates, highlighting the differences for easier localization. Then, we provide the MLLM LLaVA-NEXT with the captions of the bounding box content and instruct it to describe the difference based on these captions and the highlighted images. Finally, we can obtain the difference caption for the highlighted area.
+3.5 
+Data Statistics
+Using captions from MSCOCO 
+[
+40
+]
+, we generate 118K pairs of similar images. We then employ the Image Similarity Filter to get 38,533 highly similar but not identical image pairs. Next, we use the Difference Area Generator to filter and produce 117,779 pieces of valid bounding box information (with a maximum of 5 valid bounding boxes per image pair). Finally, we employ the Difference Captions Generator to filter and generate 12,688 high-quality “object replacement” instances. Our evaluations on the main page are based on this dataset.
+In addition, we also use captions from the LLaVA pre-training dataset to generate 34,538 “object replacement” samples. In 
+Section
+10
+ of the appendix, we evaluate this dataset and discuss the relationship between data quantity, data quality, and model performance improvement, emphasizing the importance of prioritizing quality over quantity.
+4 
+Evaluation and Main Results
+4.1 
+Evaluation Settings
+To evaluate the effectiveness of the 
+Img-Diff
+ dataset, we use it to fine-tune SOTA MLLMs, including LLaVA-1.5-7B, MGM-7B, and InternVL2-8B on the main page, as well as InternVL2-1B and LLaVA-1.5-13B in the supplementary materials. We evaluate these models on extensive benchmarks commonly used for image difference and MLLMs. Specifically, the image difference benchmarks include MMVP 
+[
+63
+]
+, Spot-the-Diff 
+[
+26
+]
+, and Image-Edit-Request 
+[
+62
+]
+. Besides, the details and results of the MLLM benchmarks are shown in 
+Section
+4.5
+.
+During our fine-tuning process, we first mix our data with MLLMs’ original visual instruction tuning data respectively. For LLaVA-1.5 and MGM, we conduct the fine-tuning anew. For InternVL2, we follow the guidelines from its official repository and perform a second fine-tuning. (To ensure a fair comparison, we perform a second fine-tuning on InternVL2 using its original fine-tuning dataset, termed as InternVL2-FT, and use it as a baseline.) Regarding the Spot-the-Diff and Image-Edit-Request benchmarks, as they contain data of training splits, we further fine-tune the fine-tuned MLLMs for an additional 2 epochs using only these benchmarks’ training data.
+In the tables, “RP” represents “object replacement” data.
+4.2 
+Results on the MMVP Benchmark
+The MMVP benchmark is designed to systematically assess the visual capabilities of MLLMs. Its data processing method is highly related to image difference: it first collects CLIP-blind pairs, which have similar CLIP features but differ in image content. Then, the differences between the images are manually described and question-answer pairs are created. Hence, the questions in MMVP is highly relevant to our dataset, as both place significant emphasis on the differences between similar images.
+Figure 5
+: 
+Performance comparison on the MMVP benchmark.
+As shown in 
+Figure
+5
+, fine-tuning MLLMs with our “object replacement” data significantly improves their performance on the MMVP benchmark. After fine-tuning, the score of LLaVA-1.5-7B exceeds that of LLaVA-1.5-13B. Furthermore, the fine-tuned MGM-7B shows a significant improvement in score compared to the original MGM-7B, even surpassing the scores of the SOTA models GPT-4V and Gemini by up to 12. Additionally, the performance of InternVL2-8B is also enhanced.
+These results suggest that our dataset enhances MLLMs’ abilities to distinguish images with similar CLIP features but different content.
+4.3 
+Results on the Spot-the-Diff Benchmark
+The dataset of Spot-the-Diff comprises pairs of street view images that display subtle object differences. These images are obtained by capturing scenes from fixed surveillance cameras at different time.
+Table 1
+: 
+Performance comparison on Spot-the-Diff.
+Model
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+VAM
+[
+59
+]
+10.1
+12.4
+38.1
+31.3
+IFDC
+[
+23
+]
+8.7
+11.7
+37
+30.2
+DUDA+Aux
+[
+22
+]
+8.1
+12.5
+34.5
+29.9
+VACC
+[
+30
+]
+9.7
+12.6
+41.5
+32.1
+LLaVA-1.5-7B
+8.5
+12.0
+38.3
+30.1
+LLaVA-1.5-7B + RP
+9.7
+13.0
+43.2
+30.8
+MGM-7B
+9.9
+12.0
+46.3
+31.5
+MGM-7B + RP
+10.8
+13.1
+53.5
+33.0
+InternVL2-8B-FT
+6.6
+11.7
+26.5
+27.3
+InternVL2-8B + RP
+8.4
+12.8
+32.2
+28.5
+Following previous works, our fine-tuned MLLMs are evaluated on BLEU 
+[
+51
+]
+, METEOR 
+[
+4
+]
+, CIDEr-D 
+[
+68
+]
+ and ROUGE-L 
+[
+39
+]
+. As shown in 
+Table
+1
+, after fine-tuning with our “object replacement” data, both LLaVA-1.5-7B, MGM-7B, and InternVL2-8B achieve significant performance gains on Spot-the-Diff. Compared to score increases seen in prior models, our dataset yields even greater enhancements than those from previous iterations of image difference models. These positive results indicate that our dataset can enhance the ability of MLLMs to detect subtle differences between similar images.
+4.4 
+Results on Image-Editing-Request
+The Image-Editing-Request benchmark focuses on image editing. Each instance in its dataset consists of an image pair (i.e. a source image and an edited image) and an editing instruction that describes the transformation. During the evaluation, our models are required to generate transformation descriptions for these image pairs, and we then calculate the BLEU, METEOR, CIDEr-D, and ROUGE-L scores using the models’ responses and the reference answers.
+Table 2
+: 
+Performance comparison on Image-Edit-Request.
+Model
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+VARD
+[
+65
+]
+10
+14.8
+35.7
+39
+CLIP4IDC
+[
+18
+]
+8.2
+14.6
+32.2
+40.4
+NCT
+[
+66
+]
+8.1
+15
+34.2
+38.8
+BiDiff
+[
+61
+]
+6.9
+14.6
+27.7
+38.5
+VIXEN
+[
+5
+]
+8.6
+15.4
+38.1
+42.5
+LLaVA-1.5-7B
+15.1
+17.8
+60.6
+45.2
+LLaVA-1.5-7B + RP
+16.2
+19.5
+60.9
+46.7
+MGM-7B
+16.5
+17.7
+66.8
+44.8
+MGM-7B + RP
+16.6
+18.2
+68.1
+45.7
+InternVL2-8B-FT
+12.4
+14.1
+51.5
+38.9
+InternVL2-8B + RP
+12.5
+14.2
+56.0
+39.4
+As shown in 
+Table
+2
+, LLaVA-1.5-7B, MGM-7B, and InternVL2-8B originally show SOTA performance on the Image-Edit-Request benchmark. Upon incorporating our “object replacement” data for better fine-tuning, the performance of all three models improves even more, achieving new SOTA scores. This suggests that our dataset enhances MLLMs’ abilities to recognize similarities and dissimilarities in image pairs, as well as enables them to describe differences more accurately.
+4.5 
+Results on MLLM Benchmarks
+Aside from the evaluations related to image difference discrimination, we also assess the performance of our “object replacement” data in enhancing the comprehensive abilities of MLLMs. We test the fine-tuned MLLMs using commonly used MLLM benchmarks, including VQAv2 
+[
+17
+]
+ and GQA 
+[
+24
+]
+ for assessing the comprehensive VQA capabilities; MMBench 
+[
+46
+]
+, MM-Vet 
+[
+72
+]
+, ScienceQA 
+[
+47
+]
+, and SEED-Bench 
+[
+34
+]
+ for testing perceptual and reasoning abilities; and POPE 
+[
+37
+]
+ for evaluating fine-grained object localization abilities. 
+Table
+3
+ presents the results on these MLLM benchmarks, with the   metric indicating the percentage improvement averaged across them.
+Table 3
+: 
+Performance comparison on 8 MLLM benchmarks.
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-1.5-7B
+78.5
+62
+85.9
+64.3
+58.3
+LLaVA-1.5-7B + RP
+79.3  
+62.8  
+86.4  
+66.1  
+59.8  
+MGM-7B
+80.4
+62.6
+86
+69.3
+58.9
+MGM-7B + RP
+80.7  
+62.7  
+86.2  
+68.7  
+59.6  
+InternVL2-8B-FT
+81.8
+62.6
+87.7
+82.5
+81.5
+InternVL2-8B + RP
+81.8
+62.6
+88.0  
+82.7  
+81.4  
+Model
+MM-Vet
+SQA
+I
+SEED
+LLaVA-1.5-7B
+30.5
+66.8
+58.6
+-
+LLaVA-1.5-7B + RP
+33.2  
+68.2  
+61.7  
+MGM-7B
+40.8
+70.6
+63.5
+-
+MGM-7B + RP
+44.1  
+71.7  
+63.2  
+InternVL2-8B-FT
+49.2
+96.5
+69.5
+-
+InternVL2-8B + RP
+52.6  
+96.6  
+69.9  
+Based on 
+Table
+3
+, after fine-tuning with our dataset, the performance of LLaVA-1.5-7B shows a comprehensive improvement, with an average increase of 3.06% across all benchmarks.
+For MGM-7B and InternVL2-8B, the improvements brought by our dataset are not as pronounced as those observed with LLaVA-1.5-7B, as their training datasets already encompass a large volume of high-quality data, but they still achieve an average increase of 1.28% and 1.01%. These improvements indicate that fine-tuning MLLMs with our dataset not only enhances their ability to discern differences but also improves their overall visual capabilities, thereby making them better address VQA tasks.
+5 
+Evaluation of Data Quality and Diversity
+5.1 
+Data Quality
+To assess the quality of the 
+Img-Diff
+ dataset, we randomly select 1,000 instances of “object replacement” data and employ multiple professional dataset annotators to evaluate the samples based on three metrics. The final scores are determined through a voting process.
+Specifically, the first metric is “
+Bounding Box Difference
+”, which evaluates whether there are differences between the two highlighted regions in pairs. If the objects are different, we score it as “high”; if the objects are the same but their features (such as color, shape, etc.) are different, we score it as “medium”; if the objects are the same and their features are similar, we score it as “low”. The second metric is “
+Content Caption Accuracy
+”, which evaluates whether the captions generated by Stage 1 of the Difference Captions Generator accurately describe the two highlighted regions. If the captions are correct, we score it as “high”; if the captions identify the objects but incorrectly describe their features, we score it as “medium”; if the captions incorrectly identify the objects, we score it as “low”. The third metric is “
+Difference Caption Accuracy
+”, which evaluates whether the final difference captions accurately describe the object differences between highlighted regions of the image pairs. If the description is accurate, we score it as “high”; if it recognizes the objects but the feature description is incorrect, we score it as “medium”; if the object recognition is incorrect, we score it as “low”. The results are shown in 
+Figure
+6
+.
+Figure 6
+: 
+Quality assessment of the “object replacement” data.
+Based on 
+Figure
+6
+, our dataset demonstrates a high level of quality. For the “Bounding Box Difference” metric, only 4.5% of the instances are classified as “low”, and nearly 80% of instances exhibit valid object differences between their two highlighted regions. In terms of “Content Caption Accuracy”, 80.1% of highlighted region pairs are described accurately, indicating that using an MLLM for labeling is effective and that our filtering strategy is also functioning well. For the “Difference Caption Accuracy” metric, over 70% of the difference descriptions are completely accurate, with 21.8% of the samples having errors solely in feature labeling while still maintaining correct descriptions of object differences, which underscores the effectiveness of our difference caption generation strategy.
+5.2 
+Data Diversity
+In designing the generation process, we have made efforts to enhance the diversity of our dataset, which can be divided into two aspect: (a) the inherent diversity of the caption databases; and (b) the introduction of new object names through our object replacement strategy. As for the former, we are using the captions from MS COCO and the LLaVA pre-training dataset, which cover a majority of object categories. We can easily further enhance the data diversity by employing caption databases with greater variability. As for the latter, we employ two methods, including increasing the temperature of the LLM used for noun replacement, as well as randomly replacing object names with nouns from a noun lexicon (shown in Appendix, 
+Section
+11
+). We can further improve data diversity by expanding the noun lexicon.
+By analyzing the valid object names included in the captions that describe highlighted regions, we assess the diversity of our “object replacement” data. Specifically, we count the total number of object categories covered, and the total number of unique “object replacement pairs”.
+Through our statistical analysis, we find that our dataset covers 1,203 object categories, which encompasses most real-life objects. An “object replacement pair” refers to the combination of the replaced and replacing object names. Our dataset includes 3,680 unique “object replacement pairs”.
+To evaluate the coverage of common object categories in our dataset, we analyze the occurrences of the object names from the Object365 
+[
+58
+]
+ dataset in our own dataset. The results show that the object names from the Object365 dataset appears 13,164 times in total, which accounts for approximately 52.06% of the total occurrences of object names.
+These statistics show that our data covers a substantial number of common object names, ensuring a high frequency of common objects. Additionally, less common object names make up nearly half of our dataset, indicating that our dataset is both diverse and comprehensive.
+6 
+More Empirical Supports and Details
+We list additional experimental details and extensions of our data synthesis method in the supplementary material, and conduct further experiments to validate the effectiveness of the 
+Img-Diff
+ dataset.
+Further Experiments and Analysis.
+In 
+Section
+9
+, we compare the 
+Img-Diff
+ dataset with existing image difference datasets on characteristics and performance, validating its superiority. In 
+Section
+10
+, we discuss the relationship between the data volume and model performance improvement. By appropriately expanding the dataset, we achieve further improvement in model performance. In 
+Section
+11
+,
+we explore the use of lexicons for object replacement and validate its effectiveness in enhancing diversity. In 
+Section
+12
+, we evaluate our dataset using the Contrastive Chain-of-Thought method, further confirming that our dataset enhances the model’s ability to recognize image differences. In 
+Section
+13
+, we validate the effectiveness of the 
+Img-Diff
+ dataset on MLLMs of different scales.
+Implementation Details.
+In 
+Section
+14
+, we investigate the effect of different filtering intensities on the performance of the generated datasets. In 
+Section
+15
+, we present additional experimental details, including image pair preprocessing, model training procedures, model selection, filtering thresholds, and time consumption.
+The “Object Removal” Exploration.
+In 
+Section
+16
+, we generate an extended dataset that focuses on object removal, which prompts MLLMs to analyze which image contains a specific object. The new data brings further improvement to the fine-tuned MLLM.
+7 
+Conclusion
+In this paper, we draw inspiration from recent advances in contrastive learning and image difference captioning to propose a novel method of contrastive data synthesis. This method enables the creation of a high-quality dataset called 
+Img-Diff
+, which highlights object differences focusing on fine-grained regions in images. Specifically, we first generate pairs of similar images where the main focus is on object replacement. Then, we use the proposed 
+Difference Area Generator
+ and 
+Difference Captions Generator
+ to generate difference captions and form question-answer pairs. In contrast to previous image difference datasets, our dataset focuses exclusively on specific regions inside images. This characteristic circumvents the issue where a single description cannot fully capture the differences of the whole images in pairs, enhancing the accuracy. Afterwards, we fine-tune many MLLMs using the generated dataset, yielding high-performance scores on par with SOTA models in image difference tasks and comprehensive performance improvements in eight widely recognized MLLM benchmarks. These results confirm the effectiveness of our dataset to improve the ability of MLLMs in recognizing detailed differences between images.
+In a nutshell, we provide a series of insights about the construction of high-quality image difference datasets, showing great potential to effectively and efficiently enhance MLLMs via contrastive data-centric approaches.
+With this work, we hope it can catalyze further investigation into the realm of image difference datasets and the fine-grained image recognition capabilities of MLLMs.
+References
+[1]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774
+, 2023.
+[2]
+Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, Antoine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur Mensch, Katherine Millican, Malcolm Reynolds, et al.
+Flamingo: a visual language model for few-shot learning.
+Advances in Neural Information Processing Systems
+, 35:23716–23736, 2022.
+[3]
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou.
+Qwen-vl: A frontier large vision-language model with versatile abilities.
+arXiv preprint arXiv:2308.12966
+, 2023.
+[4]
+Satanjeev Banerjee and Alon Lavie.
+Meteor: An automatic metric for mt evaluation with improved correlation with human judgments.
+In 
+Proceedings of the acl workshop on intrinsic and extrinsic evaluation measures for machine translation and/or summarization
+, pages 65–72, 2005.
+[5]
+Alexander Black, Jing Shi, Yifei Fan, Tu Bui, and John Collomosse.
+Vixen: Visual text comparison network for image difference captioning.
+In 
+Proceedings of the AAAI Conference on Artificial Intelligence
+, pages 846–854, 2024.
+[6]
+Tim Brooks, Aleksander Holynski, and Alexei A Efros.
+Instructpix2pix: Learning to follow image editing instructions.
+In 
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 18392–18402, 2023.
+[7]
+Daoyuan Chen, Yilun Huang, Zhijian Ma, Hesen Chen, Xuchen Pan, Ce Ge, Dawei Gao, Yuexiang Xie, Zhaoyang Liu, Jinyang Gao, et al.
+Data-juicer: A one-stop data processing system for large language models.
+In 
+Companion of the 2024 International Conference on Management of Data
+, pages 120–134, 2024a.
+[8]
+Daoyuan Chen, Yaliang Li, and Bolin Ding.
+Multi-modal data processing for foundation models: Practical guidances and use cases.
+In 
+Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining
+, page 6414–6415, 2024b.
+[9]
+Daoyuan Chen, Haibin Wang, Yilun Huang, Ce Ge, Yaliang Li, Bolin Ding, and Jingren Zhou.
+Data-juicer sandbox: A comprehensive suite for multimodal data-model co-development.
+arXiv preprint arXiv:2407.11784
+, 2024c.
+[10]
+Keqin Chen, Zhao Zhang, Weili Zeng, Richong Zhang, Feng Zhu, and Rui Zhao.
+Shikra: Unleashing multimodal llm’s referential dialogue magic.
+arXiv preprint arXiv:2306.15195
+, 2023.
+[11]
+Zhaorun Chen, Yichao Du, Zichen Wen, Yiyang Zhou, Chenhang Cui, Zhenzhen Weng, Haoqin Tu, Chaoqi Wang, Zhengwei Tong, Qinglan Huang, Canyu Chen, Qinghao Ye, Zhihong Zhu, Yuqing Zhang, Jiawei Zhou, Zhuokai Zhao, Rafael Rafailov, Chelsea Finn, and Huaxiu Yao.
+Mj-bench: Is your multimodal reward model really a good judge for text-to-image generation?, 2024d.
+[12]
+Zhe Chen, Weiyun Wang, Hao Tian, Shenglong Ye, Zhangwei Gao, Erfei Cui, Wenwen Tong, Kongzhi Hu, Jiapeng Luo, Zheng Ma, et al.
+How far are we to gpt-4v? closing the gap to commercial multimodal models with open-source suites.
+arXiv preprint arXiv:2404.16821
+, 2024e.
+[13]
+Wei-Lin Chiang, Zhuohan Li, Zi Lin, Ying Sheng, Zhanghao Wu, Hao Zhang, Lianmin Zheng, Siyuan Zhuang, Yonghao Zhuang, Joseph E Gonzalez, et al.
+Vicuna: An open-source chatbot impressing gpt-4 with 90%* chatgpt quality.
+See https://vicuna. lmsys. org (accessed 14 April 2023)
+, 2023.
+[14]
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Meng Huat Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale Fung, and Steven Hoi.
+Instructblip: Towards general-purpose vision-language models with instruction tuning.
+arXiv preprint arXiv:2305.06500
+, 2023.
+[15]
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al.
+An image is worth 16x16 words: Transformers for image recognition at scale.
+arXiv preprint arXiv:2010.11929
+, 2020.
+[16]
+Google.
+Gemini.
+2023.
+[17]
+Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh.
+Making the v in vqa matter: Elevating the role of image understanding in visual question answering.
+In 
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pages 6904–6913, 2017.
+[18]
+Zixin Guo, Tzu-Jui Julius Wang, and Jorma Laaksonen.
+Clip4idc: Clip for image difference captioning.
+arXiv preprint arXiv:2206.00629
+, 2022.
+[19]
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+Deep residual learning for image recognition.
+In 
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pages 770–778, 2016.
+[20]
+Amir Hertz, Ron Mokady, Jay Tenenbaum, Kfir Aberman, Yael Pritch, and Daniel Cohen-Or.
+Prompt-to-prompt image editing with cross attention control.
+arXiv preprint arXiv:2208.01626
+, 2022.
+[21]
+Sepp Hochreiter and Jürgen Schmidhuber.
+Long short-term memory.
+Neural computation
+, 9(8):1735–1780, 1997.
+[22]
+Mehrdad Hosseinzadeh and Yang Wang.
+Image change captioning by learning from an auxiliary task.
+In 
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 2725–2734, 2021.
+[23]
+Qingbao Huang, Yu Liang, Jielong Wei, Yi Cai, Hanyu Liang, Ho-fung Leung, and Qing Li.
+Image difference captioning with instance-level fine-grained feature representation.
+IEEE transactions on multimedia
+, 24:2004–2017, 2021.
+[24]
+Drew A Hudson and Christopher D Manning.
+Gqa: A new dataset for real-world visual reasoning and compositional question answering.
+In 
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 6700–6709, 2019.
+[25]
+Laurençon Hugo, van Strien Daniel, Bekman Stas, Tronchon Leo, Saulnier Lucile, Wang Thomas, Karamcheti Siddharth, Singh Amanpreet, Pistilli Giada, Jernite Yacine, and Sanh Victor.
+Introducing idefics: An open reproduction of state-of-the-art visual language model.
+https://huggingface.co/blog/idefics
+, 2023.
+[26]
+Harsh Jhamtani and Taylor Berg-Kirkpatrick.
+Learning to describe differences between pairs of similar images.
+arXiv preprint arXiv:1808.10584
+, 2018.
+[27]
+Qirui Jiao, Daoyuan Chen, Yilun Huang, Yaliang Li, and Ying Shen.
+From training-free to adaptive: Empirical insights into mllms’ understanding of detection information.
+arXiv preprint arXiv:2401.17981
+, 2024.
+[28]
+Glenn Jocher, Ayush Chaurasia, and Jing Qiu.
+Ultralytics YOLO, 2023.
+[29]
+Sahar Kazemzadeh, Vicente Ordonez, Mark Matten, and Tamara Berg.
+Referitgame: Referring to objects in photographs of natural scenes.
+In 
+Proceedings of the 2014 conference on empirical methods in natural language processing (EMNLP)
+, pages 787–798, 2014.
+[30]
+Hoeseong Kim, Jongseok Kim, Hyungseok Lee, Hyunsung Park, and Gunhee Kim.
+Agnostic change captioning with cycle consistency.
+In 
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 2095–2104, 2021.
+[31]
+Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer Whitehead, Alexander C Berg, Wan-Yen Lo, et al.
+Segment anything.
+In 
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 4015–4026, 2023.
+[32]
+Ranjay Krishna, Yuke Zhu, Oliver Groth, Justin Johnson, Kenji Hata, Joshua Kravitz, Stephanie Chen, Yannis Kalantidis, Li-Jia Li, David A Shamma, et al.
+Visual genome: Connecting language and vision using crowdsourced dense image annotations.
+International journal of computer vision
+, 123:32–73, 2017.
+[33]
+Hugo Laurençon, Léo Tronchon, Matthieu Cord, and Victor Sanh.
+What matters when building vision-language models?
+arXiv preprint arXiv:2405.02246
+, 2024.
+[34]
+Bohao Li, Rui Wang, Guangzhi Wang, Yuying Ge, Yixiao Ge, and Ying Shan.
+Seed-bench: Benchmarking multimodal llms with generative comprehension.
+arXiv preprint arXiv:2307.16125
+, 2023a.
+[35]
+Junnan Li, Dongxu Li, Caiming Xiong, and Steven Hoi.
+Blip: Bootstrapping language-image pre-training for unified vision-language understanding and generation.
+In 
+International conference on machine learning
+, pages 12888–12900. PMLR, 2022.
+[36]
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi.
+Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models.
+arXiv preprint arXiv:2301.12597
+, 2023b.
+[37]
+Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Wayne Xin Zhao, and Ji-Rong Wen.
+Evaluating object hallucination in large vision-language models.
+arXiv preprint arXiv:2305.10355
+, 2023c.
+[38]
+Yanwei Li, Yuechen Zhang, Chengyao Wang, Zhisheng Zhong, Yixin Chen, Ruihang Chu, Shaoteng Liu, and Jiaya Jia.
+Mini-gemini: Mining the potential of multi-modality vision language models.
+arXiv:2403.18814
+, 2023d.
+[39]
+Chin-Yew Lin.
+Rouge: A package for automatic evaluation of summaries.
+In 
+Text summarization branches out
+, pages 74–81, 2004.
+[40]
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick.
+Microsoft coco: Common objects in context.
+In 
+Computer Vision–ECCV 2014: 13th European Conference, Zurich, Switzerland, September 6-12, 2014, Proceedings, Part V 13
+, pages 740–755. Springer, 2014.
+[41]
+Ziyi Lin, Chris Liu, Renrui Zhang, Peng Gao, Longtian Qiu, Han Xiao, Han Qiu, Chen Lin, Wenqi Shao, Keqin Chen, et al.
+Sphinx: The joint mixing of weights, tasks, and visual embeddings for multi-modal large language models.
+arXiv preprint arXiv:2311.07575
+, 2023.
+[42]
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+Improved baselines with visual instruction tuning, 2023a.
+[43]
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+arXiv preprint arXiv:2304.08485
+, 2023b.
+[44]
+Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan Zhang, Sheng Shen, and Yong Jae Lee.
+Llava-next: Improved reasoning, ocr, and world knowledge, 2024a.
+[45]
+Mengsha Liu, Daoyuan Chen, Yaliang Li, Guian Fang, and Ying Shen.
+ChartThinker: A contextual chain-of-thought approach to optimized chart summarization.
+In 
+Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024)
+, pages 3057–3074, 2024b.
+[46]
+Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, et al.
+Mmbench: Is your multi-modal model an all-around player?
+arXiv preprint arXiv:2307.06281
+, 2023c.
+[47]
+Pan Lu, Swaroop Mishra, Tanglin Xia, Liang Qiu, Kai-Wei Chang, Song-Chun Zhu, Oyvind Tafjord, Peter Clark, and Ashwin Kalyan.
+Learn to explain: Multimodal reasoning via thought chains for science question answering.
+Advances in Neural Information Processing Systems
+, 35:2507–2521, 2022.
+[48]
+Gen Luo, Yiyi Zhou, Tianhe Ren, Shengxin Chen, Xiaoshuai Sun, and Rongrong Ji.
+Cheap and quick: Efficient vision-language instruction tuning for large language models.
+arXiv preprint arXiv:2305.15023
+, 2023.
+[49]
+Ben Mann, N Ryder, M Subbiah, J Kaplan, P Dhariwal, A Neelakantan, P Shyam, G Sastry, A Askell, S Agarwal, et al.
+Language models are few-shot learners.
+arXiv preprint arXiv:2005.14165
+, 1, 2020.
+[50]
+Anand Mishra, Shashank Shekhar, Ajeet Kumar Singh, and Anirban Chakraborty.
+Ocr-vqa: Visual question answering by reading text in images.
+In 
+2019 international conference on document analysis and recognition (ICDAR)
+, pages 947–952. IEEE, 2019.
+[51]
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu.
+Bleu: a method for automatic evaluation of machine translation.
+In 
+Proceedings of the 40th annual meeting of the Association for Computational Linguistics
+, pages 311–318, 2002.
+[52]
+Dong Huk Park, Trevor Darrell, and Anna Rohrbach.
+Robust change captioning.
+In 
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 4624–4633, 2019.
+[53]
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+Sdxl: Improving latent diffusion models for high-resolution image synthesis.
+arXiv preprint arXiv:2307.01952
+, 2023.
+[54]
+Zhen Qin, Daoyuan Chen, Wenhao Zhang, Liuyi Yao, Yilun Huang, Bolin Ding, Yaliang Li, and Shuiguang Deng.
+The synergy between data and multi-modal large language models: A survey from co-development perspective.
+arXiv preprint arXiv:2407.08583
+, 2024.
+[55]
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural language supervision.
+In 
+International conference on machine learning
+, pages 8748–8763. PMLR, 2021.
+[56]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In 
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+, pages 10684–10695, 2022.
+[57]
+Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach.
+Adversarial diffusion distillation.
+arXiv preprint arXiv:2311.17042
+, 2023.
+[58]
+Shuai Shao, Zeming Li, Tianyuan Zhang, Chao Peng, Gang Yu, Xiangyu Zhang, Jing Li, and Jian Sun.
+Objects365: A large-scale, high-quality dataset for object detection.
+In 
+Proceedings of the IEEE/CVF international conference on computer vision
+, pages 8430–8439, 2019.
+[59]
+Xiangxi Shi, Xu Yang, Jiuxiang Gu, Shafiq Joty, and Jianfei Cai.
+Finding it at another side: A viewpoint-adapted matching encoder for change captioning.
+In 
+Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part XIV 16
+, pages 574–590. Springer, 2020.
+[60]
+Amanpreet Singh, Vivek Natarajan, Meet Shah, Yu Jiang, Xinlei Chen, Dhruv Batra, Devi Parikh, and Marcus Rohrbach.
+Towards vqa models that can read.
+In 
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 8317–8326, 2019.
+[61]
+Yaoqi Sun, Liang Li, Tingting Yao, Tongyv Lu, Bolun Zheng, Chenggang Yan, Hua Zhang, Yongjun Bao, Guiguang Ding, and Gregory Slabaugh.
+Bidirectional difference locating and semantic consistency reasoning for change captioning.
+International Journal of Intelligent Systems
+, 37(5):2969–2987, 2022.
+[62]
+Hao Tan, Franck Dernoncourt, Zhe Lin, Trung Bui, and Mohit Bansal.
+Expressing visual relationships via language.
+arXiv preprint arXiv:1906.07689
+, 2019.
+[63]
+Shengbang Tong, Zhuang Liu, Yuexiang Zhai, Yi Ma, Yann LeCun, and Saining Xie.
+Eyes wide shut? exploring the visual shortcomings of multimodal llms.
+In 
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 9568–9578, 2024.
+[64]
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al.
+Llama: Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971
+, 2023.
+[65]
+Yunbin Tu, Liang Li, Li Su, Junping Du, Ke Lu, and Qingming Huang.
+Adaptive representation disentanglement network for change captioning.
+IEEE Transactions on Image Processing
+, 32:2620–2635, 2023a.
+[66]
+Yunbin Tu, Liang Li, Li Su, Ke Lu, and Qingming Huang.
+Neighborhood contrastive transformer for change captioning.
+IEEE Transactions on Multimedia
+, 25:9518–9529, 2023b.
+[67]
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+Advances in neural information processing systems
+, 30, 2017.
+[68]
+Ramakrishna Vedantam, C Lawrence Zitnick, and Devi Parikh.
+Cider: Consensus-based image description evaluation.
+In 
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pages 4566–4575, 2015.
+[69]
+Catherine Wah, Steve Branson, Peter Welinder, Pietro Perona, and Serge Belongie.
+The caltech-ucsd birds-200-2011 dataset.
+2011.
+[70]
+Weiyun Wang, Min Shi, Qingyun Li, Wenhai Wang, Zhenhang Huang, Linjie Xing, Zhe Chen, Hao Li, Xizhou Zhu, Zhiguo Cao, et al.
+The all-seeing project: Towards panoptic visual recognition and understanding of the open world.
+In 
+The Twelfth International Conference on Learning Representations
+, 2023.
+[71]
+Shiyu Xuan, Qingpei Guo, Ming Yang, and Shiliang Zhang.
+Pink: Unveiling the power of referential comprehension for multi-modal llms.
+arXiv preprint arXiv:2310.00582
+, 2023.
+[72]
+Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang, Kevin Lin, Zicheng Liu, Xinchao Wang, and Lijuan Wang.
+Mm-vet: Evaluating large multimodal models for integrated capabilities.
+arXiv preprint arXiv:2308.02490
+, 2023.
+[73]
+Daoan Zhang, Junming Yang, Hanjia Lyu, Zijian Jin, Yuan Yao, Mingkai Chen, and Jiebo Luo.
+Cocot: Contrastive chain-of-thought prompting for large multimodal models with multiple image inputs.
+arXiv preprint arXiv:2401.02582
+, 2024.
+[74]
+Hao Zhang, Feng Li, Shilong Liu, Lei Zhang, Hang Su, Jun Zhu, Lionel M Ni, and Heung-Yeung Shum.
+Dino: Detr with improved denoising anchor boxes for end-to-end object detection.
+arXiv preprint arXiv:2203.03605
+, 2022.
+[75]
+Kai Zhang, Lingbo Mo, Wenhu Chen, Huan Sun, and Yu Su.
+Magicbrush: A manually annotated dataset for instruction-guided image editing.
+In 
+Advances in Neural Information Processing Systems
+, 2023a.
+[76]
+Qi Zhang, Yifei Wang, and Yisen Wang.
+On the generalization of multi-modal contrastive learning.
+In 
+International Conference on Machine Learning
+, pages 41677–41693. PMLR, 2023b.
+[77]
+Renrui Zhang, Jiaming Han, Aojun Zhou, Xiangfei Hu, Shilin Yan, Pan Lu, Hongsheng Li, Peng Gao, and Yu Qiao.
+Llama-adapter: Efficient fine-tuning of language models with zero-init attention.
+arXiv preprint arXiv:2303.16199
+, 2023c.
+[78]
+Xu Zhao, Wenchao Ding, Yongqi An, Yinglong Du, Tao Yu, Min Li, Ming Tang, and Jinqiao Wang.
+Fast segment anything.
+arXiv preprint arXiv:2306.12156
+, 2023.
+Supplementary Material 
+8 
+Overview
+We provide more details and experiments of this work in the supplementary material and organize them as follows:
+•
+Section
+9
+. 
+Comparison with Existing Image Difference Datasets
+: We compare the 
+Img-Diff
+ dataset with existing image difference datasets in terms of characteristics and performance, highlighting the advantages of our dataset.
+•
+Section
+10
+. 
+Prioritizing Quality Over Quantity
+: We clarify that our choice to use 13K samples for testing is motivated by the typical size of task-specific datasets used for MLLM fine-tuning. Furthermore, by expanding the dataset to four times its original size, we confirm that the relationship between data size and performance gains is not linear.
+•
+Section
+11
+. 
+Expanding Diversity with Lexicons
+: We use a lexicon to generate object replacement data and test the new dataset. The results validate the effectiveness of this lexicon-based strategy in enhancing data diversity.
+•
+Section
+12
+. 
+Performance Based on Contrastive Chain-of-Thought
+: We evaluate our dataset using the Contrastive Chain-of-Thought method. The results confirm that our dataset enables the fine-tuned model to more accurately describe image differences, thereby enhancing the model’s VQA capability.
+•
+Section
+13
+. 
+Testing on MLLMs at Different Scales
+: We test the performance of the 
+Img-Diff
+ dataset across MLLMs of different scales. The results indicate that the performance gains brought by our dataset are not limited by scale.
+•
+Section
+14
+. 
+Ablation Studies
+: We explore the impact of varying filter intensities on the performance of the final dataset. As a result, we identify an optimal threshold that balances data quality and quantity.
+•
+Section
+15
+. 
+Additional Details of Experiments
+: We present additional details, including the preprocessing methods for image pairs, the standard training strategies for MLLMs, the model selection and rationale behind our approach, the filtering thresholds applied throughout the work, and the time consumption for generating data.
+•
+Section
+16
+. 
+The “Object Removal” Exploration
+: We generate an extended dataset that focuses on object removal. Additionally, we experimentally validate its effectiveness.
+•
+Section
+17
+. 
+Examples
+: We present several examples of our “object replacement” data and “object removal” data, highlighting detailed information.
+9 
+Comparison with Existing Image Difference Datasets
+9.1 
+Characteristics Comparison
+Table 4
+: 
+Comparison of different image difference datasets. “Open-Domain” refers to whether the dataset has a limited or unrestricted range of object coverage; “Automatic” indicates whether the dataset can be fully generated through automation without human intervention; and “Region-Focused” describes whether the dataset emphasizes detailed regions rather than the overall image.
+Datasets
+Open-Domain?
+Automatic?
+Region-Focused?
+Size
+Source
+Target
+Text
+CUB-Bird 
+[
+69
+]
+11,788
+“This is a grey bird with a brown and yellow tail wing and a red head. (Select)”
+Spot-the-Diff 
+[
+26
+]
+13,192
+“The people in the parking lot are no longer there.”
+Image-Edit-Request 
+[
+62
+]
+✓
+3,939
+“Add a sword and a cloak to the squirrel.”
+MagicBrush 
+[
+75
+]
+✓
+10,388
+“Make the man ride a motorcycle.”
+InstructPix2Pix 
+[
+6
+]
+✓
+✓
+unlimited
+“Convert to a realistic photo.”
+MJ-Bench 
+[
+11
+]
+✓
+unlimited
+“Young or Elder. (Select)”
+Img-Diff
+✓
+✓
+✓
+unlimited
+“The difference is that the teapot in the right image is made of glass, whereas the teapot in the left image is made of porcelain.”
+Table
+4
+ compares the characteristic differences between the 
+Img-Diff
+ dataset and other existing image difference datasets. The comparison focuses on three key aspects: the “Open-Domain” feature, which refers to whether the dataset covers unrestricted object categories; the “Automatic” feature, which indicates whether the dataset can be generated fully automatically without manual intervention; and the “Region-Focused” feature, which highlights whether the dataset emphasizes image differences in specific detail regions rather than overall image differences.
+Specifically, CUB-Birds 
+[
+69
+]
+ and Spot-the-Diff 
+[
+26
+]
+ are classic examples of traditional datasets where images are collected from the real world and data samples are generated through manual annotations. The former consists of images of various bird species captured in the wild, while the latter is compiled from street-view images taken at different time points by stationary surveillance cameras. In addition, image difference datasets can also be generated using man-made data. For example, Image-Edit-Request 
+[
+62
+]
+ collects image pairs consisting of manually edited images and their originals from the web, while MagicBrush 
+[
+75
+]
+ employs workers to write editing instructions, which are then used to generate the required image pairs with image editing techniques. These methods are limited by the scarcity of real-world data, as well as the resource and financial costs associated with manual annotation, resulting in limited dataset sizes.
+To reduce resource consumption and allow for an unlimited data size, some methods have adopted fully automated generation strategies, such as InstructPix2Pix 
+[
+6
+]
+ and MJ-Bench 
+[
+11
+]
+. These methods eliminate the need for manually collected data by using generative models and image editing techniques to create image pairs. Instead of relying on human-generated annotations, they deploy high-performance VLMs or MLLMs to generate annotations. As a result, the data size is effectively limitless. However, relying on MLLMs for annotation means that these data only describe differences across the entire image. Yet, image pairs generated through image editing involve variations across multiple detailed regions. If the description only describes overall image differences, it may miss important details in fine-grained regions, resulting in inaccuracy.
+Unlike the previous datasets, the 
+Img-Diff
+ dataset not only employs an automated generation pipeline but also incorporates a segmentation process to identify and capture detailed regions, which are then targeted for precise annotation. Additionally, we employ extensive filtering processes to ensure high data quality. These measures enable our dataset to achieve more comprehensive and accurate difference captions.
+9.2 
+Performance Comparison
+In this section, we compare the performance of the 
+Img-Diff
+ dataset with existing image difference datasets. Specifically, we incorporate each dataset separately into LLaVA’s fine-tuning data, then fine-tune LLaVA-1.5-7B and measure the performance improvements. We apply two primary dataset configurations for this comparison: the first is the CLEVR-Change 
+[
+52
+]
+ dataset, containing 67,600 examples. CLEVR-Change generates random 3D environments with blocks of various shapes, colors, sizes, and positions, which are subsequently altered to create image difference data. The second configuration combines the Spot-the-Diff dataset and the Image-Edit-Request dataset, totaling 13,614 samples. The results are presented in 
+Table
+5
+ and 
+Table
+6
+.
+Table 5
+: 
+Performance of image difference datasets CLEVR-
+Change, Image-Edit-Request   Spot-the-Diff, and our Img-Diff dataset on MMVP and 8 MLLM benchmarks.
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-1.5-7B
+78.5
+62.0
+85.9
+64.3
+58.3
+LLaVA-1.5-7B + CLEVR
+79.2
+63.1
+85.7
+65.9
+59.2
+LLaVA-1.5-7B + ImageEdit + Spot
+79.3
+63.3
+86.4
+65.8
+58.9
+LLaVA-1.5-7B + RP(main page)
+79.3
+62.8
+86.4
+66.1
+59.8
+Model
+MM-Vet
+SQA
+I
+SEED
+MMVP
+LLaVA-1.5-7B
+30.5
+66.8
+58.6
+-
+24.0
+LLaVA-1.5-7B + CLEVR
+29.8
+68.0
+61.2
++1.30%
+28.7
+LLaVA-1.5-7B + ImageEdit + Spot
+30.5
+68.3
+61.9
++1.87%
+25.3
+LLaVA-1.5-7B + RP(main page)
+33.2
+68.2
+61.7
++3.06%
+27.3
+Table 6
+: 
+Performance of image difference datasets CLEVR-
+Change, Image-Edit-Request   Spot-the-Diff, and our Img-Diff dataset on image difference benchmarks.
+Model
+Spot-the-Diff
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+8.5
+12.0
+38.3
+30.1
+LLaVA-1.5-7B + CLEVR
+9.3
+12.3
+45.2
+30.2
+LLaVA-1.5-7B + ImageEdit + Spot
+9.1
+12.9
+40.8
+30.5
+LLaVA-1.5-7B + RP(main page)
+9.7
+13.0
+43.2
+30.8
+Model
+Image-Edit-Request
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+15.1
+17.8
+60.6
+45.2
+LLaVA-1.5-7B + CLEVR
+15.1
+17.8
+60.9
+45.2
+LLaVA-1.5-7B + ImageEdit + Spot
+13.0
+18.4
+56.6
+44.7
+LLaVA-1.5-7B + RP(main page)
+16.2
+19.5
+60.9
+46.7
+The tables show that incorporating the CLEVR-Change, Image-Edit-Request, and Spot-the-Diff datasets into the fine-tuning of LLaVA-1.5-7B leads to performance improvements on MLLM benchmarks and image difference benchmarks. However, the performance boost from the 
+Img-Diff
+ dataset is more substantial. This could be attributed to the fact that our dataset’s text is specifically generated in the format of instruction-following tasks, which provides a greater benefit for MLLMs. Additionally, our dataset places more emphasis on the image differences in detailed regions, which enhances the model’s ability to capture fine-grained details, thereby improving its overall VQA capabilities and image difference recognition performance more effectively.
+10 
+Prioritizing Quality Over Quantity
+10.1 
+Discussion on Data Quantity for MLLMs
+The quality of data is generally more important than its quantity in the domain of MLLMs. As demonstrated by LLaVA-1.5, it uses only a small subset of InstructBLIP’s data 
+[
+14
+]
+, supplemented with a few small-sized VQA datasets (pre-training data reduced from 129M to 558K, fine-tuning data reduced from 1.2M to 665K), achieving impressive performance and significantly surpassing those of InstructBLIP. Furthermore, a series of MLLM studies 
+[
+33
+, 
+44
+, 
+38
+, 
+12
+]
+ validate that enhancing MLLMs’ performance requires high-quality task-oriented data rather than merely increasing the volume of data.
+The data volume for testing in our paper (13K and 35K) is comparable to that of many mainstream MLLM task-specific datasets, such as AI2D (12K), DocVQA (10K), ChartQA (18K), and OKVQA (9K). Despite not incorporating a large amount of data, our dataset brings appreciable performance improvement to MLLMs with modest training costs, such as elevating MGM-7B from 40 points to 50.7 on the MMVP benchmark, in which the GPT-4V gains a score of 38.7.
+Considering the marginal benefits and training costs (fine-tuning 7B MLLMs on 4 A100 would take an additional 2 hours for every extra 50K samples), we aim to pursue a dataset that is small in quantity but high in quality.
+Additionally, our paper emphasizes a synthesis method rather than the dataset itself. We can generate any amount of 
+Img-Diff
+ data as needed, as our dataset is generated automatically.
+10.2 
+Expanding Dataset Does Not Yield Linear Performance Gains
+In addition to the 13K “object replacement” samples generated using MSCOCO captions on the main page, we also apply the same process and filtering thresholds to generate 34,583 samples using the captions from the LLaVA pre-training dataset. We compare the MLLM fine-tuned with the 13K samples to the one fine-tuned with the current fourfold larger dataset, aiming to explore the mathematical relationship between dataset expansion and model performance gains. The results are shown in 
+Table
+7
+.
+Table 7
+: 
+Performance comparison on MMVP and 8 MLLM benchmarks (including 35K “object replacement” samples).
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-1.5-7B
+78.5
+62.0
+85.9
+64.3
+58.3
+LLaVA-1.5-7B + RP(13K)
+79.3
+62.8
+86.4
+66.1
+59.8
+LLaVA-1.5-7B + RP(13K) + RP(35K)
+79.2
+63.1
+86.2
+66.9
+59.2
+Model
+MM-Vet
+SQA
+I
+SEED
+MMVP
+LLaVA-1.5-7B
+30.5
+66.8
+58.6
+-
+24.0
+LLaVA-1.5-7B + RP(13K)
+33.2
+68.2
+61.7
++3.06%
+27.3
+LLaVA-1.5-7B + RP(13K) + RP(35K)
+33.3
+69.0
+62.2
++3.40%
+31.3
+Table 8
+: 
+Performance comparison on Spot-the-Diff and Image-Edit-Request (including 35K “object replacement” samples).
+Model
+Spot-the-Diff
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+8.5
+12.0
+38.3
+30.1
+LLaVA-1.5-7B + RP(13K)
+9.7
+13.0
+43.2
+30.8
+LLaVA-1.5-7B + RP(13K) + RP(35K)
+9.8
+13.1
+45.3
+31.0
+Model
+Image-Edit-Request
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+15.1
+17.8
+60.6
+45.2
+LLaVA-1.5-7B + RP(13K)
+16.2
+19.5
+60.9
+46.7
+LLaVA-1.5-7B + RP(13K) + RP(35K)
+16.4
+19.1
+65.5
+46.8
+We observe that the average performance gain on the MLLM benchmarks has become 3.40%, while the performance gain from the previous 
+Img-Diff
+ dataset was 3.06%. On the MMVP benchmark, the model fine-tuned with more data achieves further improvement, raising its score from 27.3, obtained with 13K samples, to the current score of 31.3. Furthermore, on Spot-the-Diff and Image-Edit-Request, the additional data also contributes to further performance gains. These results indicate that a moderate increase in data size can further enhance model performance.
+Although adding more data can improve the MLLM’s performance, it is worth noting that while we quadruple the dataset, the performance improvements do not increase by a factor of four. This aligns with the fact that the relationship between the data size and performance gains is not linear. As we increase the amount of similar data, the performance gains eventually reach a maximum limit. For future work, further investigation can be conducted into the relationship between different data volumes and performance improvements under the same filtering threshold.
+11 
+Expanding Diversity with Lexicons
+On the main page, beyond the intrinsic diversity of object names within the caption database, we increase the temperature of the LLM used for object name substitution to enhance the randomness of model outputs. This helps us expand the range of object categories covered by our dataset. Additionally, we experiment with randomly selecting nouns from an object name lexicon to replace original object names in captions, further enriching the dataset’s diversity. This section provides a detailed explanation of this “Expanding Diversity with Lexicons” method and the experimental results on LLaVA-1.5-7B.
+To construct the object name lexicon, we initially use the NLTK tool to filter all nouns from the WordNet lexicon. Next, we categorize each word based on its synsets entries, labeling them accordingly. Finally, we select object names classified under “machine,” “living_thing,” “natural_object,” “fruit,” “vehicle,” “container,” “clothing,” “fixture,” “appliance,” “furniture,” or “food” and form the final object name lexicon. The resulting lexicon comprises 5,526 distinct object names.
+Following this, as described on the main page, we generate a test dataset using MSCOCO captions. Specifically, we replace object names in MSCOCO captions randomly with nouns of the same category from the object name lexicon, forming caption pairs that are later used for further generation and filtering processes. This approach resulted in 8,930 high-quality “object replacement” samples. We utilize this data to fine-tune LLaVA-1.5-7B, obtaining the results shown in 
+Table
+9
+.
+Table 9
+: 
+Performance comparison on MMVP and 8 MLLM benchmarks (using data generated with lexicons).
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-1.5-7B
+78.5
+62
+85.9
+64.3
+58.3
+LLaVA-1.5-7B + RP(main page)
+79.3
+62.8
+86.4
+66.1
+59.8
+LLaVA-1.5-7B + RP(lexicon)
+79.2
+62.7
+86.3
+66.2
+59.4
+Model
+MM-Vet
+SQA
+I
+SEED
+MMVP
+LLaVA-1.5-7B
+30.5
+66.8
+58.6
+-
+24.0
+LLaVA-1.5-7B + RP(main page)
+33.2
+68.2
+61.7
+27.3
+LLaVA-1.5-7B + RP(lexicon)
+32.2
+68.8
+61.8
++2.67%
+30.0
+Table 10
+: 
+Performance comparison on Spot-the-Diff and Image-Edit-Request(using data generated with lexicons).
+Model
+Spot-the-Diff
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+8.5
+12.0
+38.3
+30.1
+LLaVA-1.5-7B + RP(main page)
+9.7
+13.0
+43.2
+30.8
+LLaVA-1.5-7B + RP(lexicon)
+8.9
+12.2
+41.9
+29.9
+Model
+Image-Edit-Request
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+15.1
+17.8
+60.6
+45.2
+LLaVA-1.5-7B + RP(main page)
+16.2
+19.5
+60.9
+46.7
+LLaVA-1.5-7B + RP(lexicon)
+13.9
+19.4
+60.4
+46.9
+As shown in 
+Table
+9
+ and 
+Table
+10
+, the current dataset still provides significant performance improvements for LLaVA-1.5-7B. Specifically, the fine-tuned MLLM achieves comprehensive performance improvement across eight MLLM benchmarks, with improvement levels comparable to those on the main page, resulting in an average performance increase of 2.67%. Besides, the current dataset also improves the performance of LLaVA-1.5-7B on image difference benchmarks.
+By using a lexicon for object name replacement, we can more effectively enhance the diversity of the 
+Img-Diff
+ dataset. Specifically, we can increase the number of noun samples included in the lexicon, as well as perform multiple rounds of noun replacement on the same caption. As a result, the quality of our data can be further improved.
+12 
+Performance Based on Contrastive Chain-of-Thought
+In addition to the standard VQA evaluation, we also assess the 
+Img-Diff
+ dataset using the Contrastive Chain-of-Thought (CoCoT 
+[
+73
+]
+) method. This evaluation method involves prompting the model with the instruction, “Please identify the similarities and differences between these two images,” and requiring the MLLM to pinpoint the differences before it answers the final VQA question. The differences identified are then used as context-enhanced text to support its own response to the VQA task.
+Table 11
+: 
+Results on MMVP Using the CoCoT Method.
+Model
+MMVP
+w/ CoCot
+w/o CoCot
+LLaVA-1.5-7B
+24.0
+22.0
+LLaVA-1.5-7B + RP
+27.3
+29.0
+We test the original LLaVA-1.5-7B and our fine-tuned model on the MMVP benchmark using CoCoT. As shown in 
+Table
+11
+, the original model’s score drops from 24 to 22, while the score of the model fine-tuned with our data rises from 27.3 to 29. This indicates that, after fine-tuning without 
+Img-Diff
+ data, the MLLM demonstrates an enhanced ability to recognize image differences and can generate more accurate descriptive information to support VQA tasks.
+13 
+Testing on MLLMs at Different Scales
+On the main page, we primarily conduct experiments on MLLMs with a 7B scale. In this section, we will explore the impact of our dataset on models of different sizes. Specifically, we fine-tune LLaVA-1.5-13B and InternVL2-1B, representing a larger and a smaller model. We then test these models on both MLLM benchmarks and image difference benchmarks.
+Table 12
+: 
+Performance of “object replacement” data on LLaVA-1.5-13B and InternVL2-1B (evaluations on MMVP and 8 MLLM Benchmarks).
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-1.5-13B
+80.0
+63.3
+85.9
+67.7
+63.6
+LLaVA-1.5-13B + RP
+80.3
+64.1
+86.6
+69.2
+63.2
+InternVL2-1B-FT
+77.3
+60.2
+86.6
+68.6
+60.7
+InternVL2-1B + RP
+77.4
+60.2
+87.1
+69.0
+60.7
+Model
+MM-Vet
+SQA
+I
+SEED
+MMVP
+LLaVA-1.5-13B
+35.4
+71.6
+61.6
+-
+24.7
+LLaVA-1.5-13B + RP
+37.4
+71.7
+62.9
++1.49%
+32.0
+InternVL2-1B-FT
+31.9
+88.5
+61.4
+-
+16.0
+InternVL2-1B + RP
+33.4
+88.7
+61.7
++0.84%
+18.0
+Table 13
+: 
+Performance of “object replacement” data on LLaVA-1.5-13B and InternVL2-1B (evaluations on Spot-the-Diff and Image-Edit-Request).
+Model
+Spot-the-Diff
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-13B
+9.7
+12.3
+44.6
+31.0
+llava-1.5-13b + RP
+9.9
+13.1
+45.8
+31.4
+InternVl2-1B-FT
+6.5
+11.4
+24.7
+26.5
+InternVl2-1B + RP
+6.9
+11.5
+25.7
+26.5
+Model
+Image-Edit-Request
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-13B
+16.6
+18.0
+62.9
+46.2
+llava-1.5-13b + RP
+15.9
+20.1
+65.3
+47.2
+InternVl2-1B-FT
+7.3
+11.6
+28.7
+35.3
+InternVl2-1B + RP
+8.4
+12.1
+30.3
+37.4
+Table
+12
+ and 
+Table
+13
+ show that our dataset remains effective on LLaVA-1.5-13B and InternVL2-1B, delivering comprehensive performance improvements across eight MLLM benchmarks and the image difference benchmarks. This demonstrates the versatility of our dataset, proving its capability to enhance model performance not only for 7B-scale models but also for smaller or larger models.
+14 
+Ablation Studies
+Table 14
+: 
+The impact of different filtering thresholds on the performance of our dataset.
+Threshold
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+MM-Vet
+SQA
+I
+SEED
+LLaVA-1.5-7B
+78.5
+62.0
+85.9
+64.3
+58.3
+30.5
+66.8
+58.6
+-
+(1) IS 0.9-0.98 + BITM 0.3 + CS 0.9 + CITM 0.3
+79.1
+62.3
+86.0
+66.8
+59.5
+32.7
+66.6
+61.6
+(2) IS 0.9-0.98 + BITM 0.35 + CS 0.9 + CITM 0.3
+79.1
+62.2
+85.9
+66.7
+59.5
+32.7
+67.1
+61.9
+(3) IS 0.9-0.98 + BITM 0.35 + CS 0.85 + CITM 0.4
+79.3
+62.8
+86.4
+66.1
+59.8
+33.2
+68.2
+61.7
+(4) IS 0.85-0.98 + BITM 0.35 + CS 0.85 + CITM 0.4
+79.2
+62.7
+86.3
+66.2
+57.4
+32.2
+68.8
+61.8
+To investigate the impact of filtering thresholds on our data performance, we set different filtering thresholds and generate various versions of our “object replacement” dataset. We then finetune multiple versions of LLaVA-1.5-7B using these datasets and evaluate their performance on commonly used MLLM benchmarks. Specifically, the threshold for the Image Similarity Filter of the Difference Area Generator is abbreviated as 
+IS
+ (Image Similarity). The threshold for the Image-Text Matching Filter of the Difference Area Generator is abbreviated as 
+BITM
+ (Bounding Box Image-Text Matching). The threshold for the Caption Similarity Filter of the Difference Captions Generator is abbreviated as 
+CS
+ (Captions Similarity). The threshold for the Image-Text Matching Filter of the Difference Captions Generator is abbreviated as 
+CITM
+ (Captions Image-Text Matching). The evaluation results are shown in 
+Table
+14
+.
+Image Similarity (IS)
+Based on 
+Table
+14
+, Model (3) adjusts the IS threshold from 0.9-0.98 to 0.85-0.98 compared to Model (4), reducing the filtering intensity for the similarity of image pairs. This adjustment leads to a significant performance decline, indicating that the similarity of image pairs has a substantial impact on data quality. When the similarity is low, the data generation process may introduce more ineffective instances, as segmentation could generate more areas unrelated to the valid objects (i.e., the replaced or replacing objects).
+Bounding Box Image-Text Matching (BITM)
+Model (2), compared to Model (1), increases the BITM threshold, meaning that when filtering to obtain valid bounding boxes, only those more likely to contain valid objects are retained. After raising the threshold, slight improvements in model performance are observed, which demonstrates that only bounding boxes more related to the replaced or replacing objects should be retained.
+Captions Similarity (CS) and Captions Image-Text Matching (CITM)
+Model (3) increases both the CS threshold and the CITM threshold compared to Model (2). Raising the CS threshold implies a greater filtering strength for similar captions, which means that if the two objects corresponding to the same bounding box coordinate in an image pair are similar, the bounding box will be filtered out. As for the CITM threshold, increasing the CITM threshold aims to enhance the alignment between the captions and the objects being described. After raising both the CS and CITM thresholds, the model’s performance shows a significant improvement.
+Based on 
+Table
+14
+, it can be concluded that the stronger the filtering intensity, the better our dataset’s effectiveness. However, due to the increased filtering intensity resulting in a reduced number of final instances, we choose the settings of Model (3) as our optimal threshold to ensure a sufficient number of generated instances. In our future work, we will expand the data sources to generate more pairs of similar images and then evaluate the effects of data obtained with higher filtering intensity.
+15 
+Additional Details of Experiments 
+15.1 
+Preprocessing of image pairs before inputting into MLLMs during training and inference
+The MLLMs selected in our paper (LLaVA-1.5, MGM, InternVL2) only support single-image input. Therefore, our image pairs need to be horizontally concatenated before being fed into MLLMs’ image encoder.
+Specifically, we horizontally concatenate the images in pairs and add a vertical black dividing line, 20 pixels wide, between the images.
+15.2 
+Training Process for MLLMs
+The training process for advanced MLLMs, including LLaVA-1.5, MGM and InternVL2, typically involves two stages: the pre-training stage and fine-tuning stage. During the pre-training stage, the MLLMs keep the backbone LLM and the vision encoder frozen and zero-initialize the learnable projector which is used for semantic mapping and cross-modality alignment. Only the projector is trained using the pre-training dataset. In the fine-tuning stage, we unfreeze the backbone LLM and fine-tune both the backbone LLM and the learnable projector using the visual instruction tuning dataset. Specifically, the pre-training dataset is usually an image captioning dataset, while the visual instruction tuning dataset typically consists of VQA datasets for various tasks. Thus, the 
+Img-Diff
+ dataset is integrated into the visual instruction tuning dataset during the fine-tuning stage and used together with the original dataset to fine-tune the MLLMs.
+15.3 
+Model Selection
+15.3.1 
+Overview
+The models used in our project are among the best-performing ones identified for the tasks assigned to them. Besides, they are interchangeable. Therefore, if better model options become available, researchers can replace the current models with those that offer superior performance to achieve a more effective dataset.
+15.3.2 
+Selection of the Semantic Segmentation Model
+In our project, we need to use a semantic segmentation model to identify regions containing objects in images. To ensure a diverse range of object categories is covered, we opt for models like SAM 
+[
+31
+]
+ instead of traditional semantic segmentation models. Furthermore, to reduce time consumption, we select FastSAM, one of the most efficient and effective models within the SAM-like category, as our segmentation model.
+15.3.3 
+Model Size
+Considering the device limitation and time consumption, our paper utilizes the LLM Vicuna-1.5-13B 
+[
+13
+]
+ for object name replacement in the image pairs generation process. For semantic segmentation in the Difference Area Generator, the FastSAM-x model is employed. For the CLIP model, we choose “clip-vit-base-patch32”, and for the BLIP model, we select “blip-itm-large-coco”. In the Difference Captions Generator, we use the MLLM LLaVA-NEXT-13B to generate content captions and difference captions. These models are interchangeable. When resources allow, researchers can substitute them with higher-performance models to achieve datasets with improved performance.
+15.4 
+Filtering Thresholds
+During the generation process of “object replacement” data, we employ multiple filtering operations. In this subsection, we will outline the filtering thresholds we use.
+In the Difference Area Generator, we use FastSAM to perform semantic segmentation on images and obtain bounding box information for regions where objects might be present. To ensure we gather a sufficient number of candidate regions, we set the confidence score threshold to 0.05, which means that we consider a region to contain objects when its confidence score is greater than 0.05. Additionally, to prevent overlapping regions, we set the Intersection over Union (IoU) threshold to 0.5.
+At the beginning stage of the Difference Area Generator, before using FastSAM for segmentation, we employ the Image Similarity Filter to retain only those with similarity between 0.9 and 0.98. This ensures that the image pairs are highly similar but not identical.
+In the Difference Detector stage of the Difference Area Generator, after cropping sub-images based on the bounding box information, we use the Image Similarity Filter to filter the sub-image pairs and consider them to be different only when the similarity score is less than 0.85.
+In the mid-stage of the Difference Area Generator, after performing sub-image cropping based on the bounding box information, we use the Image-text Matching Filter to determine whether these sub-images contain valid objects. When the score exceeds 0.35, we consider the sub-image to contain valid objects, and the bounding box is deemed effective.
+In the Difference Area Generator, after obtaining all effective bounding boxes, we use the IoU method to filter out the overlapping ones. We set the IoU threshold to 0.5, retaining only the bounding boxes with a higher degree of difference for similar positions.
+In stage 1 of the Difference Captions Generator, after cropping the images into sub-images and generating content captions, we use the Image-text Matching Filter to evaluate the matching degree between the sub-images and the captions. We only consider a caption to be correct if the image-text matching score exceeds 0.4.
+In stage 1 of the Difference Captions Generator, we use the Captions Similarity Filter to determine whether the two content captions of an image pair, describing the regions of the same bounding box, are different. We use CLIP to obtain text features for the two captions and then calculate the cosine similarity between them. When the cosine similarity is below 0.85, we consider the two captions to be different.
+Setting the filtering intensity too high may lead to a reduced number of remaining samples. To ensure that the dataset still has enough samples after filtering, we outline adjustable thresholds as described above. As mentioned in 
+Section
+14
+, higher filtering intensity typically results in better model performance. Therefore, researchers may consider expanding the data sources and increasing the filtering intensity to improve dataset performance.
+15.5 
+Resource and Time Consumption
+With four NVIDIA A100 GPUs, it took 4.5 days to synthesize 118K high-quality image pairs. The subsequent filtering and description-generating processes took approximately two days in total.
+Figure 7
+: 
+Three “object removal” examples.
+Figure 8
+: 
+An overview of the generation steps for “object removal” data.
+16 
+The “Object Removal” Exploration
+16.1 
+Overview
+On the main page, we generate pairs of similar images focusing on object replacement. Their bounding box regions generally contain objects. However, the ability to determine the object’s presence is also crucial. Thus, we generate another set of image pairs where the difference lies in the presence or absence of objects, to enhance the model’s ability to determine object presence. We refer to these image pairs as “exist-absent pairs” and the data as “object removal” data.
+16.2 
+Generation Process
+16.2.1 
+Workflow
+“Object removal” involves erasing a specific object from an image and then merging the edited image with the original to form an exist-absent pair. The detailed workflow is as follows: first, FastSAM is used to segment the image, which provides a set of bounding boxes and masks. Next, an Image Similarity Filter is applied to filter the bounding boxes and accompanying masks, keeping only those that contain objects. Then, we use the text-to-image generative model SDXL-turbo
+[
+57
+]
+ to inpaint the images with the remaining masks, erasing specific objects from the images and generating exist-absent pairs. Next, we use an MLLM to describe the removed object for each exist-absent pair, and a filter is employed to verify the accuracy of the description. Finally, we draw red boxes on images based on the bounding box information, and then the object descriptions are converted into multiple-choice questions, such as: “
+which image has the object related to ‘DESCRIPTION’ within the red bounding box? A. the left image B. the right image.
+” Here, 
+DESCRIPTION
+ refers to the description of the erased objects. After all processing and filtering, we obtain 5,773 pieces of “object removal” data. The general framework is shown in 
+Figure
+8
+.
+16.2.2 
+Image Similarity Filter
+In the current process, the function of the Image Similarity Filter is to filter out the bounding box regions that do not contain objects. For each image, we need its corresponding image in the image pair generated in 
+Section
+3.2
+ to determine whether its bounding box regions contain objects. Since the image pairs are generated by replacing objects, the difference areas between the two images are highly likely to be the regions containing valid objects. Therefore, for each bounding box, we crop the sub-images from image A (the current image) and image B (the other image in the pair), and then calculate the similarity of these two sub-images. When the similarity is below 0.9, we consider these two sub-images to be different, indicating that the bounding box region contains an object.
+16.2.3 
+Erase Objects
+We use the generative model SDXL-turbo
+[
+57
+]
+ to erase objects based on the masks obtained during segmentation. The prompt is “background, nothing, 8k.” After inpainting, the object in the masked regions is erased, while the rest of the image remains unchanged. Hence, we obtain exist-absent pairs.
+16.2.4 
+MLLM Captioning
+We use the MLLM LLaVA-NEXT to generate descriptions for the erased objects. Specifically, we provide the MLLM with the bounding box coordinates and ask it to describe the corresponding area in the original image. Subsequently, we crop the exist-absent pairs based on the bounding box information and then use an Image-Text Matching Filter to assess the matching degree between the sub-images and the descriptions. If the matching score between the sub-image containing objects and its description is greater than 0.35, and the matching score between the sub-image not containing objects and its description is less than 0.2, we consider the description to be accurate and the exist-absent pair to be valid.
+Table 15
+: 
+Performance comparison on 8 MLLM benchmarks (including “object removal” data).
+Model
+VQA
+v2
+GQA
+POPE
+MMB
+MMB
+CN
+LLaVA-7B
+78.5
+62.0
+85.9
+64.3
+58.3
+LLaVA-7B + RP
+79.3
+62.8
+86.4
+66.1
+59.8
+LLaVA-7B + RP + RM
+79.2
+62.9
+86.8
+67.9
+61.3
+Model
+MM-Vet
+SQA
+I
+SEED
+MMVP
+LLaVA-7B
+30.5
+66.8
+58.6
+-
+24.0
+LLaVA-7B + RP
+33.2
+68.2
+61.7
+27.3
+LLaVA-7B + RP + RM
+33.1
+68.8
+61.9
+28.7
+Table 16
+: 
+Results on image difference benchmarks (including “object removal” data).
+Model
+Spot-the-Diff
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+8.5
+12.0
+38.3
+30.1
+LLaVA-1.5-7B +RP
+9.7
+13.0
+43.2
+30.8
+LLaVA-1.5-7B +RP +RM
+9.8
+13.0
+46.5
+31.5
+Model
+Image-Edit-Request
+BLEU
+METEOR
+CIDEr-D
+ROUGE-L
+LLaVA-1.5-7B
+15.1
+17.8
+60.6
+45.2
+LLaVA-1.5-7B +RP
+16.2
+19.5
+60.9
+46.7
+LLaVA-1.5-7B +RP +RM
+16.8
+18.6
+63.9
+45.7
+16.3 
+Evaluation
+We merge the “object removal” data with the “object replacement” data, making our dataset focus on both object changes and object presence. To test the performance changes of LLaVA-1.5-7B after adding “object removal” data, we incorporate this combined data into the original visual instruction tuning dataset of the MLLM and conduct fine-tuning. Then, we evaluate the fine-tuned model on image difference benchmarks and eight MLLM benchmarks, similar to what is presented on the main page.
+In the tables, “RM” represents “object removal” data.
+16.3.1 
+Results on MLLM Benchmarks
+Table
+15
+ shows the performance of LLaVA-1.5-7B finetuned with additional “object removal” data on commonly used MLLM benchmarks. With the assistance of “object removal” data, LLaVA-1.5-7B achieves further improvements across various benchmarks compared to the model that only uses “object replacement” data, with an average increase of 3.91%.
+16.3.2 
+Results on Image Difference Benchmarks
+Table
+16
+ shows the performance of LLaVA-1.5-7B fine-tuned with our “object removal” data on image difference benchmarks. With “object removal” data, LLaVA-1.5-7B shows further improvements in its performance on both the MMVP benchmark and the Spot-the-Diff benchmark, surpassing the results achieved with “object replacement” data alone. Besides, its scores fluctuate on the Image-Edit-Request benchmark.
+16.3.3 
+Further Analysis
+The results indicate that the “object removal” data has a comprehensive positive impact on LLaVA-1.5-7B, leading to performance improvements in both MLLM benchmarks and image difference benchmarks. However, during our analysis of sample quality, we notice that some of the generated “object removal” samples exhibit subpar image quality, with certain image pairs showing inadequate object removal effects. In light of this, employing a more robust inpainting model or applying additional filters to enhance the quality of these image pairs could further optimize the performance of this dataset.
+17 
+Examples
+Figure 9
+: 
+Examples of “object replacement” data, including the image pair and the text content in JSON format.
+Figure 10
+: 
+An example of “object removal” data, including the image pair and the text content in JSON format.
+    Experimental support, please
+view the build logs
+    for errors. Generated by
+        L
+A
+        T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue" 
+(
+)
+ button, located in the page header.
+Tip:
+ You can select the relevant text first, to include it in your report.
+Our team has already identified 
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a 
+list of packages that need conversion
+, and welcome 
+developer contributions
+.
+        We gratefully acknowledge support from
+        our 
+major funders
+,
+member institutions
+, 
+,
+        and all contributors.
+About
+Help
+Contact
+Subscribe
+Copyright
+Privacy
+Accessibility
+Operational Status
+ (opens in new tab)
+Major funding support from
+

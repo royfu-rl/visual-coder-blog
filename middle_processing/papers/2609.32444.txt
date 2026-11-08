@@ -1,0 +1,3317 @@
+SOURCE: https://arxiv.org/html/2609.32444
+Rethinking Training–Inference Mismatch inLLM Reinforcement Learning:Where It Arises and How to Correct It 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Preliminaries 
+ 2.1 Training–inference mismatch 
+ 2.2 Correcting the mismatch 
+ 3 Calibrated Importance Sampling 
+ 3.1 From logit perturbation to log-odds displacement 
+ 3.2 Why exact correction is unstable 
+ 3.3 Correction in the displacement coordinate 
+ Algorithm. 
+ 4 Experiments 
+ 4.1 Setup 
+ 4.2 RQ1: Does CIS improve held-out performance? 
+ 4.3 RQ2: Why does CIS work, and which design choices matter? 
+ 4.4 RQ3: How sensitive is CIS to its hyperparameters? 
+ 5 Related Work 
+ 6 Conclusion 
+ References 
+ A Empirical Anatomy of the Training–Inference Mismatch 
+ A.1 Measurement protocol 
+ Models and engine configuration. 
+ Per-logit measurement. 
+ Gauge convention. 
+ A.2 Dense versus MoE: a heavy tail in the per-logit perturbation 
+ A.3 Routing disagreement and the MoE tail 
+ A.4 Conditional routing control 
+ A.5 The heavy tail propagates from δ \delta to ε \varepsilon 
+ A.6 The displacement is approximately invariant to token confidence 
+ A.7 The second moment on the trained model 
+ B Proofs and Technical Details for Section 
+ B.1 Preliminaries and Key Lemmas 
+ Remark (correlated token contributions). 
+ B.2 Proof of Theorem 
+ Remark (where the instability enters). 
+ Remark (correlated token contributions). 
+ B.3 Proof of Theorem 
+ Remark (comparison with exact correction). 
+ Remark (correlated token contributions). 
+ B.4 Numerical Floor in Algorithm 1 
+ Remark. 
+ C Experimental Details 
+ C.1 Implementation and Hardware 
+ C.2 Datasets and Evaluation Protocol 
+ C.3 Prompts 
+ C.4 Diagnostics 
+ C.5 Preregistered Evaluation Contract 
+ D Additional Results and Limitations 
+ D.1 Training Dynamics 
+ D.2 Hyperparameter Sweeps 
+ D.3 Out-of-Domain Evaluation 
+ D.4 Computational Cost 
+ D.5 Where Each Operator Acts 
+ D.6 Limitations 
+ License: CC BY 4.0
+arXiv:2609.32444v1 [cs.LG] 26 Sep 2026
+Rethinking Training–Inference Mismatch in
+ LLM Reinforcement Learning:
+ Where It Arises and How to Correct It
+ Tianrun Yu
+ Kaixiang Zhao
+ Shangzhe Li
+ Affiliation: Brigham Young University, University of North Carolina at Chapel Hill * Corresponding author.
+ {tianruny, kzhao2}@byu.edu, tkillian@cs.byu.edu 
+ Yuxiao Yang
+ Affiliation: Brigham Young University, University of North Carolina at Chapel Hill * Corresponding author.
+ {tianruny, kzhao2}@byu.edu, tkillian@cs.byu.edu 
+ Porter Jenkins
+ Weitong Zhang
+ Affiliation: Brigham Young University, University of North Carolina at Chapel Hill * Corresponding author.
+ {tianruny, kzhao2}@byu.edu, tkillian@cs.byu.edu 
+ Taylor W. Killian
+ Abstract
+ We study training–inference mismatch in reinforcement learning with
+verifiable rewards (RLVR) for large language models, where rollouts are
+sampled by an inference engine while gradients are computed by a training engine,
+and the two engines assign different probabilities to the same tokens.
+To account for this discrepancy in policy updates, we introduce calibrated
+importance sampling (CIS). CIS is motivated by an empirically supported
+logit-displacement characterization that expresses the mismatch as an additive
+displacement ε t \varepsilon_{t} in log-odds, determined by the per-logit
+perturbation before the softmax, whose distribution is approximately invariant
+to token confidence. This characterization motivates a confidence-aware
+truncation: large positive displacements are truncated at a single constant
+threshold, which maps back to an importance-ratio cap that tightens as token
+confidence increases. Theoretically, we show that CIS replaces the unbounded
+second moment that governs the error of exact importance sampling with a
+term bounded by a constant, at the cost of a bias controlled by the truncated
+excess. In evaluation across three mixture-of-experts models and five mathematical
+reasoning benchmarks, CIS achieves the highest five-benchmark average on all
+three models among the evaluated baselines. Diagnostic analyses show that CIS
+places less truncation bias on low-confidence tokens than truncated importance
+sampling, while upward clipping of small importance weights reduces held-out
+accuracy.
+ | 
+ † † footnotetext: Code is available at https://github.com/kzhao5/CIS-RL . 
+ 1 Introduction
+ Reinforcement learning with verifiable rewards (RLVR) has become a dominant
+paradigm for improving the reasoning abilities of large language models
+(LLMs) ( Shao et al., 2024 ; DeepSeek-AI, 2025 ; Yu et al., 2025 ) .
+To improve throughput, current RL post-training frameworks
+decouple rollout generation from gradient computation and assign them to an
+inference engine and a training engine,
+respectively ( Sheng et al., 2025 ; Hu et al., 2025 ; Fu et al., 2025 ) .
+Although the
+two engines load the same parameters, differences in their numerical
+implementations lead them to assign different probabilities to the same token.
+As a result, training that is nominally on-policy becomes
+off-policy ( Yao et al., 2025 ; Qi et al., 2025 ; Zheng et al., 2025a ) .
+This
+ training–inference mismatch is particularly severe for mixture-of-experts
+models, where it can cause training instability or even
+collapse ( Ling Team and Inclusion AI, 2025 ; Zheng et al., 2025b ; Ma et al., 2025 ; Zheng et al., 2025a ) .
+ The standard remedy for this mismatch is importance sampling, which reweights
+the gradient of each token by the ratio between the probabilities that the
+training and inference engines assign to the sampled
+token ( Yao et al., 2025 ; Liu et al., 2025 ; Zheng et al., 2025a ) .
+However, occasional sharp disagreements between the two engines on individual
+tokens can make this importance ratio extremely
+large ( Zhao et al., 2025 ; Ma et al., 2025 ) .
+Exact correction can therefore yield gradient estimates with uncontrolled
+variance ( Ionides, 2008 ; Metelli et al., 2018 ; Liu et al., 2025 ) .
+Truncating the importance sampling factor controls this variance by introducing the bias–variance trade-off. Understanding this bias–variance trade-off and designing better truncation methods has emerged as a new question to answer ( Ionides, 2008 ; Liu et al., 2025 ) .
+ Figure 1: 
+The inference and training engines assign different probabilities
+to the same tokens.
+CIS truncates the importance ratios with confidence-dependent
+caps, which are tighter for more confident tokens.
+The truncated ratios reweight the token-level
+GRPO loss ( Shao et al., 2024 ) .
+ Existing methods largely rely on heuristic rules to truncate or mask this
+ratio. At the token level, TIS caps
+the ratio at a fixed upper bound ( Yao et al., 2025 ; Qi et al., 2025 ) ,
+IcePop masks tokens whose ratio
+falls outside a fixed interval ( Zhao et al., 2025 ; Ling Team and Inclusion AI, 2025 ) ,
+and KPop masks tokens by thresholding the KL divergence between the
+probabilities of the inference and training engines ( Guo et al., 2026 ; Ling Team, 2026 ) .
+At the sequence level, existing methods truncate or
+reject the ratio of the entire response ( Liu et al., 2025 ) ,
+or replace the token-level
+objective with a sequence-level one ( Zheng et al., 2025b ) .
+Other work addresses the problem through numerical precision and runs the
+entire pipeline in FP16 ( Qi et al., 2025 ) . Although these methods are
+effective to varying degrees, all of their rules act directly on the
+importance ratio or on quantities computed directly from the probabilities
+of the two engines.
+This ratio, however, mixes two factors: the actual discrepancy between the two
+engines and the confidence of the token itself. A discrepancy of the same size
+moves the ratio far from one on low-confidence tokens but barely changes it
+on high-confidence tokens. As a result, fixed thresholds act mainly on
+low-confidence tokens ( Guo et al., 2026 ; Ling Team, 2026 ) , and the
+truncation bias concentrates on these tokens. This motivates our
+question:
+ Can we design a principled mismatch correction grounded in the 
+ statistical structure of the training–inference mismatch itself? 
+ We address this question by proposing
+ CIS ( C alibrated
+ I mportance S ampling), which is
+illustrated in Figure 1 . CIS first separates the two factors in
+the importance ratio, which can be written exactly as a function of the token
+confidence and a component that reflects only the discrepancy between the two
+engines. Our measurements show that the distribution of this discrepancy
+component varies only slightly with token confidence, so anomalous
+discrepancies can be identified with the same threshold at every confidence
+level. CIS applies a single constant threshold to this component, which
+truncates anomalously large discrepancies at their source. When mapped back to
+the ratio, this threshold imposes a cap on the importance weight of each token,
+which depends on the token confidence and becomes tighter as confidence
+increases. This design determines where the truncation bias falls.
+Discrepancies of the same size are treated in the same way at every confidence
+level, so the truncation bias no longer concentrates on low-confidence tokens.
+Our contributions are as follows:
+ • 
+ We decompose the importance ratio into token confidence and a
+discrepancy component, and find in large-scale analyses that the
+distribution of the discrepancy component barely varies with token confidence.
+With mixture-of-experts models, routing disagreement between engines
+substantially amplifies the heavy tail of this distribution.
+ • 
+ Building on this characterization, we propose CIS, which truncates the
+discrepancy component rather than the ratio, yielding a ratio cap that
+tightens with token confidence. Theoretically, we prove that CIS bounds the
+potentially explosive second-moment term of exact correction, at the cost of a
+bias controlled by the truncated excess.
+ • 
+ Experiments on three mixture-of-experts models and five mathematical
+reasoning benchmarks validate the effectiveness of CIS. Diagnostic analyses
+show that, unlike a fixed ratio cap, CIS does not concentrate its
+truncation bias on low-confidence tokens and attains a lower overall bias.
+ 2 Preliminaries
+ 2.1 Training–inference mismatch
+ In current RL post-training frameworks, rollouts are generated by an inference
+engine (e.g., vLLM and SGLang), while gradients are computed by a separate
+training engine (e.g., FSDP and Megatron). Both engines load the same parameters
+ θ \theta , but differences in kernel implementations, reduction orders, and
+numerical precision lead them to assign different probabilities to the same
+token. We write h t := ( x , y < t ) h_{t}:=(x,y_{<t}) for the prefix at position t t . Then
+ π train ​ ( y t ∣ h t ; θ ) ≠ π infer ​ ( y t ∣ h t ; θ ) \pi_{\mathrm{train}}(y_{t}\mid h_{t};\theta)\neq\pi_{\mathrm{infer}}(y_{t}\mid h_{t};\theta) ,
+so rollouts that are nominally on-policy are in fact off-policy with respect to
+the training engine. The problem is more severe for mixture-of-experts models,
+where routing is a discrete top- k k decision and a small perturbation can change
+which experts are activated.
+ For the token-level GRPO surrogate evaluated on the observed rollout prefixes,
+correcting the conditional distribution of each sampled token introduces an
+importance ratio:
+ | 
+ 𝒥 ( θ ) = 𝔼 x ∼ 𝒟 , { y i } i = 1 G ∼ π infer ( ⋅ ∣ x ; θ old ) [ 1 G ∑ i = 1 G 1 | y i | ∑ t = 1 | y i | k i , t min ( ρ i , t A ^ i , t , clip ( ρ i , t ) A ^ i , t ) ] , \mathcal{J}(\theta)=\mathbb{E}_{x\sim\mathcal{D},\;\{y_{i}\}_{i=1}^{G}\sim\pi_{\mathrm{infer}}(\cdot\mid x;\theta_{\mathrm{old}})}\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{\left\lvert y_{i}\right\rvert}\sum_{t=1}^{\left\lvert y_{i}\right\rvert}k_{i,t}\,\min\Big(\rho_{i,t}\hat{A}_{i,t},\;\operatorname{clip}\big(\rho_{i,t}\big)\hat{A}_{i,t}\Big)\right], | 
+ | 
+ (1) | 
+ where h i , t = ( x , y i , < t ) h_{i,t}=(x,y_{i,<t}) , θ old \theta_{\mathrm{old}} is the parameter snapshot at
+rollout time, A ^ i , t \hat{A}_{i,t} is the group-normalized advantage, and
+ clip \operatorname{clip} restricts ρ i , t \rho_{i,t} to
+ [ 1 − c low ,  1 + c high ] [1-c_{\mathrm{low}},\,1+c_{\mathrm{high}}] . Let
+ p i , t = π train ​ ( y i , t ∣ h i , t ; θ old ) p_{i,t}=\pi_{\mathrm{train}}(y_{i,t}\mid h_{i,t};\theta_{\mathrm{old}}) and
+ q i , t = π infer ​ ( y i , t ∣ h i , t ; θ old ) q_{i,t}=\pi_{\mathrm{infer}}(y_{i,t}\mid h_{i,t};\theta_{\mathrm{old}}) be the
+probabilities that the two engines assign to the sampled token. The update ratio
+is ρ i , t = π train ​ ( y i , t ∣ h i , t ; θ ) / p i , t \rho_{i,t}=\pi_{\mathrm{train}}(y_{i,t}\mid h_{i,t};\theta)/p_{i,t} , and the
+mismatch ratio is k i , t = p i , t / q i , t k_{i,t}=p_{i,t}/q_{i,t} . The mismatch ratio k i , t k_{i,t} corrects
+only the next-token distribution given the observed prefix h i , t h_{i,t} ; it does not
+reweight the distribution of the prefix itself. The update ratio ρ i , t \rho_{i,t} is
+handled by the standard PPO clipping, while the mismatch ratio k i , t k_{i,t} carries
+the discrepancy between the two engines and is the focus of the rest of this
+paper.
+ 2.2 Correcting the mismatch
+ The most direct way to correct the training–inference mismatch is to use the
+exact ratio k i , t k_{i,t} in Equation 1 . This correction is unbiased, but on
+the few tokens where the two engines disagree sharply, the ratio becomes very
+large and the gradient estimate has uncontrolled variance. Existing methods
+therefore truncate or mask k i , t k_{i,t} and accept some bias in exchange for lower
+variance.
+ At the token level, TIS replaces k i , t k_{i,t} with min ⁡ ( k i , t , C ) \min(k_{i,t},C) for a fixed cap
+ C C ( Yao et al., 2025 ) . IcePop instead uses
+ k i , t  1 { α ≤ k i , t ≤ β } k_{i,t}\,\mathbf{1}\{\alpha\leq k_{i,t}\leq\beta\} , which masks any token whose
+ratio falls outside a fixed interval ( Zhao et al., 2025 ; Ling Team and Inclusion AI, 2025 ) .
+KPop masks a token when the binary KL divergence between the probabilities of
+the two engines exceeds a fixed threshold ( Guo et al., 2026 ; Ling Team, 2026 ) .
+At the sequence level, Seq-TIS and Seq-MIS apply the same cap or mask to the
+product of the ratios over a response ( Liu et al., 2025 ) , and GSPO
+optimizes a sequence-level objective instead ( Zheng et al., 2025b ) . A different
+line of work leaves the reweighting unchanged and reduces the discrepancy
+itself: FP16 training raises numerical precision ( Qi et al., 2025 ) , and routing
+replay makes the two engines select the same experts ( Ma et al., 2025 ) . All of
+these approaches are effective to some extent. However, the thresholds of the
+reweighting methods either act on k i , t k_{i,t} directly and treat every token in the
+same way, or are not derived from the statistics of the mismatch itself. In
+Section 3 , we start from the logit perturbation between the two
+engines, characterize the structure of the mismatch, and build our correction on
+this characterization.
+ 3 Calibrated Importance Sampling
+ 3.1 From logit perturbation to log-odds displacement
+ We measure, on large-scale rollouts, the probabilities that the
+two engines assign to the same sampled token (experimental details in
+ Section A.1 ). On mixture-of-experts models, the top- k k 
+selection of the gating network is a discrete decision, so a small numerical
+difference can make the two engines activate different experts at some layer,
+and this difference propagates through all subsequent layers. These differences
+accumulate layer by layer and ultimately appear as different logits output by
+the two engines under the same parameters and the same prefix. Write
+ 𝐳 = ( z 1 , … , z V ) ∈ ℝ V \mathbf{z}=(z_{1},\dots,z_{V})\in\mathbb{R}^{V} for the logit vector of the
+training engine at the prefix h t h_{t} , and 𝐳 + 𝜹 \mathbf{z}+\bm{\delta} for that
+of the inference engine, where
+ 𝜹 = ( δ 1 , … , δ V ) ∈ ℝ V \bm{\delta}=(\delta_{1},\dots,\delta_{V})\in\mathbb{R}^{V} is the per-logit
+perturbation between the two engines. Then
+ p t = π train ​ ( y t ∣ h t ; θ old ) = softmax ⁡ ( 𝐳 ) y t p_{t}=\pi_{\mathrm{train}}(y_{t}\mid h_{t};\theta_{\mathrm{old}})=\operatorname{softmax}(\mathbf{z})_{y_{t}} and
+ q t = π infer ​ ( y t ∣ h t ; θ old ) = softmax ⁡ ( 𝐳 + 𝜹 ) y t q_{t}=\pi_{\mathrm{infer}}(y_{t}\mid h_{t};\theta_{\mathrm{old}})=\operatorname{softmax}(\mathbf{z}+\bm{\delta})_{y_{t}} . Substituting the
+two softmaxes into the mismatch ratio k t := p t / q t k_{t}:=p_{t}/q_{t} yields the
+following identity.
+ Figure 2: (a) Per-logit perturbation δ j \delta_{j} and (b) log-odds displacement
+ ε t \varepsilon_{t} , MoE vs. dense. 
+ Lemma 3.1 (Ratio–displacement identity) . 
+ Let w j := e z j / ∑ j ′ ≠ y t e z j ′ w_{j}:=e^{z_{j}}\big/\sum_{j^{\prime}\neq y_{t}}e^{z_{j^{\prime}}} for j ≠ y t j\neq y_{t} . Then the
+mismatch ratio satisfies 
+ | 
+ k t = softmax ⁡ ( 𝐳 ) y t softmax ⁡ ( 𝐳 + 𝜹 ) y t = p t + ( 1 − p t ) ​ exp ⁡ ( ε t ) , k t − 1 = ( 1 − p t ) ​ ( exp ⁡ ( ε t ) − 1 ) , k_{t}=\frac{\operatorname{softmax}(\mathbf{z})_{y_{t}}}{\operatorname{softmax}(\mathbf{z}+\bm{\delta})_{y_{t}}}=p_{t}+(1-p_{t})\exp(\varepsilon_{t}),\qquad k_{t}-1=(1-p_{t})\big(\exp(\varepsilon_{t})-1\big), | 
+ | 
+ (2) | 
+ where ε t := − δ y t + log ∑ j ≠ y t w j exp ( δ j ) \varepsilon_{t}:=-\delta_{y_{t}}+\log\sum_{j\neq y_{t}}w_{j}\exp(\delta_{j}) . 
+ The proof is given in Section B.1 . We call
+ ε t \varepsilon_{t} the log-odds displacement of the inference engine relative to
+the training engine on the current token. From Equation 2 ,
+ ε t = log ⁡ p t 1 − p t − log ⁡ q t 1 − q t \varepsilon_{t}=\log\frac{p_{t}}{1-p_{t}}-\log\frac{q_{t}}{1-q_{t}} , that is,
+ ε t \varepsilon_{t} is exactly the difference between the log-odds that the two
+engines assign to the sampled token. In the log-odds coordinate, the discrepancy
+between the two engines is therefore an additive displacement determined
+entirely by the perturbation 𝜹 \bm{\delta} , and it can be computed
+directly from the log-probabilities recorded by the two engines.
+ Figure 2 shows the measured 𝜹 \bm{\delta} and
+ ε t \varepsilon_{t} . On the dense control, 𝜹 \bm{\delta} is concentrated near
+zero and bounded, consistent with bf16 rounding error, and ε t \varepsilon_{t} is
+correspondingly concentrated tightly around zero. On the MoE, the body of
+ 𝜹 \bm{\delta} is likewise concentrated near zero, but is distinguished
+by a pronounced heavy tail. We analyze the source of this tail in
+ Sections A.3 and A.4 : rounding error accounts only for
+the body, while routing disagreement between the two engines is a major
+amplifier of the tail, and the tail of 𝜹 \bm{\delta} becomes heavier as
+the two engines select different experts at more layers. Since
+ ε t := − δ y t + log ∑ j ≠ y t w j exp ( δ j ) \varepsilon_{t}:=-\delta_{y_{t}}+\log\sum_{j\neq y_{t}}w_{j}\exp(\delta_{j}) , the heavy tail of 𝜹 \bm{\delta} 
+carries over to ε t \varepsilon_{t} , so the log-odds displacement on the MoE is
+heavy-tailed as well. Given p t p_{t} , by Equation 2 , the ratio
+is a deterministic, increasing function of ε t \varepsilon_{t} : the mismatch enters
+the importance weight through the displacement factor
+ e ε t e^{\varepsilon_{t}} , rescaled by 1 − p t 1-p_{t} . The same displacement therefore moves
+the ratio far from one on low-confidence tokens, whereas on high-confidence
+tokens the factor 1 − p t 1-p_{t} compresses it and the ratio barely moves.
+ 3.2 Why exact correction is unstable
+ A gradient update uses n n tokens, indexed by m m . Write the payload of the
+ m m -th token as
+ ℓ m ′ = ∇ θ ​ min ​ ( ρ m ​ A ^ m , clip ⁡ ( ρ m ) ​ A ^ m ) \ell^{\prime}_{m}~=~\nabla_{\theta}\min\big(\rho_{m}\hat{A}_{m},\operatorname{clip}(\rho_{m})\hat{A}_{m}\big) ;
+the mismatch ratio k m k_{m} is the importance sampling factor used to scale this gradient.
+Since k m k_{m} does not depend on θ \theta , the gradient of the token-level
+surrogate objective and its estimator are
+ | 
+ G 0 := ∇ θ 𝒥 = 𝔼 ⁡ [ k ​ ℓ ′ ] , G ^ := 1 n ​ ∑ m = 1 n k m ​ ℓ m ′ , G_{0}:=\nabla_{\theta}\mathcal{J}=\mathbb{E}[k\,\ell^{\prime}],\qquad\widehat{G}:=\frac{1}{n}\sum_{m=1}^{n}k_{m}\,\ell^{\prime}_{m}, | 
+ | 
+ where the expectation is over the prompt, rollout, and numerical
+discrepancy between the two engines for each token. G 0 G_{0} corrects the
+conditional distribution of each token given its prefix, not the distribution
+of the prefix itself. We measure the quality of the estimate by the
+mean-squared error 𝔼 ​ ‖ G ^ − G 0 ‖ 2 2 \mathbb{E}\big\|\widehat{G}-G_{0}\big\|_{2}^{2} .
+ Figure 3: 𝔼 ⁡ [ e α ​ ε t ] \mathbb{E}[e^{\alpha\varepsilon_{t}}] (left axis) and
+ 𝔼 ⁡ [ ( ( 1 − p t ) ​ e ε t ) α ] \mathbb{E}[((1-p_{t})e^{\varepsilon_{t}})^{\alpha}] (right axis) on the measured
+displacements of the trained MoE. 
+ Theorem 3.2 (Informal) . 
+ Assume ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b and that the contributions of different tokens are
+independent (for correlated contributions, replace n n by n eff n_{\mathrm{eff}} ;
+see Appendix B ). Then 
+ | 
+ 𝔼 ​ ‖ G ^ − G 0 ‖ 2 2 ≤ b 2 n ​ 𝔼 ​ [ p t 2 + 2 ​ p t ​ ( 1 − p t ) ​ exp ⁡ ( ε t ) + ( 1 − p t ) 2 ​ e 2 ​ ε t ] . \mathbb{E}\big\|\widehat{G}-G_{0}\big\|_{2}^{2}\;\leq\;\frac{b^{2}}{n}\,\mathbb{E}\Big[p_{t}^{2}+2p_{t}(1-p_{t})\exp(\varepsilon_{t})+(1-p_{t})^{2}\,e^{2\varepsilon_{t}}\Big]. | 
+ | 
+ (3) | 
+ Figure 3 shows both moments on the displacements of the MoE after RL training ( Section A.7 ). The raw moment 𝔼 ⁡ [ e α ​ ε t ] \mathbb{E}[e^{\alpha\varepsilon_{t}}] is only
+ 7.07 7.07 at α = 1 \alpha=1 but reaches 9.2 × 10 6 9.2\times 10^{6} at α = 2 \alpha=2 . The weighted
+moment 𝔼 ⁡ [ ( ( 1 − p t ) ​ e ε t ) α ] \mathbb{E}[((1-p_{t})e^{\varepsilon_{t}})^{\alpha}] , which is the quantity that
+enters Equation 3 , is compressed by the factor ( 1 − p t ) α (1-p_{t})^{\alpha} but
+follows the same pattern: it rises from 0.16 0.16 at α = 1 \alpha=1 to 22.9 22.9 at
+ α = 2 \alpha=2 . Since p t 2 ≤ 1 p_{t}^{2}\leq 1 and the cross term is at most 2 × 0.16 2\times 0.16 , the
+bound ( Equation 3 ) is dominated by the second-moment term and is more
+than twenty times the corresponding bound without correction, for which the
+expectation equals one. Exact correction is therefore unbiased, but its variance
+is driven by the upper tail of ε t \varepsilon_{t} .
+ This changes the problem from whether the mismatch should be corrected to
+how the exact correction should be truncated. Some bias must be accepted in
+exchange for controlling its second moment. The next section constructs such
+a truncation directly in the coordinate from which the mismatch arises.
+ 3.3 Correction in the displacement coordinate
+ Figure 4: ε t \varepsilon_{t} against token uncertainty 1 − p t 1-p_{t} on the base MoE; the
+black line is the median. 
+ Given p t p_{t} , the probability of generating a token, the mismatch enters the ratio only through
+ e ε t e^{\varepsilon_{t}} , by Equation 2 :
+ | 
+ k t = p t + ( 1 − p t ) ​ exp ⁡ ( ε t ) . k_{t}=p_{t}+(1-p_{t})\exp(\varepsilon_{t}). | 
+ | 
+ The variance problem is intrinsically one-sided. If
+ e ε t ≤ 1 e^{\varepsilon_{t}}\leq 1 , then
+ | 
+ p t < k t ≤ 1 , p_{t}<k_{t}\leq 1, | 
+ | 
+ so the importance weight on this side satisfies k t 2 ≤ 1 k_{t}^{2}\leq 1 .
+In contrast, when exp ⁡ ( ε t ) > 1 \exp(\varepsilon_{t})>1 , the ratio exceeds one and can grow
+without bound as the positive displacement increases. Thus the second-moment
+explosion identified in Section 3.2 can only arise from the
+upper tail. Modifying the lower side does not address this source of
+unbounded variance and instead introduces additional deviation from the exact
+correction. We therefore truncate only large positive displacements. It remains to choose where to truncate the upper tail.
+ The displacement itself is only weakly related to confidence.
+ Figure 4 plots ε t \varepsilon_{t} against 1 − p t 1-p_{t} on the base MoE ( Section A.6 ):
+across six orders of magnitude of uncertainty, the median stays at zero and the spread changes
+by less than a factor of two with a Spearman rank correlation of only − 0.028 -0.028 .
+A displacement of a given amount is therefore approximately equally anomalous
+across confidence levels. This suggests placing a single upper threshold
+directly in the displacement coordinate with
+ exp ⁡ ( ε t ) ≤ 1 + λ \exp(\varepsilon_{t})\leq 1+\lambda where threshold λ ≥ 0 \lambda\geq 0 .
+ Truncating e ε t e^{\varepsilon_{t}} at 1 + λ 1+\lambda and mapping back through Equation 2 gives
+ | 
+ f λ ​ ( k t , p t ) = p t + ( 1 − p t ) ​ min ⁡ { e ε t ,  1 + λ } = min ⁡ { k t ,  1 + λ ⁡ ( 1 − p t ) } . f_{\lambda}(k_{t},p_{t})\;=\;p_{t}+(1-p_{t})\min\big\{e^{\varepsilon_{t}},\,1+\lambda\big\}\;=\;\min\big\{k_{t},\;1+\lambda(1-p_{t})\big\}. | 
+ | 
+ (4) | 
+ Equation 4 introduces calibrated importance sampling (CIS), our proposed correction for training–inference mismatch. 
+The factor 1 − p t 1-p_{t} in the cap is not a design choice: it is the factor by which Equation 2 maps displacements to ratios. The two forms in Equation 4 are identical, token by token; we implement the
+right-hand form as it only requires the difference of the two
+log-probabilities, which remains finite when a probability rounds to one in bf16,
+whereas logit ⁡ p t \operatorname{logit}p_{t} and logit ⁡ q t \operatorname{logit}q_{t} do not.
+ For comparison, a fixed ratio cap k t ≤ C k_{t}\leq C corresponds through Equation 2 to
+ | 
+ exp ⁡ ( ε t ) ≤ 1 + C − 1 1 − p t , \exp(\varepsilon_{t})\leq 1+\frac{C-1}{1-p_{t}}, | 
+ | 
+ (5) | 
+ whose displacement threshold becomes increasingly permissive as confidence
+grows. CIS instead applies the same upper displacement threshold at every
+confidence level, and the confidence-dependent cap in Equation 4 follows automatically from the mapping back to
+ratio space.
+ Theorem 3.3 (Informal) . 
+ Assume ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b and that the contributions of different tokens are
+independent. Then for any finite λ ≥ 0 \lambda\geq 0 , 
+ | 
+ 𝔼 ​ ‖ G ^ f λ − G 0 ‖ 2 2 ≤ \displaystyle\mathbb{E}\big\|\widehat{G}_{f_{\lambda}}-G_{0}\big\|_{2}^{2}\;\leq | 
+ b 2 ​ ( 𝔼 ⁡ [ ( 1 − p t ) ​ ( e ε t − 1 − λ ) + ] ) 2 + b 2 n ​ 𝔼 ​ [ ( p t + ( 1 − p t ) ​ min ⁡ { e ε t , 1 + λ } ) 2 ] . \displaystyle b^{2}\Big(\mathbb{E}\big[(1-p_{t})(e^{\varepsilon_{t}}-1-\lambda)_{+}\big]\Big)^{2}+\frac{b^{2}}{n}\,\mathbb{E}\Big[\big(p_{t}+(1-p_{t})\min\{e^{\varepsilon_{t}},1+\lambda\}\big)^{2}\Big]. | 
+ | 
+ (6) | 
+ Compared with Equation 3 , the unbounded second moment
+ 𝔼 ⁡ [ e 2 ​ ε t ] \mathbb{E}[e^{2\varepsilon_{t}}] is replaced by
+ 𝔼 ⁡ [ min ⁡ ( e ε t , 1 + λ ) 2 ] ≤ ( 1 + λ ) 2 \mathbb{E}\big[\min(e^{\varepsilon_{t}},1+\lambda)^{2}\big]\leq(1+\lambda)^{2} ,
+at the price of a bias from the truncated excess; λ \lambda controls this
+trade-off, and λ → ∞ \lambda\to\infty recovers exact correction. Any cap with a
+finite maximum admits a similar bound, so the advantage of CIS over a
+fixed ratio cap lies not in this bound but in where the bias falls:
+CIS spreads the truncation bias more evenly across confidence levels and
+attains a lower overall bias ( Section 4.3 ).
+ Algorithm 1 Calibrated importance sampling (CIS) 
+ 1: 
+ ℓ m train \ell^{\mathrm{train}}_{m} , ℓ m infer \ell^{\mathrm{infer}}_{m} , ℓ m ′ \ell^{\prime}_{m} for
+the n n tokens of the batch; threshold λ \lambda ; floor κ \kappa 
+ 2: 
+ for m = 1 , … , n m=1,\dots,n do 
+ 3: 
+    p m ← exp ⁡ ( ℓ m train ) p_{m}\leftarrow\exp(\ell^{\mathrm{train}}_{m}) ,
+ 4: 
+    k m ← exp ⁡ ( ℓ m train − ℓ m infer ) k_{m}\leftarrow\exp(\ell^{\mathrm{train}}_{m}-\ell^{\mathrm{infer}}_{m}) 
+ 5: 
+    φ m ← max ⁡ ( 1 − p m , κ ) \varphi_{m}\leftarrow\max(1-p_{m},\,\kappa) 
+ 6: 
+    f m ← min ⁡ { k m ,  1 + λ ​ φ m } f_{m}\leftarrow\min\big\{k_{m},\;1+\lambda\varphi_{m}\big\} 
+ 7: 
+ return G ^ CIS = 1 n ​ ∑ m = 1 n stopgrad ⁡ ( f m ) ​ ℓ m ′ \widehat{G}_{\mathrm{CIS}}=\frac{1}{n}\sum_{m=1}^{n}\operatorname{stopgrad}(f_{m})\,\ell^{\prime}_{m} 
+ Algorithm.
+ We treat λ \lambda as a hyperparameter; Section 4.4 shows
+that every positive threshold outperforms the uncorrected run. Applying
+ Equation 4 in practice raises one issue: as 1 − p t 1-p_{t} becomes very
+small, the cap 1 + λ ⁡ ( 1 − p t ) 1+\lambda(1-p_{t}) approaches one and becomes narrower than the
+storage resolution of the log-probabilities. The truncated tokens then have
+ | log ⁡ k t | |\log k_{t}| at the level of that resolution, so the truncation acts on
+rounding error rather than on the mismatch; without a remedy, the average
+accuracy drops from 34.78 34.78 to 29.02 29.02 ( Section 4.3 ). We therefore floor 1 − p t 1-p_{t} at the storage
+resolution κ = 5 × 10 − 3 \kappa=5\times 10^{-3} , replacing it by
+ φ t = max ⁡ ( 1 − p t , κ ) \varphi_{t}=\max(1-p_{t},\kappa) , which gives Algorithm 1 . For tokens with
+ 1 − p t ≥ κ 1-p_{t}\geq\kappa , Algorithm 1 applies exactly the displacement threshold
+ exp ⁡ ( ε t ) ≤ 1 + λ \exp(\varepsilon_{t})\leq 1+\lambda ; below the floor, the threshold becomes
+ e ε t ≤ 1 + λ ​ κ / ( 1 − p t ) e^{\varepsilon_{t}}\leq 1+\lambda\kappa/(1-p_{t}) , which is looser. The correction adds
+one elementwise pass and no forward or backward computation. The
+inference-side log-probability must be the raw value recorded at the sampling
+step, and the weight must be detached.
+ 4 Experiments
+ We organize the experiments around three questions.
+ RQ1 : Does CIS improve held-out performance over existing
+training–inference mismatch corrections?
+ RQ2 : Why does CIS work, and which design choices matter?
+ RQ3 : How sensitive is CIS to its hyperparameters?
+Section 4.1 describes the shared setup.
+Implementation details, training dynamics, additional diagnostics, and
+out-of-domain evaluations are provided in Appendices C and D .
+ 4.1 Setup
+ We evaluate RLVR on three MoE models:
+Qwen1.5-MoE-A2.7B-Chat ( Qwen Team, 2024 ) ,
+DeepSeek-V2-Lite ( DeepSeek-AI, 2024 ) , and
+Qwen3-30B-A3B ( Qwen Team, 2025 ) .
+All models are trained on GSM8K ( Cobbe et al., 2021 ) and evaluated with
+greedy pass@1 on five mathematical reasoning benchmarks:
+GSM8K ( Cobbe et al., 2021 ) ,
+MATH500 ( Hendrycks et al., 2021 ; Lightman et al., 2024 ) ,
+SVAMP ( Patel et al., 2021 ) ,
+Minerva-Math ( Lewkowycz et al., 2022 ) ,
+and OlympiadBench ( He et al., 2024 ) .
+All methods share the same training recipe and code
+path and differ only in how they handle the training–inference mismatch.
+Unless stated otherwise, we report mean and standard deviation over three
+training seeds.
+We group the baselines by where they act:
+ token-level (Exact Ratio ( Yao et al., 2025 ; Liu et al., 2025 ) ,
+TIS ( Yao et al., 2025 ) ,
+IcePop ( Zhao et al., 2025 ; Ling Team and Inclusion AI, 2025 ) , and
+KPop † ( Guo et al., 2026 ; Ling Team, 2026 ) ),
+ sequence-level (Seq-TIS and Seq-MIS ( Liu et al., 2025 ) ,
+and GSPO ( Zheng et al., 2025b ) ), and
+ numerical (FP16 ( Qi et al., 2025 ) ).
+The baseline “No Correction” provides the uncorrected reference, while CIS
+belongs to the token-level class.
+Full implementation details, hyperparameters, and evaluation protocols are
+given in Appendix C .
+ 4.2 RQ1: Does CIS improve held-out performance?
+ Table 1: Held-out accuracy (%) on five math benchmarks after RL on GSM8K.
+Mean ± \pm standard deviation over three seeds; bold marks the best mean
+per column within each model. 
+ Model | 
+ Method | 
+ GSM8K 
+ | 
+ MATH500 
+ | 
+ SVAMP 
+ | 
+ Minerva 
+ | 
+ Olympiad 
+ | 
+ Avg 
+ | 
+ Qwen1.5-MoE-A2.7B 
+ | 
+ Base model (no RL) | 
+ 55.50 55.50 
+ | 
+ 21.20 21.20 
+ | 
+ 59.00 59.00 
+ | 
+ 4.04 4.04 
+ | 
+ 4.90 4.90 
+ | 
+ 28.93 28.93 
+ | 
+ No correction | 
+ 61.21 ± 1.17 61.21_{\pm 1.17} 
+ | 
+ 21.33 ± 1.40 21.33_{\pm 1.40} 
+ | 
+ 64.33 ± 1.73 64.33_{\pm 1.73} 
+ | 
+ 3.68 ± 1.27 3.68_{\pm 1.27} 
+ | 
+ 4.40 ± 0.45 4.40_{\pm 0.45} 
+ | 
+ 30.99 ± 0.22 30.99_{\pm 0.22} 
+ | 
+ Exact ratio | 
+ 63.18 ± 2.97 63.18_{\pm 2.97} 
+ | 
+ 22.00 ± 1.22 22.00_{\pm 1.22} 
+ | 
+ 67.11 ± 3.75 67.11_{\pm 3.75} 
+ | 
+ 5.51 ± 0.64 5.51_{\pm 0.64} 
+ | 
+ 4.60 ± 0.15 4.60_{\pm 0.15} 
+ | 
+ 32.48 ± 1.21 32.48_{\pm 1.21} 
+ | 
+ KPop † | 
+ 64.80 ± 1.29 64.80_{\pm 1.29} 
+ | 
+ 23.67 ± 1.29 23.67_{\pm 1.29} 
+ | 
+ 68.67 ± 3.71 68.67_{\pm 3.71} 
+ | 
+ 5.15 ± 1.47 5.15_{\pm 1.47} 
+ | 
+ 5.24 ± 0.67 5.24_{\pm 0.67} 
+ | 
+ 33.50 ± 1.04 33.50_{\pm 1.04} 
+ | 
+ IcePop | 
+ 66.16 ± 0.96 66.16_{\pm 0.96} 
+ | 
+ 24.33 ± 1.03 24.33_{\pm 1.03} 
+ | 
+ 69.78 ± 1.02 69.78_{\pm 1.02} 
+ | 
+ 5.51 ± 0.64 5.51_{\pm 0.64} 
+ | 
+ 5.09 ± 1.11 5.09_{\pm 1.11} 
+ | 
+ 34.18 ± 0.55 34.18_{\pm 0.55} 
+ | 
+ TIS | 
+ 61.03 ± 5.11 61.03_{\pm 5.11} 
+ | 
+ 20.73 ± 3.92 20.73_{\pm 3.92} 
+ | 
+ 66.78 ± 5.09 66.78_{\pm 5.09} 
+ | 
+ 4.54 ± 0.76 4.54_{\pm 0.76} 
+ | 
+ 3.91 ± 0.31 3.91_{\pm 0.31} 
+ | 
+ 31.40 ± 2.47 31.40_{\pm 2.47} 
+ | 
+ Seq-TIS | 
+ 65.93 ± 0.19 65.93_{\pm 0.19} 
+ | 
+ 22.93 ± 0.61 22.93_{\pm 0.61} 
+ | 
+ 63.56 ± 1.39 63.56_{\pm 1.39} 
+ | 
+ 3.68 ± 1.60 3.68_{\pm 1.60} 
+ | 
+ 5.29 ± 0.89 5.29_{\pm 0.89} 
+ | 
+ 32.28 ± 0.86 32.28_{\pm 0.86} 
+ | 
+ Seq-MIS | 
+ 60.98 ± 1.50 60.98_{\pm 1.50} 
+ | 
+ 22.07 ± 0.50 22.07_{\pm 0.50} 
+ | 
+ 63.56 ± 1.17 63.56_{\pm 1.17} 
+ | 
+ 4.41 ± 0.64 4.41_{\pm 0.64} 
+ | 
+ 4.75 ± 0.26 4.75_{\pm 0.26} 
+ | 
+ 31.15 ± 0.67 31.15_{\pm 0.67} 
+ | 
+ GSPO | 
+ 60.10 ± 2.77 60.10_{\pm 2.77} 
+ | 
+ 17.47 ± 0.50 17.47_{\pm 0.50} 
+ | 
+ 58.56 ± 7.73 58.56_{\pm 7.73} 
+ | 
+ 5.02 ± 0.56 5.02_{\pm 0.56} 
+ | 
+ 3.36 ± 0.31 3.36_{\pm 0.31} 
+ | 
+ 28.90 ± 1.25 28.90_{\pm 1.25} 
+ | 
+ FP16 | 
+ 60.02 ± 1.16 60.02_{\pm 1.16} 
+ | 
+ 22.67 ± 0.46 22.67_{\pm 0.46} 
+ | 
+ 62.78 ± 1.54 62.78_{\pm 1.54} 
+ | 
+ 5.02 ± 0.21 5.02_{\pm 0.21} 
+ | 
+ 4.60 ± 0.45 4.60_{\pm 0.45} 
+ | 
+ 31.02 ± 0.39 31.02_{\pm 0.39} 
+ | 
+ CIS (ours) | 
+ 67.88 ± 1.64 \mathbf{67.88}_{\pm 1.64} 
+ | 
+ 24.53 ± 1.03 \mathbf{24.53}_{\pm 1.03} 
+ | 
+ 70.22 ± 1.35 \mathbf{70.22}_{\pm 1.35} 
+ | 
+ 5.88 ± 0.64 \mathbf{5.88}_{\pm 0.64} 
+ | 
+ 5.39 ± 0.62 \mathbf{5.39}_{\pm 0.62} 
+ | 
+ 34.78 ± 0.25 \mathbf{34.78}_{\pm 0.25} 
+ | 
+ DeepSeek-V2-Lite 
+ | 
+ Base model (no RL) | 
+ 70.66 70.66 
+ | 
+ 25.40 25.40 
+ | 
+ 67.67 67.67 
+ | 
+ 6.25 6.25 
+ | 
+ 6.08 6.08 
+ | 
+ 35.21 35.21 
+ | 
+ No correction | 
+ 71.06 ± 0.83 71.06_{\pm 0.83} 
+ | 
+ 23.47 ± 0.64 23.47_{\pm 0.64} 
+ | 
+ 70.89 ± 2.91 70.89_{\pm 2.91} 
+ | 
+ 7.23 ± 1.49 7.23_{\pm 1.49} 
+ | 
+ 6.48 ± 0.56 6.48_{\pm 0.56} 
+ | 
+ 35.83 ± 1.08 35.83_{\pm 1.08} 
+ | 
+ Exact ratio | 
+ 71.17 ± 0.27 71.17_{\pm 0.27} 
+ | 
+ 24.67 ± 0.64 24.67_{\pm 0.64} 
+ | 
+ 70.22 ± 1.84 70.22_{\pm 1.84} 
+ | 
+ 6.37 ± 1.49 6.37_{\pm 1.49} 
+ | 
+ 4.95 ± 0.56 4.95_{\pm 0.56} 
+ | 
+ 35.47 ± 0.34 35.47_{\pm 0.34} 
+ | 
+ KPop † | 
+ 71.14 ± 0.59 71.14_{\pm 0.59} 
+ | 
+ 26.33 ± 0.64 26.33_{\pm 0.64} 
+ | 
+ 70.89 ± 2.55 70.89_{\pm 2.55} 
+ | 
+ 6.62 ± 1.10 6.62_{\pm 1.10} 
+ | 
+ 6.13 ± 0.82 6.13_{\pm 0.82} 
+ | 
+ 36.22 ± 0.74 36.22_{\pm 0.74} 
+ | 
+ IcePop | 
+ 72.48 ± 0.69 72.48_{\pm 0.69} 
+ | 
+ 25.60 ± 0.92 25.60_{\pm 0.92} 
+ | 
+ 71.44 ± 1.02 71.44_{\pm 1.02} 
+ | 
+ 7.72 ± 1.60 7.72_{\pm 1.60} 
+ | 
+ 6.43 ± 0.76 6.43_{\pm 0.76} 
+ | 
+ 36.73 ± 0.73 36.73_{\pm 0.73} 
+ | 
+ TIS | 
+ 72.55 ± 0.84 72.55_{\pm 0.84} 
+ | 
+ 24.80 ± 1.00 24.80_{\pm 1.00} 
+ | 
+ 69.33 ± 1.76 69.33_{\pm 1.76} 
+ | 
+ 7.72 ± 0.97 7.72_{\pm 0.97} 
+ | 
+ 5.69 ± 1.12 5.69_{\pm 1.12} 
+ | 
+ 36.02 ± 0.51 36.02_{\pm 0.51} 
+ | 
+ Seq-TIS | 
+ 71.87 ± 0.50 71.87_{\pm 0.50} 
+ | 
+ 24.53 ± 0.70 24.53_{\pm 0.70} 
+ | 
+ 70.89 ± 0.84 70.89_{\pm 0.84} 
+ | 
+ 6.74 ± 1.18 6.74_{\pm 1.18} 
+ | 
+ 5.74 ± 0.45 5.74_{\pm 0.45} 
+ | 
+ 35.95 ± 0.29 35.95_{\pm 0.29} 
+ | 
+ Seq-MIS | 
+ 70.61 ± 0.46 70.61_{\pm 0.46} 
+ | 
+ 25.93 ± 1.01 25.93_{\pm 1.01} 
+ | 
+ 70.78 ± 2.59 70.78_{\pm 2.59} 
+ | 
+ 6.86 ± 0.56 6.86_{\pm 0.56} 
+ | 
+ 6.33 ± 0.45 6.33_{\pm 0.45} 
+ | 
+ 36.10 ± 0.71 36.10_{\pm 0.71} 
+ | 
+ GSPO | 
+ 72.50 ± 0.86 72.50_{\pm 0.86} 
+ | 
+ 25.93 ± 0.70 25.93_{\pm 0.70} 
+ | 
+ 71.33 ± 1.00 71.33_{\pm 1.00} 
+ | 
+ 6.37 ± 1.66 6.37_{\pm 1.66} 
+ | 
+ 6.18 ± 0.52 6.18_{\pm 0.52} 
+ | 
+ 36.47 ± 0.43 36.47_{\pm 0.43} 
+ | 
+ FP16 | 
+ 71.80 ± 0.60 71.80_{\pm 0.60} 
+ | 
+ 24.47 ± 0.70 24.47_{\pm 0.70} 
+ | 
+ 69.89 ± 2.17 69.89_{\pm 2.17} 
+ | 
+ 7.97 ± 1.66 7.97_{\pm 1.66} 
+ | 
+ 6.23 ± 0.68 6.23_{\pm 0.68} 
+ | 
+ 36.07 ± 0.61 36.07_{\pm 0.61} 
+ | 
+ CIS (ours) | 
+ 72.58 ± 0.76 \mathbf{72.58}_{\pm 0.76} 
+ | 
+ 26.47 ± 0.99 \mathbf{26.47}_{\pm 0.99} 
+ | 
+ 71.89 ± 2.04 \mathbf{71.89}_{\pm 2.04} 
+ | 
+ 8.21 ± 1.66 \mathbf{8.21}_{\pm 1.66} 
+ | 
+ 6.68 ± 0.51 \mathbf{6.68}_{\pm 0.51} 
+ | 
+ 37.16 ± 0.73 \mathbf{37.16}_{\pm 0.73} 
+ | 
+ Qwen3-30B-A3B 
+ | 
+ Base model (no RL) | 
+ 95.22 95.22 
+ | 
+ 74.00 74.00 
+ | 
+ 93.33 93.33 
+ | 
+ 31.25 31.25 
+ | 
+ 45.40 45.40 
+ | 
+ 67.84 67.84 
+ | 
+ No correction | 
+ 94.79 ± 0.32 94.79_{\pm 0.32} 
+ | 
+ 72.40 ± 0.72 72.40_{\pm 0.72} 
+ | 
+ 94.56 ± 1.17 94.56_{\pm 1.17} 
+ | 
+ 33.33 ± 0.93 33.33_{\pm 0.93} 
+ | 
+ 46.24 ± 0.52 46.24_{\pm 0.52} 
+ | 
+ 68.26 ± 0.27 68.26_{\pm 0.27} 
+ | 
+ Exact ratio | 
+ 95.35 ± 0.32 95.35_{\pm 0.32} 
+ | 
+ 74.40 ± 0.53 74.40_{\pm 0.53} 
+ | 
+ 93.22 ± 1.07 93.22_{\pm 1.07} 
+ | 
+ 33.33 ± 0.21 33.33_{\pm 0.21} 
+ | 
+ 47.28 ± 1.09 47.28_{\pm 1.09} 
+ | 
+ 68.72 ± 0.30 68.72_{\pm 0.30} 
+ | 
+ KPop † | 
+ 95.40 ± 0.23 95.40_{\pm 0.23} 
+ | 
+ 74.80 ± 0.53 74.80_{\pm 0.53} 
+ | 
+ 94.56 ± 0.69 94.56_{\pm 0.69} 
+ | 
+ 33.21 ± 0.93 33.21_{\pm 0.93} 
+ | 
+ 47.33 ± 0.39 47.33_{\pm 0.39} 
+ | 
+ 69.06 ± 0.29 69.06_{\pm 0.29} 
+ | 
+ IcePop | 
+ 95.43 ± 0.49 95.43_{\pm 0.49} 
+ | 
+ 74.93 ± 0.64 74.93_{\pm 0.64} 
+ | 
+ 94.89 ± 1.17 94.89_{\pm 1.17} 
+ | 
+ 32.11 ± 1.29 32.11_{\pm 1.29} 
+ | 
+ 47.58 ± 0.70 47.58_{\pm 0.70} 
+ | 
+ 68.99 ± 0.51 68.99_{\pm 0.51} 
+ | 
+ TIS | 
+ 95.15 ± 0.20 95.15_{\pm 0.20} 
+ | 
+ 74.80 ± 0.72 74.80_{\pm 0.72} 
+ | 
+ 94.56 ± 0.84 94.56_{\pm 0.84} 
+ | 
+ 33.58 ± 1.18 33.58_{\pm 1.18} 
+ | 
+ 47.63 ± 0.45 47.63_{\pm 0.45} 
+ | 
+ 69.14 ± 0.30 69.14_{\pm 0.30} 
+ | 
+ Seq-TIS | 
+ 95.12 ± 0.16 95.12_{\pm 0.16} 
+ | 
+ 74.67 ± 0.61 74.67_{\pm 0.61} 
+ | 
+ 93.78 ± 1.02 93.78_{\pm 1.02} 
+ | 
+ 33.33 ± 1.29 33.33_{\pm 1.29} 
+ | 
+ 48.07 ± 0.45 48.07_{\pm 0.45} 
+ | 
+ 68.99 ± 0.61 68.99_{\pm 0.61} 
+ | 
+ Seq-MIS | 
+ 95.15 ± 0.35 95.15_{\pm 0.35} 
+ | 
+ 73.93 ± 0.42 73.93_{\pm 0.42} 
+ | 
+ 93.89 ± 1.02 93.89_{\pm 1.02} 
+ | 
+ 32.72 ± 1.10 32.72_{\pm 1.10} 
+ | 
+ 47.73 ± 0.45 47.73_{\pm 0.45} 
+ | 
+ 68.68 ± 0.15 68.68_{\pm 0.15} 
+ | 
+ GSPO | 
+ 95.55 ± 0.24 95.55_{\pm 0.24} 
+ | 
+ 74.47 ± 0.50 74.47_{\pm 0.50} 
+ | 
+ 94.44 ± 1.17 94.44_{\pm 1.17} 
+ | 
+ 33.21 ± 0.56 33.21_{\pm 0.56} 
+ | 
+ 48.47 ± 0.73 48.47_{\pm 0.73} 
+ | 
+ 69.23 ± 0.16 69.23_{\pm 0.16} 
+ | 
+ FP16 | 
+ 94.79 ± 0.27 94.79_{\pm 0.27} 
+ | 
+ 74.13 ± 0.42 74.13_{\pm 0.42} 
+ | 
+ 93.67 ± 1.45 93.67_{\pm 1.45} 
+ | 
+ 33.21 ± 1.66 33.21_{\pm 1.66} 
+ | 
+ 46.83 ± 0.91 46.83_{\pm 0.91} 
+ | 
+ 68.53 ± 0.31 68.53_{\pm 0.31} 
+ | 
+ CIS (ours) | 
+ 95.60 ± 0.33 \mathbf{95.60}_{\pm 0.33} 
+ | 
+ 75.00 ± 0.92 \mathbf{75.00}_{\pm 0.92} 
+ | 
+ 95.89 ± 1.50 \mathbf{95.89}_{\pm 1.50} 
+ | 
+ 34.31 ± 0.56 \mathbf{34.31}_{\pm 0.56} 
+ | 
+ 48.62 ± 0.45 \mathbf{48.62}_{\pm 0.45} 
+ | 
+ 69.88 ± 0.55 \mathbf{69.88}_{\pm 0.55} 
+ | 
+ Table 1 compares all methods under the same training recipe.
+CIS achieves the highest five-benchmark average on all three MoE models.
+On Qwen1.5-MoE-A2.7B, the average improves from 30.99 30.99 without correction
+to 34.78 34.78 with CIS, compared with 32.48 32.48 , 33.50 33.50 , 34.18 34.18 , and 31.40 31.40 
+for Exact Ratio, KPop † , IcePop, and TIS, respectively.
+CIS also achieves 67.88 67.88 on the training-domain GSM8K benchmark.
+Its margins over IcePop on several transfer benchmarks are smaller than the
+across-seed variation, however, so we do not interpret these individual
+columns as statistically separated.
+ The same trend holds across model families.
+CIS reaches an average of 37.16 37.16 on DeepSeek-V2-Lite and 69.88 69.88 on
+Qwen3-30B-A3B, the highest mean in both blocks.
+For Qwen3-30B-A3B, the base model already reaches 95.22 % 95.22\% on GSM8K,
+leaving little headroom on the training task; the five-benchmark average
+therefore provides the more informative comparison.
+ Methods that act at other levels show different limitations.
+Sequence-level correction accumulates mismatch over the whole response,
+while changing numerical precision reduces but does not eliminate the
+residual engine discrepancy.
+We also evaluate the Qwen1.5-MoE checkpoints on three knowledge and two
+code benchmarks that the RL stage never uses ( Table 13 in
+ Section D.3 ); CIS has the highest pooled accuracy there, but
+its margin over IcePop is within the seed spread. Training dynamics and
+computational cost are reported in Sections D.1 and D.4 .
+ 4.3 RQ2: Why does CIS work, and which design choices matter?
+ Figure 5: 
+ (a) Share of Var ⁡ ( k t ) \mathrm{Var}(k_{t}) on each side of log ⁡ k t = 0 \log k_{t}=0 .
+ (b) Truncation bias across confidence bins.
+ (c) Overall bias relative to exact correction.
+ (d) Added variance relative to no correction.
+ Table 2: Ablations of CIS on Qwen1.5-MoE-A2.7B. Held-out accuracy (%) under the protocol of Table 1 ; mean ± \pm standard deviation over three seeds. 
+ Variant | 
+ GSM8K 
+ | 
+ MATH500 
+ | 
+ SVAMP 
+ | 
+ Minerva 
+ | 
+ Olympiad 
+ | 
+ Avg 
+ | 
+ CIS ( λ = 2.3 \lambda=2.3 , κ = 5 × 10 − 3 \kappa=5\times 10^{-3} ) | 
+ 67.88 ± 1.64 \mathbf{67.88}_{\pm 1.64} 
+ | 
+ 24.53 ± 1.03 \mathbf{24.53}_{\pm 1.03} 
+ | 
+ 70.22 ± 1.35 \mathbf{70.22}_{\pm 1.35} 
+ | 
+ 5.88 ± 0.64 \mathbf{5.88}_{\pm 0.64} 
+ | 
+ 5.39 ± 0.62 \mathbf{5.39}_{\pm 0.62} 
+ | 
+ 34.78 ± 0.25 \mathbf{34.78}_{\pm 0.25} 
+ | 
+ Fixed ratio cap (TIS, C = 2 C=2 ) | 
+ 61.03 ± 5.11 61.03_{\pm 5.11} 
+ | 
+ 20.73 ± 3.92 20.73_{\pm 3.92} 
+ | 
+ 66.78 ± 5.09 66.78_{\pm 5.09} 
+ | 
+ 4.54 ± 0.76 4.54_{\pm 0.76} 
+ | 
+ 3.91 ± 0.31 3.91_{\pm 0.31} 
+ | 
+ 31.40 ± 2.47 31.40_{\pm 2.47} 
+ | 
+ Fixed ratio cap (TIS, C = 1.13 C=1.13 ) | 
+ 14.99 ± 17.04 14.99_{\pm 17.04} 
+ | 
+ 5.73 ± 5.06 5.73_{\pm 5.06} 
+ | 
+ 20.33 ± 20.53 20.33_{\pm 20.53} 
+ | 
+ 1.47 ± 1.91 1.47_{\pm 1.91} 
+ | 
+ 1.88 ± 1.86 1.88_{\pm 1.86} 
+ | 
+ 8.88 ± 9.24 8.88_{\pm 9.24} 
+ | 
+ Two-sided band ( w t ≥ ( 1 + p t ) / 2 w_{t}\geq(1+p_{t})/2 ) | 
+ 5.31 ± 0.33 5.31_{\pm 0.33} 
+ | 
+ 4.40 ± 0.40 4.40_{\pm 0.40} 
+ | 
+ 15.67 ± 1.86 15.67_{\pm 1.86} 
+ | 
+ 1.47 ± 0.64 1.47_{\pm 0.64} 
+ | 
+ 3.21 ± 0.45 3.21_{\pm 0.45} 
+ | 
+ 6.01 ± 0.50 6.01_{\pm 0.50} 
+ | 
+ Raised floor ( κ = 0.1 \kappa=0.1 ) | 
+ 64.42 ± 1.67 64.42_{\pm 1.67} 
+ | 
+ 22.60 ± 4.06 22.60_{\pm 4.06} 
+ | 
+ 64.44 ± 1.95 64.44_{\pm 1.95} 
+ | 
+ 4.90 ± 0.85 4.90_{\pm 0.85} 
+ | 
+ 4.50 ± 0.37 4.50_{\pm 0.37} 
+ | 
+ 32.17 ± 1.28 32.17_{\pm 1.28} 
+ | 
+ No floor ( κ = 0 \kappa=0 ) | 
+ 55.62 ± 2.69 55.62_{\pm 2.69} 
+ | 
+ 20.87 ± 1.10 20.87_{\pm 1.10} 
+ | 
+ 59.78 ± 2.83 59.78_{\pm 2.83} 
+ | 
+ 5.88 ± 0.37 5.88_{\pm 0.37} 
+ | 
+ 2.97 ± 0.15 2.97_{\pm 0.15} 
+ | 
+ 29.02 ± 1.43 29.02_{\pm 1.43} 
+ | 
+ Why truncate only the upper side? 
+The variance is almost entirely carried by the upper tail:
+on the sampled tokens of the trained MoE at step 86,
+tokens with k t > 1 k_{t}>1 account for 99.96 % 99.96\% of Var ⁡ ( k t ) \mathrm{Var}(k_{t}) ,
+whereas those with k t < 1 k_{t}<1 contribute only 0.04 % 0.04\% 
+( Figure 5 a).
+The training ablation shows the same asymmetry:
+additionally lifting small displacements to e ε t ≥ 1 / 2 e^{\varepsilon_{t}}\geq 1/2 ,
+which gives the two-sided weight
+ w t = max ⁡ { min ⁡ { k t , 1 + λ ​ φ t } , ( 1 + p t ) / 2 } w_{t}=\max\{\min\{k_{t},1+\lambda\varphi_{t}\},\,(1+p_{t})/2\} , reduces the
+average accuracy from 34.78 34.78 to 6.01 6.01 (see Table 2 ); CIS applies
+no lower threshold.
+CIS therefore truncates only the upper side and leaves the bounded lower
+side unchanged.
+ Figure 6: (a) Threshold λ \lambda and (b) floor κ \kappa on Qwen1.5-MoE-A2.7B. 
+ Why truncate at the source of the mismatch? 
+TIS caps the final importance ratio k t k_{t} , whereas CIS caps the displacement
+factor e ε t e^{\varepsilon_{t}} , through which the mismatch enters the ratio, at the
+common threshold 1 + λ 1+\lambda of
+ Equation 4 and then maps this bound back to ratio space.
+Because k t k_{t} mixes the displacement with token confidence, a fixed cap on
+ k t k_{t} does not represent the same amount of mismatch across tokens.
+In contrast, truncating e ε t e^{\varepsilon_{t}} applies the same criterion to the
+mismatch itself, while the induced ratio bound automatically adapts to
+confidence.
+ This changes where truncation bias is spent.
+ Figure 5 b bins the sampled tokens of the base MoE by p t p_{t} and
+reports 𝔼 ⁡ [ k t − f t ] \mathbb{E}[k_{t}-f_{t}] in each bin.
+TIS concentrates its bias on low-confidence tokens: below p t = 0.3 p_{t}=0.3 , the bias
+induced by CIS is less than half that of TIS, whereas CIS takes on more bias
+at high confidence.
+CIS truncates more high-confidence tokens by count, but each such truncation
+removes little weight, because the factor 1 − p t 1-p_{t} compresses the ratio on
+these tokens; more than half of the weight that CIS removes comes from tokens
+with p t < 0.9 p_{t}<0.9 . The two operators differ most in gradient bias at low
+confidence ( Figure 5 b): for p t < 0.565 p_{t}<0.565 , the cap of CIS is looser
+than C = 2 C=2 , so CIS removes less weight there than TIS.
+ Section D.5 shows the tokens that each operator acts on
+during training.
+ Figure 5 c,d correspond to the two terms of the mean-squared error in
+ Theorem 3.3 : the bias ‖ 𝔼 ⁡ [ ( f t − k t ) ​ ℓ t ′ ] ‖ 2 \|\mathbb{E}[(f_{t}-k_{t})\ell^{\prime}_{t}]\|_{2} and the increase
+in the variance of f t ​ ℓ t ′ f_{t}\ell^{\prime}_{t} over f t ≡ 1 f_{t}\equiv 1 .
+We compute both with the gradient of log ⁡ p t \log p_{t} with respect to the logits in
+place of ℓ t ′ \ell^{\prime}_{t} , taking expectations over the next-token distributions at
+the 6,000 base-model positions of Section A.1 ; exact correction is
+unbiased for the conditional target G 0 G_{0} and therefore has zero bias.
+Although CIS truncates more probability mass overall, its overall bias is
+lower ( 0.0064 0.0064 versus 0.0078 0.0078 for TIS), while its added variance remains
+well below that of Exact Ratio ( 0.0081 0.0081 versus 0.0132 0.0132 ).
+Thus, truncating at the mismatch source changes where the clipping
+occurs, not only how much is clipped, which yields a more favorable
+bias–variance trade-off.
+ Ablations. 
+ Table 2 supports these design choices.
+Replacing the confidence-dependent CIS boundary with the fixed TIS cap
+reduces the average accuracy from 34.78 34.78 to 31.40 31.40 , while the two-sided band
+drops it to 6.01 6.01 , below the base model ( 28.93 28.93 ).
+With C = 1.13 C=1.13 , which truncates a similar share of tokens as CIS ( 4.3 % 4.3\% versus
+ 3.8 % 3.8\% , Table 10 ), the average falls to 8.88 8.88 : the same amount
+of truncation harms training when a fixed cap places it on low-confidence tokens.
+TIS with C = 1 C=1 , which is CIS with λ = 0 \lambda=0 , collapses as well ( Figure 6 a).
+The numerical floor is also necessary: removing it lowers the average
+accuracy to 29.02 29.02 , and raising it to κ = 0.1 \kappa=0.1 lowers it to 32.17 32.17 .
+Together, the results support the three components of CIS:
+upper-side truncation, truncation at the mismatch source, and a small
+numerical floor.
+ 4.4 RQ3: How sensitive is CIS to its hyperparameters?
+ Figure 6 varies one hyperparameter of CIS at a time on
+Qwen1.5-MoE-A2.7B, with the other fixed at its default; per-benchmark results
+are in Section D.2 .
+For the threshold, λ = 0 \lambda=0 truncates every ratio above one, which is TIS
+with C = 1 C=1 , and the average accuracy collapses to 8.75 8.75 . Every positive
+threshold stays above the uncorrected run ( 30.99 30.99 ), and the default
+ λ = 2.3 \lambda=2.3 gives the highest accuracy ( 34.78 34.78 ). The other positive
+thresholds lie between 32.53 32.53 and 34.08 34.08 , so once λ > 0 \lambda>0 the average
+changes by at most 2.3 2.3 points.
+For the floor, accuracy peaks near the storage resolution of
+the log-probabilities, where κ = 5 × 10 − 3 \kappa=5\times 10^{-3} and κ = 2 × 10 − 2 \kappa=2\times 10^{-2} 
+reach 34.78 34.78 and 34.39 34.39 . A smaller floor of 10 − 3 10^{-3} loses 1.4 1.4 points, and
+removing the floor lowers the average to 29.02 29.02 , below the uncorrected run,
+which is consistent with the cap then truncating rounding error on
+high-confidence tokens. Raising the floor to 0.1 0.1 lowers the average to
+ 32.17 32.17 ; the cap then stays constant on every token with 1 − p t < 0.1 1-p_{t}<0.1 and no
+longer tightens with confidence.
+ 5 Related Work
+ RL frameworks separate rollout generation from gradient computation to
+improve efficiency ( Sheng et al., 2025 ; Hu et al., 2025 ; Fu et al., 2025 ) ,
+but numerical differences between the engines can yield different token
+probabilities even with identical parameters ( Yao et al., 2025 ) .
+In mixture-of-experts models, small perturbations can change discrete
+expert selections and amplify the
+mismatch ( Ma et al., 2025 ; Ling Team and Inclusion AI, 2025 ) .
+FP16 reduces numerical error ( Qi et al., 2025 ) , routing replay aligns
+expert selections ( Ma et al., 2025 ) , and adaptive learning-rate decay
+stabilizes optimization ( Zhang et al., 2026b ) .
+These interventions address different mechanisms: improved precision
+does not enforce routing agreement, while replay requires routing traces.
+RSPO instead addresses routing drift across policy
+updates ( Zhang et al., 2026a ) , which differs from engine mismatch at
+identical parameters.
+CIS complements these approaches by controlling the gradient impact of
+residual mismatch without changing numerical precision or recording routes.
+ Importance sampling corrects distribution mismatch, while truncation
+trades bias for reduced
+variance ( Ionides, 2008 ; Espeholt et al., 2018 ) .
+For engine mismatch, TIS caps token ratios ( Yao et al., 2025 ) ,
+and IcePop masks ratios outside a fixed
+interval ( Zhao et al., 2025 ; Ling Team and Inclusion AI, 2025 ) .
+These thresholds do not account for how token confidence affects the
+ratio, whereas KPop addresses this heterogeneity through binary-KL
+masking ( Guo et al., 2026 ; Ling Team, 2026 ) .
+Sequence-level alternatives truncate response
+weights ( Liu et al., 2025 ) , optimize sequence
+ratios ( Zheng et al., 2025b ) , or reject responses that violate a
+trust-region criterion ( Li et al., 2025 ) .
+CISPO also clips weights to preserve token contributions, but uses fixed
+bounds on the current-to-old policy ratio ( Chen et al., 2025 ) .
+CIS instead derives its training–inference ratio cap from a common
+threshold on log-odds displacement.
+The resulting cap tightens with token confidence, and it keeps a nonzero
+weight for truncated tokens.
+ 6 Conclusion
+ We study training–inference mismatch in RLVR and show that it enters the
+importance ratio as an additive displacement in log-odds, whose distribution
+varies far less with token confidence than the ratio and has a heavy upper tail on
+mixture-of-experts models. Based on this characterization, calibrated
+importance sampling (CIS) truncates the upper tail of the displacement at a
+single threshold, which yields a ratio cap that tightens as token confidence
+increases. We prove that CIS bounds the second moment that makes exact
+correction unstable, at the cost of a bias controlled by the truncated excess. On three mixture-of-experts models, CIS achieves the highest
+five-benchmark average among the evaluated
+baselines. Diagnostic analyses show that CIS places less truncation bias on
+low-confidence tokens than TIS, and that truncating the
+lower side reduces held-out accuracy.
+ References
+ Austin et al. (2021) 
+ J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le, and C. Sutton 
+ Program synthesis with large language models .
+ arXiv .
+ External Links: Document ,
+ Link 
+ Cited by: Table 9 .
+ Chen et al. (2025) 
+ A. Chen, A. Li, B. Gong, B. Jiang, B. Fei, B. Yang, B. Shan, C. Yu, C. Wang, C. Zhu, et al. 
+ Minimax-m1: scaling test-time compute efficiently with lightning attention .
+ arXiv preprint arXiv:2506.13585 .
+ Cited by: §5 .
+ Chen et al. (2021) 
+ M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. d. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba 
+ Evaluating large language models trained on code .
+ arXiv .
+ External Links: Document ,
+ Link 
+ Cited by: Table 9 .
+ Clark et al. (2018) 
+ P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord 
+ Think you have solved question answering? try arc, the ai2 reasoning challenge .
+ arXiv .
+ External Links: Document ,
+ Link 
+ Cited by: Table 9 .
+ Cobbe et al. (2021) 
+ K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman 
+ Training verifiers to solve math word problems .
+ arXiv .
+ External Links: Document ,
+ Link 
+ Cited by: §C.2 ,
+ Table 9 ,
+ §4.1 .
+ DeepSeek-AI (2024) 
+ DeepSeek-AI 
+ DeepSeek-V2: a strong, economical, and efficient mixture-of-experts language model .
+ CoRR abs/2405.04434 .
+ External Links: Document ,
+ Link 
+ Cited by: §C.1 ,
+ §4.1 .
+ DeepSeek-AI (2025) 
+ DeepSeek-AI 
+ DeepSeek-R1: incentivizing reasoning capability in LLMs via reinforcement learning .
+ CoRR abs/2501.12948 .
+ External Links: Document ,
+ Link 
+ Cited by: §1 .
+ Espeholt et al. (2018) 
+ L. Espeholt, H. Soyer, R. Munos, K. Simonyan, V. Mnih, T. Ward, Y. Doron, V. Firoiu, T. Harley, I. Dunning, S. Legg, and K. Kavukcuoglu 
+ IMPALA: scalable distributed deep-RL with importance weighted actor-learner architectures .
+ In Proceedings of the 35th International Conference on Machine Learning ,
+ Cited by: §5 .
+ Fu et al. (2025) 
+ W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang, T. Yu, B. Yuan, and Y. Wu 
+ AReaL: a large-scale asynchronous reinforcement learning system for language reasoning .
+ arXiv preprint arXiv:2505.24298 .
+ Cited by: §1 ,
+ §5 .
+ Guo et al. (2026) 
+ J. Guo, Y. Sun, Z. Huang, Z. Wang, Z. Wen, Z. Zhang, J. Zhou, and S. Kok 
+ KPop: taming training–inference mismatch in reinforcement learning with adaptive masking regions .
+ Note: Technical blog 
+ External Links: Link 
+ Cited by: §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ He et al. (2024) 
+ C. He, R. Luo, Y. Bai, S. Hu, Z. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, J. Liu, L. Qi, Z. Liu, and M. Sun 
+ OlympiadBench: a challenging benchmark for promoting AGI with olympiad-level bilingual multimodal scientific problems .
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , L. Ku, A. Martins, and V. Srikumar (Eds.) ,
+ Bangkok, Thailand , pp. 3828–3850 .
+ External Links: Link ,
+ Document 
+ Cited by: Table 9 ,
+ §4.1 .
+ Hendrycks et al. (2020) 
+ D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt 
+ Measuring massive multitask language understanding .
+ arXiv preprint arXiv:2009.03300 .
+ Cited by: Table 9 .
+ Hendrycks et al. (2021) 
+ D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt 
+ Measuring mathematical problem solving with the math dataset .
+ arXiv preprint arXiv:2103.03874 .
+ Cited by: Table 9 ,
+ §4.1 .
+ Hu et al. (2025) 
+ J. Hu, X. Wu, W. Shen, J. K. Liu, W. Wang, S. Jiang, H. Wang, H. Chen, B. Chen, W. Fang, Xianyu, Y. Cao, H. Xu, and Y. Liu 
+ OpenRLHF: a ray-based easy-to-use, scalable and high-performance RLHF framework .
+ In Proceedings of the 2025 Conference on Empirical Methods
+in Natural Language Processing: System Demonstrations , I. Habernal, P. Schulam, and J. Tiedemann (Eds.) ,
+ Suzhou, China , pp. 656–666 .
+ External Links: Link ,
+ Document ,
+ ISBN 979-8-89176-334-0 
+ Cited by: §1 ,
+ §5 .
+ Ionides (2008) 
+ E. L. Ionides 
+ Truncated importance sampling .
+ Journal of Computational and Graphical Statistics 17 ( 2 ), pp. 295–311 .
+ Cited by: §1 ,
+ §5 .
+ Lewkowycz et al. (2022) 
+ A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, Y. Wu, B. Neyshabur, G. Gur-Ari, and V. Misra 
+ Solving quantitative reasoning problems with language models .
+ arXiv .
+ External Links: Document ,
+ Link 
+ Cited by: Table 9 ,
+ §4.1 .
+ Li et al. (2025) 
+ Y. Li, J. Liu, J. Xu, Y. Tong, Z. Li, Q. Liu, and B. Wang 
+ Trust region masking for long-horizon llm reinforcement learning .
+ arXiv preprint arXiv:2512.23075 .
+ Cited by: §5 .
+ Lightman et al. (2024) 
+ H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe 
+ Let’s verify step by step .
+ In International Conference on Learning Representations ,
+ Vol. 2024 , pp. 39578–39601 .
+ Cited by: Table 9 ,
+ §4.1 .
+ Ling Team and Inclusion AI (2025) 
+ Ling Team and Inclusion AI 
+ Every step evolves: scaling reinforcement learning for trillion-scale thinking model .
+ CoRR abs/2510.18855 .
+ External Links: Document ,
+ Link 
+ Cited by: §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 ,
+ §5 .
+ Ling Team (2026) 
+ Ling Team 
+ Ling and ring 2.6 technical report: efficient and instant agentic intelligence at trillion-parameter scale .
+ CoRR abs/2606.15079 .
+ External Links: Document ,
+ Link 
+ Cited by: §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ Liu et al. (2025) 
+ J. Liu, Y. Li, Y. Fu, J. Wang, Q. Liu, and Y. Shen 
+ When speed kills stability: demystifying RL collapse from the training-inference mismatch .
+ External Links: Link 
+ Cited by: §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ Ma et al. (2025) 
+ W. Ma, H. Zhang, L. Zhao, Y. Song, Y. Wang, Z. Sui, and F. Luo 
+ Stabilizing MoE reinforcement learning by aligning training and inference routers .
+ arXiv preprint arXiv:2510.11370 .
+ Note: Introduces Rollout Routing Replay (R3) 
+ Cited by: §D.6 ,
+ §1 ,
+ §1 ,
+ §2.2 ,
+ §5 .
+ Metelli et al. (2018) 
+ A. M. Metelli, M. Papini, F. Faccio, and M. Restelli 
+ Policy optimization via importance sampling .
+ In Advances in Neural Information Processing Systems , S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (Eds.) ,
+ Vol. 31 , pp. .
+ External Links: Link 
+ Cited by: §1 .
+ Mihaylov et al. (2018) 
+ T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal 
+ Can a suit of armor conduct electricity? a new dataset for open book question answering .
+ In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , E. Riloff, D. Chiang, J. Hockenmaier, and J. Tsujii (Eds.) ,
+ Brussels, Belgium , pp. 2381–2391 .
+ External Links: Link ,
+ Document 
+ Cited by: Table 9 .
+ Patel et al. (2021) 
+ A. Patel, S. Bhattamishra, and N. Goyal 
+ Are NLP models really able to solve simple math word problems? .
+ In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , K. Toutanova, A. Rumshisky, L. Zettlemoyer, D. Hakkani-Tur, I. Beltagy, S. Bethard, R. Cotterell, T. Chakraborty, and Y. Zhou (Eds.) ,
+ Online , pp. 2080–2094 .
+ External Links: Link ,
+ Document 
+ Cited by: Table 9 ,
+ §4.1 .
+ Qi et al. (2025) 
+ P. Qi, Z. Liu, X. Zhou, T. Pang, C. Du, W. S. Lee, and M. Lin 
+ Defeating the training-inference mismatch via FP16 .
+ arXiv preprint arXiv:2510.26788 .
+ Cited by: §D.6 ,
+ §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ Qwen Team (2024) 
+ Qwen Team 
+ Qwen1.5-MoE: matching 7B model performance with 1/3 activated parameters .
+ Note: https://qwenlm.github.io/blog/qwen-moe/ 
+ Cited by: §4.1 .
+ Qwen Team (2025) 
+ Qwen Team 
+ Qwen3 technical report .
+ CoRR abs/2505.09388 .
+ External Links: Document ,
+ Link 
+ Cited by: §C.1 ,
+ §4.1 .
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo 
+ DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+ arXiv preprint arXiv:2402.03300 .
+ Note: Introduces GRPO 
+ Cited by: Figure 1 ,
+ §1 .
+ Sheng et al. (2025) 
+ G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu 
+ HybridFlow: a flexible and efficient RLHF framework .
+ In Proceedings of the Twentieth European Conference
+on Computer Systems ,
+ pp. 1279–1297 .
+ External Links: Link 
+ Cited by: §1 ,
+ §5 .
+ Yao et al. (2025) 
+ F. Yao, L. Liu, D. Zhang, C. Dong, J. Shang, and J. Gao 
+ Your efficient rl framework secretly brings you off-policy rl training .
+ External Links: Link 
+ Cited by: §1 ,
+ §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 ,
+ §5 .
+ Yu et al. (2025) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, j. liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, R. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, Y. Wu, and M. Wang 
+ DAPO: an open-source llm reinforcement learning system at scale .
+ In Advances in Neural Information Processing Systems , D. Belgrave, C. Zhang, H. Lin, R. Pascanu, P. Koniusz, M. Ghassemi, and N. Chen (Eds.) ,
+ Vol. 38, Main Conference , pp. 113222–113244 .
+ External Links: Document ,
+ Link 
+ Cited by: §C.2 ,
+ §1 .
+ Zhang et al. (2026a) 
+ D. Zhang, X. Wu, S. Huang, L. Jiang, Y. Hao, L. Dong, Z. Chi, Z. Sui, and F. Wei 
+ Towards stable and effective reinforcement learning for mixture-of-experts .
+ In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+ pp. 25446–25457 .
+ Cited by: §5 .
+ Zhang et al. (2026b) 
+ Y. Zhang, Y. Li, J. Liu, J. Xu, Z. Li, Q. Liu, and H. Li 
+ Beyond precision: training-inference mismatch is an optimization problem and simple lr scheduling fixes it .
+ arXiv preprint arXiv:2602.01826 .
+ Cited by: §5 .
+ Zhao et al. (2025) 
+ X. Zhao, Y. Liu, K. Xu, J. Guo, Z. Wang, Y. Sun, X. Kong, Q. Cao, L. Jiang, Z. Wen, Z. Zhang, and J. Zhou 
+ Small leak can sink a great ship—boost RL training on MoE with IcePop! .
+ Note: Technical blog 
+ External Links: Link 
+ Cited by: §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ Zheng et al. (2025a) 
+ C. Zheng, K. Dang, B. Yu, M. Li, H. Jiang, J. Lin, Y. Liu, H. Lin, C. Wu, F. Hu, A. Yang, J. Zhou, and J. Lin 
+ Stabilizing reinforcement learning with LLMs: formulation and practices .
+ CoRR abs/2512.01374 .
+ External Links: Document ,
+ Link 
+ Cited by: §1 ,
+ §1 .
+ Zheng et al. (2025b) 
+ C. Zheng, S. Liu, M. Li, X. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, et al. 
+ Group sequence policy optimization .
+ arXiv preprint arXiv:2507.18071 .
+ Cited by: §1 ,
+ §1 ,
+ §2.2 ,
+ §4.1 ,
+ §5 .
+ Appendix
+ Appendix A Empirical Anatomy of the Training–Inference Mismatch
+ Section 3.1 derives the ratio–displacement identity
+ | 
+ k t = p t + ( 1 − p t ) ​ e ε t , k_{t}=p_{t}+(1-p_{t})e^{\varepsilon_{t}}, | 
+ | 
+ starting from the per-logit perturbation between the training and inference
+engines. This appendix provides the measurements behind the empirical claims
+used in that derivation and in Sections 3.2 and 3.3 .
+We first describe how the per-logit perturbation is measured
+( Section A.1 ). We then compare dense and mixture-of-experts
+architectures ( Section A.2 ), examine how routing disagreement is
+associated with the MoE tail ( Sections A.3 and A.4 ), and
+verify that the heavy tail propagates from the per-logit perturbation
+ δ j \delta_{j} to the log-odds displacement ε t \varepsilon_{t} 
+( Section A.5 ). Finally, we examine the dependence of
+ ε t \varepsilon_{t} on token confidence ( Section A.6 ) and show how
+the extreme upper tail dominates the second moment that enters the
+importance-sampling variance bound ( Section A.7 ).
+ A.1 Measurement protocol
+ Models and engine configuration.
+ We measure Qwen1.5-MoE-A2.7B-Chat and use Qwen1.5-14B-Chat as a dense
+control. All measurements in
+ Sections A.2 , A.3 and A.4 use the base
+checkpoints, with the training and inference engines loading exactly the same
+model parameters. The training engine is HuggingFace Transformers in bf16
+with teacher forcing. The inference engine is vLLM 0.26 in bf16 with
+eager execution and prefix caching disabled.
+ Per-logit measurement.
+ For each model, we randomly select 250 trajectories from the first shard of
+the static mismatch measurement ( Section C.4 ) and sample 24 generation positions from each
+trajectory, giving 6,000 positions. At each position, the training engine
+records its top-256 pre-softmax logits together with the corresponding
+log-normalizer. On the inference side, we truncate the trajectory immediately
+before that position and generate one token with logprobs=256 , which
+returns the next-token distribution at the same prefix. The trajectory and
+position identifiers align on all sampled positions. The two top-256 sets
+have mean intersection rates of 0.991 0.991 on the dense model and 0.949 0.949 on the
+MoE, yielding 1,521,672 1{,}521{,}672 and 1,457,477 1{,}457{,}477 paired logit entries,
+respectively. The complete measurement takes approximately eight minutes on
+four A100 GPUs.
+ Gauge convention.
+ In Section 3.1 , the training-engine logits are written as
+ 𝐳 \mathbf{z} and the inference-engine logits as 𝐳 + 𝜹 \mathbf{z}+\bm{\delta} .
+Raw logits are defined only up to an additive constant at each position.
+Because the displacement depends only on logit contrasts, adding the same
+constant to every coordinate of 𝜹 \bm{\delta} does not change
+ ε t \varepsilon_{t} . We therefore use the normalized log-probability gauge
+ | 
+ δ j = log ⁡ π infer ​ ( j ∣ h t ) − log ⁡ π train ​ ( j ∣ h t ) . \delta_{j}=\log\pi_{\mathrm{infer}}(j\mid h_{t})-\log\pi_{\mathrm{train}}(j\mid h_{t}). | 
+ | 
+ (7) | 
+ This differs from the raw logit perturbation only by a position-specific
+constant and is uniquely determined by the two observed distributions. Under
+this convention,
+ | 
+ ε t = logit ⁡ p t − logit ⁡ q t , \varepsilon_{t}=\operatorname{logit}p_{t}-\operatorname{logit}q_{t}, | 
+ | 
+ consistent with the convention used throughout the main text.
+ For the MoE model, the same measurement additionally records the top-4 expert
+identities selected by each engine at every layer, together with the routing
+margin between the fourth- and fifth-ranked experts. These records are used in
+ Sections A.3 and A.4 .
+ A.2 Dense versus MoE: a heavy tail in the per-logit perturbation
+ Figure 7: Complementary cumulative distributions of (a) | δ j | |\delta_{j}| and (b) | ε t | |\varepsilon_{t}| on the dense and MoE models. 
+ Table 3: Per-logit perturbation δ j \delta_{j} on the base checkpoints. 
+ | 
+ Dense | 
+ MoE | 
+ Paired entries | 
+ 1,521,672 1{,}521{,}672 | 
+ 1,457,477 1{,}457{,}477 | 
+ Median | 
+ 0.0000 0.0000 | 
+ 0.0000 0.0000 | 
+ Mean | 
+ − 0.0013 -0.0013 | 
+ − 0.0036 -0.0036 | 
+ | mean | / sd |\mathrm{mean}|/\mathrm{sd} | 
+ 1.6 % 1.6\% | 
+ 1.1 % 1.1\% | 
+ sd ⁡ ( δ j ) \mathrm{sd}(\delta_{j}) | 
+ 0.079 0.079 | 
+ 0.336 0.336 | 
+ q 99 ​ ( | δ j | ) q_{99}(|\delta_{j}|) | 
+ 0.250 0.250 | 
+ 1.144 1.144 | 
+ q 99.9 ​ ( | δ j | ) q_{99.9}(|\delta_{j}|) | 
+ 0.312 0.312 | 
+ 2.062 2.062 | 
+ Pr ⁡ ( | δ j | > 0.5 ) \Pr(|\delta_{j}|>0.5) | 
+ 0.003 % 0.003\% | 
+ 9.87 % 9.87\% | 
+ Pr ⁡ ( | δ j | > 1 ) \Pr(|\delta_{j}|>1) | 
+ 0.0001 % 0.0001\% | 
+ 1.52 % 1.52\% | 
+ max j ⁡ | δ j | \max_{j}|\delta_{j}| | 
+ 1.00 1.00 | 
+ 10.47 10.47 | 
+ Range | 
+ [ − 1.00 ,  0.91 ] [-1.00,\,0.91] | 
+ [ − 7.70 ,  10.47 ] [-7.70,\,10.47] | 
+ Figure 7 (a) compares the full tails. The two distributions are
+both concentrated near zero, but they separate sharply beyond the central
+region. On the dense control, only 0.003 % 0.003\% of paired entries satisfy
+ | δ j | > 0.5 |\delta_{j}|>0.5 , and essentially none exceed one. On the MoE, 9.87 % 9.87\% 
+exceed 0.5 0.5 , 1.52 % 1.52\% exceed one, and the largest perturbation reaches
+ 10.47 10.47 . The standard deviation is correspondingly 0.336 0.336 , more than four
+times the dense value of 0.079 0.079 .
+ The difference is especially visible in the extreme quantiles:
+ q 99.9 ​ ( | δ j | ) q_{99.9}(|\delta_{j}|) grows from 0.312 0.312 on the dense model to 2.062 2.062 on
+the MoE. Thus the distinction between the two architectures is not merely a
+uniform rescaling of a narrow numerical perturbation; the MoE develops a
+pronounced tail that is absent from the dense control.
+ A.3 Routing disagreement and the MoE tail
+ To examine the source of this additional tail, we use the expert identities
+recorded on the MoE. For each sampled position, let N flip N_{\mathrm{flip}} 
+denote the number of layers, out of 24, for which the two engines select
+different top-4 expert sets. Routing disagreement is common: the mean is
+ 3.69 3.69 disagreeing layers per position, and only 8.0 % 8.0\% of positions select
+the same expert set at all 24 layers.
+ Figure 8: (a) Standard deviation of δ j \delta_{j} and (b) share of entries with | δ j | > 0.5 |\delta_{j}|>0.5 against the number of layers with routing disagreement; dashed: dense model. 
+ Table 4: Per-logit perturbation against the number of layers N flip N_{\mathrm{flip}} with routing disagreement. 
+ N flip N_{\mathrm{flip}} | 
+ 0 0 | 
+ 1 1 | 
+ 2 2 – 3 3 | 
+ 4 4 – 6 6 | 
+ ≥ 7 \geq 7 | 
+ Positions (%) | 
+ 8.0 8.0 | 
+ 15.6 15.6 | 
+ 33.1 33.1 | 
+ 28.2 28.2 | 
+ 15.1 15.1 | 
+ sd ⁡ ( δ j ) \mathrm{sd}(\delta_{j}) | 
+ 0.240 0.240 | 
+ 0.269 0.269 | 
+ 0.307 0.307 | 
+ 0.352 0.352 | 
+ 0.457 0.457 | 
+ Pr ⁡ ( | δ j | > 0.5 ) \Pr(|\delta_{j}|>0.5) (%) | 
+ 4.51 4.51 | 
+ 5.42 5.42 | 
+ 7.85 7.85 | 
+ 11.86 11.86 | 
+ 18.48 18.48 | 
+ Pr ⁡ ( | δ j | > 1 ) \Pr(|\delta_{j}|>1) (%) | 
+ 0.47 0.47 | 
+ 0.68 0.68 | 
+ 1.11 1.11 | 
+ 1.65 1.65 | 
+ 3.73 3.73 | 
+ The two direct perturbation statistics show a clear monotonic trend. From
+positions with no routing disagreement to positions with disagreement in at
+least seven layers, sd ⁡ ( δ j ) \mathrm{sd}(\delta_{j}) increases from 0.240 0.240 to
+ 0.457 0.457 , a 90 % 90\% increase, while
+ Pr ⁡ ( | δ j | > 0.5 ) \Pr(|\delta_{j}|>0.5) rises from 4.51 % 4.51\% to 18.48 % 18.48\% , a factor of 4.1 4.1 .
+ The conclusion is unchanged under a stricter definition that counts only
+routing differences whose gate margin exceeds 10 − 3 10^{-3} . Under this
+“hard-flip” definition, the conditional standard deviations across the five
+bins are
+ 0.284 0.284 , 0.320 0.320 , 0.405 0.405 , 0.460 0.460 , and 0.597 0.597 , while
+ Pr ⁡ ( | δ j | > 0.5 ) \Pr(|\delta_{j}|>0.5) increases from
+ 6.40 % 6.40\% to 9.42 % 9.42\% , 14.72 % 14.72\% , 20.52 % 20.52\% , and 30.78 % 30.78\% .
+The association between routing disagreement and the width of the
+perturbation is therefore robust to the definition of a route change.
+ A.4 Conditional routing control
+ The previous analysis is observational: it stratifies positions by their
+realized routing disagreement rather than intervening on the routes.
+To separate the architecture-level difference from the additional effect
+associated with routing disagreement at the current position, we compare the
+dense control with MoE positions whose expert selections either agree at all
+24 layers or disagree in at least one layer.
+ Table 5: Per-logit perturbation on the dense model and on MoE positions with and without routing disagreement. 
+ | 
+ sd ⁡ ( δ j ) \mathrm{sd}(\delta_{j}) | 
+ Pr ⁡ ( | δ j | > 0.5 ) \Pr(|\delta_{j}|>0.5) | 
+ Pr ⁡ ( | δ j | > 1 ) \Pr(|\delta_{j}|>1) | 
+ Dense | 
+ 0.079 0.079 | 
+ 0.003 % 0.003\% | 
+ 0.0001 % 0.0001\% | 
+ MoE, N flip = 0 N_{\mathrm{flip}}=0 | 
+ 0.240 0.240 | 
+ 4.51 % 4.51\% | 
+ 0.47 % 0.47\% | 
+ MoE, N flip > 0 N_{\mathrm{flip}}>0 | 
+ 0.343 0.343 | 
+ 10.35 % 10.35\% | 
+ 1.62 % 1.62\% | 
+ Routing disagreement at the current position therefore does not explain the
+entire architecture gap. Even at N flip = 0 N_{\mathrm{flip}}=0 , the MoE standard
+deviation is approximately three times that of the dense control.
+One possible source is routing disagreement earlier in the prefix, whose
+effect propagates through the hidden state to subsequent positions. The
+existing measurement cannot isolate this contribution: only 0.25 % 0.25\% of
+tokens have prefixes for which the two engines agree on every recorded route.
+ Accordingly, we interpret the results of
+ Figures 8 and 5 as evidence that
+ routing disagreement is a major amplifier of the tail, rather than the
+sole source of the mismatch . A causal decomposition would require an
+intervention that explicitly replays identical routes across the two engines,
+which is outside the scope of the measurements reported here.
+ A.5 The heavy tail propagates from δ \delta to ε \varepsilon 
+ The identity in Section 3.1 maps the full perturbation vector
+ 𝜹 \bm{\delta} into the sampled token’s log-odds displacement,
+ | 
+ ε t = logit ⁡ p t − logit ⁡ q t . \varepsilon_{t}=\operatorname{logit}p_{t}-\operatorname{logit}q_{t}. | 
+ | 
+ We next verify that the architectural difference observed directly in
+ 𝜹 \bm{\delta} remains visible after this mapping.
+ Unlike Section A.2 , which uses the 6,000-position logit dump,
+this analysis uses the full static sampled-token measurement: approximately
+ 12.4 12.4 M dense tokens and 12.3 12.3 M MoE tokens on the corresponding base
+checkpoints. We compute ε t \varepsilon_{t} whenever neither p t p_{t} nor q t q_{t} 
+rounds exactly to one.
+ Table 6: Log-odds displacement ε t \varepsilon_{t} in the static measurement on the base checkpoints. 
+ | 
+ Dense | 
+ MoE | 
+ Sampled tokens | 
+ 12,389,115 12{,}389{,}115 | 
+ 12,293,115 12{,}293{,}115 | 
+ Finite ε t \varepsilon_{t} | 
+ 11,934,872 11{,}934{,}872 | 
+ 12,226,092 12{,}226{,}092 | 
+ Finite fraction | 
+ 96.3 % 96.3\% | 
+ 99.5 % 99.5\% | 
+ sd ⁡ ( ε t ) \mathrm{sd}(\varepsilon_{t}) | 
+ 0.0997 0.0997 | 
+ 0.2947 0.2947 | 
+ q 95 ​ ( | ε t | ) q_{95}(|\varepsilon_{t}|) | 
+ 0.165 0.165 | 
+ 0.599 0.599 | 
+ q 99 ​ ( | ε t | ) q_{99}(|\varepsilon_{t}|) | 
+ 0.336 0.336 | 
+ 1.055 1.055 | 
+ q 99.9 ​ ( | ε t | ) q_{99.9}(|\varepsilon_{t}|) | 
+ 0.693 0.693 | 
+ 2.044 2.044 | 
+ Pr ⁡ ( | ε t | > 1 ) \Pr(|\varepsilon_{t}|>1) | 
+ 0.028 % 0.028\% | 
+ 1.13 % 1.13\% | 
+ Pr ⁡ ( | ε t | > 2 ) \Pr(|\varepsilon_{t}|>2) | 
+ 0 0 | 
+ 0.106 % 0.106\% | 
+ max t ⁡ | ε t | \max_{t}|\varepsilon_{t}| | 
+ 2.13 2.13 | 
+ 19.38 19.38 | 
+ As shown in Figure 7 (b), the dense displacement decays rapidly,
+whereas the MoE retains a long tail. The 99.9 99.9 th percentile of
+ | ε t | |\varepsilon_{t}| is 0.693 0.693 on the dense model and 2.044 2.044 on the MoE, and
+the maximum increases from 2.13 2.13 to 19.38 19.38 . Thus the heavy tail identified
+at the level of individual logit perturbations survives the nonlinear mapping
+to the log-odds displacement that enters the importance ratio.
+ The dense CCDF contains several visible steps at high confidence. These arise
+from the discrete numerical structure of probabilities close to one and
+should not be interpreted as a continuous heavy tail. They do not affect the
+qualitative dense–MoE separation.
+ A.6 The displacement is approximately invariant to token confidence
+ The central design choice of CIS is to place a common upper threshold in the
+displacement coordinate rather than a common threshold on the importance
+ratio. This choice is motivated by the empirical observation that the scale of
+ ε t \varepsilon_{t} changes only mildly with token confidence, whereas the scale
+of the ratio deviation changes by orders of magnitude.
+ We examine the static base-MoE measurement and retain tokens with
+ 1 − p t ≥ 10 − 7 1-p_{t}\geq 10^{-7} . Figure 9 (a) plots conditional quantiles
+of ε t \varepsilon_{t} against token uncertainty 1 − p t 1-p_{t} .
+ Figure 9 (b) compares the median absolute deviation of
+ ε t \varepsilon_{t} with that of log ⁡ k t \log k_{t} .
+ Figure 9: (a) Median, 10–90% and 1–99% intervals of ε t \varepsilon_{t} and (b) median absolute deviation of ε t \varepsilon_{t} and log ⁡ k t \log k_{t} against 1 − p t 1-p_{t} on the base MoE. 
+ Table 7: Conditional statistics of ε t \varepsilon_{t} and log ⁡ k t \log k_{t} on the base MoE. 
+ p t p_{t} range | 
+ Tokens | 
+ Med. ε \varepsilon | 
+ MAD ( ε ) (\varepsilon) | 
+ q 05 ​ ( ε ) q_{05}(\varepsilon) | 
+ q 95 ​ ( ε ) q_{95}(\varepsilon) | 
+ MAD ( log ⁡ k ) (\log k) | 
+ p t < 0.5 p_{t}<0.5 | 
+ 2,824,021 2{,}824{,}021 | 
+ − 0.0059 -0.0059 | 
+ 0.156 0.156 | 
+ − 0.375 -0.375 | 
+ 0.259 0.259 | 
+ 1.15 × 10 − 1 1.15{\times}10^{-1} | 
+ 0.5 0.5 – 0.9 0.9 | 
+ 2,337,554 2{,}337{,}554 | 
+ − 0.0011 -0.0011 | 
+ 0.175 0.175 | 
+ − 0.376 -0.376 | 
+ 0.355 0.355 | 
+ 3.96 × 10 − 2 3.96{\times}10^{-2} | 
+ 0.9 0.9 – 0.99 0.99 | 
+ 1,951,864 1{,}951{,}864 | 
+ − 0.0005 -0.0005 | 
+ 0.186 0.186 | 
+ − 0.453 -0.453 | 
+ 0.420 0.420 | 
+ 6.43 × 10 − 3 6.43{\times}10^{-3} | 
+ 0.99 0.99 – 0.999 0.999 | 
+ 1,549,915 1{,}549{,}915 | 
+ − 0.0019 -0.0019 | 
+ 0.203 0.203 | 
+ − 0.492 -0.492 | 
+ 0.472 0.472 | 
+ 6.78 × 10 − 4 6.78{\times}10^{-4} | 
+ p t > 0.999 p_{t}>0.999 | 
+ 3,562,738 3{,}562{,}738 | 
+ 0.0000 0.0000 | 
+ 0.237 0.237 | 
+ − 0.504 -0.504 | 
+ 0.501 0.501 | 
+ 9.90 × 10 − 6 9.90{\times}10^{-6} | 
+ Across 18 logarithmic bins spanning
+ 1 − p t ≈ 1.5 × 10 − 6 1-p_{t}\approx 1.5\times 10^{-6} to 0.68 0.68 , the conditional median of
+ ε t \varepsilon_{t} remains within 0.006 0.006 of zero. Its median absolute deviation
+ranges from 0.157 0.157 to 0.288 0.288 , a factor of only 1.8 1.8 . The displacement
+distribution is therefore not exactly confidence-invariant, and in
+particular becomes moderately wider toward the highest-confidence region,
+but the variation is small relative to the ratio coordinate.
+ Indeed, over the same bins, the median absolute deviation of log ⁡ k t \log k_{t} 
+changes by approximately 3.2 × 10 5 3.2\times 10^{5} . This contrast follows the mapping
+ | 
+ k t − 1 = ( 1 − p t ) ​ ( e ε t − 1 ) : k_{t}-1=(1-p_{t})(e^{\varepsilon_{t}}-1): | 
+ | 
+ the same displacement is strongly compressed in ratio space when
+ p t → 1 p_{t}\rightarrow 1 . Consistently, on a random subsample of 300,000 tokens the
+Spearman correlation between ε t \varepsilon_{t} and log ⁡ ( 1 − p t ) \log(1-p_{t}) is only
+ − 0.028 -0.028 .
+Below the floor κ \kappa of Algorithm 1 , ε t \varepsilon_{t} is dominated by the
+storage resolution of the log-probabilities, so we repeat the comparison on the
+ 7.6 7.6 M tokens with 1 − p t ≥ κ 1-p_{t}\geq\kappa , which is the region where CIS acts. There,
+the median absolute deviation of ε t \varepsilon_{t} varies by a factor of 1.3 1.3 
+across 18 18 logarithmic bins, whereas that of log ⁡ k t \log k_{t} varies by a factor of
+ 115 115 , and the Spearman correlation between | ε t | |\varepsilon_{t}| and
+ log ⁡ ( 1 − p t ) \log(1-p_{t}) is − 0.12 -0.12 .
+The same contrast holds between the SGLang and FSDP engines used for training.
+On the tokens with zero staleness in the training logs of the exact-ratio, TIS,
+and IcePop runs, the median absolute deviation of ε t \varepsilon_{t} varies by a
+factor of 1.8 1.8 to 2.7 2.7 across confidence bins above the floor, against 150 150 
+to 220 220 for log ⁡ k t \log k_{t} .
+These measurements support treating the displacement scale as approximately
+common across confidence levels, while making explicit that the approximation
+is not exact.
+ A.7 The second moment on the trained model
+ Figure 3 and Figure 5 a use the MoE after RL training. We load
+the step-86 checkpoint of a CIS run on Qwen1.5-MoE-A2.7B into both engines of
+ Section A.1 and score the 510,915 510{,}915 sampled tokens of 4,000 4{,}000 
+GSM8K rollouts, which are generated by the step-57 snapshot of the same run.
+The training engine scores them with teacher forcing and the inference engine
+by prefill, so the two engines score the same tokens with the same
+parameters. We compute ε t \varepsilon_{t} whenever neither p t p_{t} nor q t q_{t} rounds
+to one, as in Section A.5 . The moments of the displacement grow
+quickly with the order: 𝔼 ⁡ [ e ε t ] = 7.07 \mathbb{E}[e^{\varepsilon_{t}}]=7.07 and
+ 𝔼 ⁡ [ e 2 ​ ε t ] = 9.2 × 10 6 \mathbb{E}[e^{2\varepsilon_{t}}]=9.2\times 10^{6} , and the weighted moments
+ 𝔼 ⁡ [ ( ( 1 − p t ) ​ e ε t ) α ] \mathbb{E}[((1-p_{t})e^{\varepsilon_{t}})^{\alpha}] that enter Theorem 3.2 are
+ 0.16 0.16 at α = 1 \alpha=1 and 22.9 22.9 at α = 2 \alpha=2 . The second moment is therefore
+determined by the upper tail of ε t \varepsilon_{t} , which is the regime in which
+the truncated moment of CIS differs from exact correction.
+ Appendix B Proofs and Technical Details for Section 3 
+ B.1 Preliminaries and Key Lemmas
+ In this subsection, we establish the minimal set of identities required for the
+proofs of Theorems 3.2 and 3.3 . We adopt all notation and settings
+from Section 3 . Throughout, p t , q t ∈ ( 0 , 1 ) p_{t},q_{t}\in(0,1) , k t := p t / q t k_{t}:=p_{t}/q_{t} , and the
+ n n token contributions ( k j , p j , ℓ j ′ ) j = 1 n (k_{j},p_{j},\ell^{\prime}_{j})_{j=1}^{n} are independent copies of
+ ( k t , p t , ℓ t ′ ) (k_{t},p_{t},\ell^{\prime}_{t}) . For a measurable correction rule
+ f : ( 0 , ∞ ) × ( 0 , 1 ) → [ 0 , ∞ ) f:(0,\infty)\times(0,1)\to[0,\infty) , define
+ | 
+ G ^ f := 1 n ​ ∑ j = 1 n f ⁡ ( k j , p j ) ​ ℓ j ′ , G 0 := 𝔼 ⁡ [ k t ​ ℓ t ′ ] . \widehat{G}_{f}:=\frac{1}{n}\sum_{j=1}^{n}f(k_{j},p_{j})\,\ell^{\prime}_{j},\qquad G_{0}:=\mathbb{E}[k_{t}\ell^{\prime}_{t}]. | 
+ | 
+ (8) | 
+ For λ ≥ 0 \lambda\geq 0 , we write
+ | 
+ f λ ​ ( k , p ) := min ⁡ { k ,  1 + λ ⁡ ( 1 − p ) } . f_{\lambda}(k,p):=\min\big\{k,\;1+\lambda(1-p)\big\}. | 
+ | 
+ (9) | 
+ Lemma B.1 (From logit perturbation to log-odds displacement) . 
+ Fix the sampled token y = y t y=y_{t} . Let
+ p t = softmax ⁡ ( z ) y p_{t}=\operatorname{softmax}(z)_{y} and
+ q t = softmax ⁡ ( z + δ ) y q_{t}=\operatorname{softmax}(z+\delta)_{y} , and define 
+ | 
+ w j := e z j ∑ j ′ ≠ y e z j ′ , j ≠ y , w_{j}:=\frac{e^{z_{j}}}{\sum_{j^{\prime}\neq y}e^{z_{j^{\prime}}}},\qquad j\neq y, | 
+ | 
+ (10) | 
+ and 
+ | 
+ ε t := − δ y + log ∑ j ≠ y w j e δ j . \varepsilon_{t}:=-\delta_{y}+\log\sum_{j\neq y}w_{j}e^{\delta_{j}}. | 
+ | 
+ (11) | 
+ Then 
+ | 
+ k t = p t q t = p t + ( 1 − p t ) ​ e ε t , k t − 1 = ( 1 − p t ) ​ ( e ε t − 1 ) , k_{t}=\frac{p_{t}}{q_{t}}=p_{t}+(1-p_{t})e^{\varepsilon_{t}},\qquad k_{t}-1=(1-p_{t})\big(e^{\varepsilon_{t}}-1\big), | 
+ | 
+ (12) | 
+ and 
+ | 
+ ε t = log ⁡ p t 1 − p t − log ⁡ q t 1 − q t . \varepsilon_{t}=\log\frac{p_{t}}{1-p_{t}}-\log\frac{q_{t}}{1-q_{t}}. | 
+ | 
+ (13) | 
+ Proof.
+ Substituting the two softmax probabilities directly into the ratio gives 
+ | 
+ k t \displaystyle k_{t} | 
+ = e z y / ( e z y + ∑ j ≠ y e z j ) e z y + δ y / ( e z y + δ y + ∑ j ≠ y e z j + δ j ) \displaystyle=\frac{e^{z_{y}}/\big(e^{z_{y}}+\sum_{j\neq y}e^{z_{j}}\big)}{e^{z_{y}+\delta_{y}}/\big(e^{z_{y}+\delta_{y}}+\sum_{j\neq y}e^{z_{j}+\delta_{j}}\big)} | 
+ | 
+ | 
+ | 
+ = ( a ) ​ e z y e z y + ∑ j ≠ y e z j ​ ( 1 + e − δ y ​ ∑ j ≠ y e z j + δ j e z y ) \displaystyle\overset{(a)}{=}\frac{e^{z_{y}}}{e^{z_{y}}+\sum_{j\neq y}e^{z_{j}}}\left(1+e^{-\delta_{y}}\frac{\sum_{j\neq y}e^{z_{j}+\delta_{j}}}{e^{z_{y}}}\right) | 
+ | 
+ | 
+ | 
+ = ( b ) ​ p t + e − δ y ​ ∑ j ≠ y e z j + δ j e z y + ∑ j ≠ y e z j \displaystyle\overset{(b)}{=}p_{t}+\frac{e^{-\delta_{y}}\sum_{j\neq y}e^{z_{j}+\delta_{j}}}{e^{z_{y}}+\sum_{j\neq y}e^{z_{j}}} | 
+ | 
+ | 
+ | 
+ = ( c ) ​ p t + ∑ j ≠ y e z j e z y + ∑ j ≠ y e z j ​ e − δ y ​ ∑ j ≠ y e z j ∑ j ′ ≠ y e z j ′ ​ e δ j \displaystyle\overset{(c)}{=}p_{t}+\frac{\sum_{j\neq y}e^{z_{j}}}{e^{z_{y}}+\sum_{j\neq y}e^{z_{j}}}e^{-\delta_{y}}\sum_{j\neq y}\frac{e^{z_{j}}}{\sum_{j^{\prime}\neq y}e^{z_{j^{\prime}}}}e^{\delta_{j}} | 
+ | 
+ | 
+ | 
+ = ( d ) ​ p t + ( 1 − p t ) ​ e − δ y ​ ∑ j ≠ y w j ​ e δ j \displaystyle\overset{(d)}{=}p_{t}+(1-p_{t})e^{-\delta_{y}}\sum_{j\neq y}w_{j}e^{\delta_{j}} | 
+ | 
+ | 
+ | 
+ = ( e ) ​ p t + ( 1 − p t ) ​ e ε t , \displaystyle\overset{(e)}{=}p_{t}+(1-p_{t})e^{\varepsilon_{t}}, | 
+ | 
+ where (a) expands the reciprocal of the inference probability, (b) uses the
+definition of p t p_{t} , (c) multiplies and divides by
+ ∑ j ≠ y e z j \sum_{j\neq y}e^{z_{j}} , (d) uses 
+ | 
+ 1 − p t = ∑ j ≠ y e z j e z y + ∑ j ≠ y e z j 1-p_{t}=\frac{\sum_{j\neq y}e^{z_{j}}}{e^{z_{y}}+\sum_{j\neq y}e^{z_{j}}} | 
+ | 
+ together with ( 10 ), and (e) substitutes
+( 11 ). Subtracting
+ 1 = p t + ( 1 − p t ) 1=p_{t}+(1-p_{t}) immediately gives 
+ | 
+ k t − 1 \displaystyle k_{t}-1 | 
+ = p t + ( 1 − p t ) ​ e ε t − p t − ( 1 − p t ) \displaystyle=p_{t}+(1-p_{t})e^{\varepsilon_{t}}-p_{t}-(1-p_{t}) | 
+ | 
+ | 
+ | 
+ = ( 1 − p t ) ​ ( e ε t − 1 ) . \displaystyle=(1-p_{t})\big(e^{\varepsilon_{t}}-1\big). | 
+ | 
+ To obtain the log-odds form, note that 
+ | 
+ q t 1 − q t \displaystyle\frac{q_{t}}{1-q_{t}} | 
+ = e z y + δ y ∑ j ≠ y e z j + δ j \displaystyle=\frac{e^{z_{y}+\delta_{y}}}{\sum_{j\neq y}e^{z_{j}+\delta_{j}}} | 
+ | 
+ | 
+ | 
+ = ( f ) ​ e z y ∑ j ≠ y e z j ​ e δ y ∑ j ≠ y w j ​ e δ j \displaystyle\overset{(f)}{=}\frac{e^{z_{y}}}{\sum_{j\neq y}e^{z_{j}}}\frac{e^{\delta_{y}}}{\sum_{j\neq y}w_{j}e^{\delta_{j}}} | 
+ | 
+ | 
+ | 
+ = ( g ) ​ p t 1 − p t ​ e δ y ∑ j ≠ y w j ​ e δ j , \displaystyle\overset{(g)}{=}\frac{p_{t}}{1-p_{t}}\frac{e^{\delta_{y}}}{\sum_{j\neq y}w_{j}e^{\delta_{j}}}, | 
+ | 
+ where (f) factors
+ ∑ j ≠ y e z j + δ j \sum_{j\neq y}e^{z_{j}+\delta_{j}} using ( 10 ), and (g) uses
+ p t / ( 1 − p t ) = e z y / ∑ j ≠ y e z j p_{t}/(1-p_{t})=e^{z_{y}}/\sum_{j\neq y}e^{z_{j}} . Taking logarithms and
+rearranging yields 
+ | 
+ log ⁡ p t 1 − p t − log ⁡ q t 1 − q t \displaystyle\log\frac{p_{t}}{1-p_{t}}-\log\frac{q_{t}}{1-q_{t}} | 
+ = − δ y + log ∑ j ≠ y w j e δ j \displaystyle=-\delta_{y}+\log\sum_{j\neq y}w_{j}e^{\delta_{j}} | 
+ | 
+ | 
+ | 
+ = ε t , \displaystyle=\varepsilon_{t}, | 
+ | 
+ which proves ( 13 ).
+∎ 
+ Lemma B.2 (Displacement-coordinate truncation identities) . 
+ Let p ∈ ( 0 , 1 ) p\in(0,1) and suppose k = p + ( 1 − p ) ​ e ε k=p+(1-p)e^{\varepsilon} . Then 
+ | 
+ ε ≤ 0 ⟹ p < k ≤ 1 , ε > 0 ⟹ k > 1 . \varepsilon\leq 0\quad\Longrightarrow\quad p<k\leq 1,\qquad\varepsilon>0\quad\Longrightarrow\quad k>1. | 
+ | 
+ (14) | 
+ Moreover, for every λ ≥ 0 \lambda\geq 0 , 
+ | 
+ f λ ​ ( k , p ) = p + ( 1 − p ) ​ min ⁡ { e ε ,  1 + λ } , f_{\lambda}(k,p)=p+(1-p)\min\big\{e^{\varepsilon},\,1+\lambda\big\}, | 
+ | 
+ (15) | 
+ and 
+ | 
+ k − f λ ​ ( k , p ) = ( 1 − p ) ​ ( e ε − 1 − λ ) + . k-f_{\lambda}(k,p)=(1-p)\big(e^{\varepsilon}-1-\lambda\big)_{+}. | 
+ | 
+ (16) | 
+ Finally, for any fixed ratio cap C ≥ 1 C\geq 1 , 
+ | 
+ k ≤ C ⟺ e ε ≤ 1 + C − 1 1 − p . k\leq C\quad\Longleftrightarrow\quad e^{\varepsilon}\leq 1+\frac{C-1}{1-p}. | 
+ | 
+ (17) | 
+ Proof.
+ If ε ≤ 0 \varepsilon\leq 0 , then e ε ≤ 1 e^{\varepsilon}\leq 1 , so 
+ | 
+ k \displaystyle k | 
+ = p + ( 1 − p ) ​ e ε \displaystyle=p+(1-p)e^{\varepsilon} | 
+ | 
+ | 
+ | 
+ ≤ p + ( 1 − p ) = 1 . \displaystyle\leq p+(1-p)=1. | 
+ | 
+ At the same time,
+ k − p = ( 1 − p ) ​ e ε > 0 k-p=(1-p)e^{\varepsilon}>0 , and hence p < k ≤ 1 p<k\leq 1 . If
+ ε > 0 \varepsilon>0 , then 
+ | 
+ k − 1 = ( 1 − p ) ​ ( e ε − 1 ) > 0 , k-1=(1-p)(e^{\varepsilon}-1)>0, | 
+ | 
+ which gives k > 1 k>1 . 
+ For the clipped ratio, 
+ | 
+ f λ ​ ( k , p ) \displaystyle f_{\lambda}(k,p) | 
+ = ( a ) ​ min ⁡ { p + ( 1 − p ) ​ e ε ,  1 + λ ⁡ ( 1 − p ) } \displaystyle\overset{(a)}{=}\min\Big\{p+(1-p)e^{\varepsilon},\;1+\lambda(1-p)\Big\} | 
+ | 
+ | 
+ | 
+ = ( b ) ​ min ⁡ { p + ( 1 − p ) ​ e ε , p + ( 1 − p ) ​ ( 1 + λ ) } \displaystyle\overset{(b)}{=}\min\Big\{p+(1-p)e^{\varepsilon},\;p+(1-p)(1+\lambda)\Big\} | 
+ | 
+ | 
+ | 
+ = ( c ) ​ p + ( 1 − p ) ​ min ⁡ { e ε , 1 + λ } , \displaystyle\overset{(c)}{=}p+(1-p)\min\big\{e^{\varepsilon},1+\lambda\big\}, | 
+ | 
+ where (a) substitutes the ratio–displacement identity, (b) rewrites
+ 1 + λ ⁡ ( 1 − p ) = p + ( 1 − p ) ​ ( 1 + λ ) 1+\lambda(1-p)=p+(1-p)(1+\lambda) , and (c) uses that
+ x ↦ p + ( 1 − p ) ​ x x\mapsto p+(1-p)x is strictly increasing. Therefore 
+ | 
+ k − f λ ​ ( k , p ) \displaystyle k-f_{\lambda}(k,p) | 
+ = ( 1 − p ) ​ ( e ε − min ⁡ { e ε , 1 + λ } ) \displaystyle=(1-p)\left(e^{\varepsilon}-\min\{e^{\varepsilon},1+\lambda\}\right) | 
+ | 
+ | 
+ | 
+ = ( 1 − p ) ​ ( e ε − 1 − λ ) + , \displaystyle=(1-p)(e^{\varepsilon}-1-\lambda)_{+}, | 
+ | 
+ using the pointwise identity
+ x − min ⁡ { x , c } = ( x − c ) + x-\min\{x,c\}=(x-c)_{+} . 
+ For a fixed cap C ≥ 1 C\geq 1 , 
+ | 
+ k ≤ C \displaystyle k\leq C | 
+ ⟺ p + ( 1 − p ) ​ e ε ≤ C \displaystyle\Longleftrightarrow p+(1-p)e^{\varepsilon}\leq C | 
+ | 
+ | 
+ | 
+ ⟺ e ε ≤ C − p 1 − p \displaystyle\Longleftrightarrow e^{\varepsilon}\leq\frac{C-p}{1-p} | 
+ | 
+ | 
+ | 
+ ⟺ e ε ≤ 1 + C − 1 1 − p , \displaystyle\Longleftrightarrow e^{\varepsilon}\leq 1+\frac{C-1}{1-p}, | 
+ | 
+ where the last equality follows from
+ C − p = ( 1 − p ) + ( C − 1 ) C-p=(1-p)+(C-1) .
+∎ 
+ Lemma B.3 (Bias–variance decomposition) . 
+ Let f : ( 0 , ∞ ) × ( 0 , 1 ) → [ 0 , ∞ ) f:(0,\infty)\times(0,1)\to[0,\infty) be measurable with
+ 𝔼 ⁡ [ f ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] < ∞ \mathbb{E}[f(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}]<\infty , and abbreviate
+ f t := f ⁡ ( k t , p t ) f_{t}:=f(k_{t},p_{t}) . Then 
+ | 
+ 𝔼 ​ ‖ G ^ f − G 0 ‖ 2 2 \displaystyle\mathbb{E}\big\|\widehat{G}_{f}-G_{0}\big\|_{2}^{2} | 
+ = ‖ 𝔼 ⁡ [ ( f t − k t ) ​ ℓ t ′ ] ‖ 2 2 + 1 n ​ 𝔼 ​ ‖ f t ​ ℓ t ′ − 𝔼 ⁡ [ f t ​ ℓ t ′ ] ‖ 2 2 \displaystyle=\big\|\mathbb{E}\big[(f_{t}-k_{t})\ell^{\prime}_{t}\big]\big\|_{2}^{2}+\frac{1}{n}\mathbb{E}\big\|f_{t}\ell^{\prime}_{t}-\mathbb{E}[f_{t}\ell^{\prime}_{t}]\big\|_{2}^{2} | 
+ | 
+ (18) | 
+ | 
+ | 
+ ≤ ‖ 𝔼 ⁡ [ ( f t − k t ) ​ ℓ t ′ ] ‖ 2 2 + 1 n ​ 𝔼 ​ [ f t 2 ​ ‖ ℓ t ′ ‖ 2 2 ] . \displaystyle\leq\big\|\mathbb{E}\big[(f_{t}-k_{t})\ell^{\prime}_{t}\big]\big\|_{2}^{2}+\frac{1}{n}\mathbb{E}\big[f_{t}^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big]. | 
+ | 
+ (19) | 
+ Proof.
+ Write X j := f ⁡ ( k j , p j ) ​ ℓ j ′ X_{j}:=f(k_{j},p_{j})\ell^{\prime}_{j} and G f := 𝔼 ⁡ [ X j ] G_{f}:=\mathbb{E}[X_{j}] . Then 
+ | 
+ 𝔼 ​ ‖ G ^ f − G 0 ‖ 2 2 \displaystyle\mathbb{E}\big\|\widehat{G}_{f}-G_{0}\big\|_{2}^{2} | 
+ = ( a ) ​ 𝔼 ​ ‖ ( G ^ f − G f ) + ( G f − G 0 ) ‖ 2 2 \displaystyle\overset{(a)}{=}\mathbb{E}\big\|(\widehat{G}_{f}-G_{f})+(G_{f}-G_{0})\big\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ = ( b ) ​ ‖ G f − G 0 ‖ 2 2 + 𝔼 ​ ‖ G ^ f − G f ‖ 2 2 \displaystyle\overset{(b)}{=}\|G_{f}-G_{0}\|_{2}^{2}+\mathbb{E}\big\|\widehat{G}_{f}-G_{f}\big\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ = ( c ) ​ ‖ G f − G 0 ‖ 2 2 + 1 n 2 ​ ∑ i , j = 1 n 𝔼 ⁡ ⟨ X i − G f , X j − G f ⟩ \displaystyle\overset{(c)}{=}\|G_{f}-G_{0}\|_{2}^{2}+\frac{1}{n^{2}}\sum_{i,j=1}^{n}\mathbb{E}\big\langle X_{i}-G_{f},\;X_{j}-G_{f}\big\rangle | 
+ | 
+ | 
+ | 
+ = ( d ) ​ ‖ G f − G 0 ‖ 2 2 + 1 n ​ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 \displaystyle\overset{(d)}{=}\|G_{f}-G_{0}\|_{2}^{2}+\frac{1}{n}\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ = ( e ) ​ ‖ 𝔼 ⁡ [ ( f t − k t ) ​ ℓ t ′ ] ‖ 2 2 + 1 n ​ 𝔼 ​ ‖ f t ​ ℓ t ′ − 𝔼 ⁡ [ f t ​ ℓ t ′ ] ‖ 2 2 . \displaystyle\overset{(e)}{=}\big\|\mathbb{E}[(f_{t}-k_{t})\ell^{\prime}_{t}]\big\|_{2}^{2}+\frac{1}{n}\mathbb{E}\big\|f_{t}\ell^{\prime}_{t}-\mathbb{E}[f_{t}\ell^{\prime}_{t}]\big\|_{2}^{2}. | 
+ | 
+ Here (a) inserts and subtracts G f G_{f} . The cross term vanishes in (b) because
+ 𝔼 ⁡ [ G ^ f ] = G f \mathbb{E}[\widehat{G}_{f}]=G_{f} . Step (c) expands
+ G ^ f − G f = n − 1 ​ ∑ j ( X j − G f ) \widehat{G}_{f}-G_{f}=n^{-1}\sum_{j}(X_{j}-G_{f}) , while (d) uses independence:
+for i ≠ j i\neq j , 
+ | 
+ 𝔼 ⁡ ⟨ X i − G f , X j − G f ⟩ = 0 , \mathbb{E}\langle X_{i}-G_{f},X_{j}-G_{f}\rangle=0, | 
+ | 
+ and the n n diagonal terms are identical. Finally, 
+ | 
+ G f − G 0 = 𝔼 ⁡ [ f t ​ ℓ t ′ ] − 𝔼 ⁡ [ k t ​ ℓ t ′ ] = 𝔼 ⁡ [ ( f t − k t ) ​ ℓ t ′ ] , G_{f}-G_{0}=\mathbb{E}[f_{t}\ell^{\prime}_{t}]-\mathbb{E}[k_{t}\ell^{\prime}_{t}]=\mathbb{E}[(f_{t}-k_{t})\ell^{\prime}_{t}], | 
+ | 
+ which gives (e) and proves ( 18 ). 
+ For the variance term, 
+ | 
+ 1 n ​ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 \displaystyle\frac{1}{n}\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2} | 
+ = 1 n ​ ( 𝔼 ​ ‖ X 1 ‖ 2 2 − ‖ G f ‖ 2 2 ) \displaystyle=\frac{1}{n}\left(\mathbb{E}\|X_{1}\|_{2}^{2}-\|G_{f}\|_{2}^{2}\right) | 
+ | 
+ | 
+ | 
+ ≤ 1 n ​ 𝔼 ​ ‖ X 1 ‖ 2 2 \displaystyle\leq\frac{1}{n}\mathbb{E}\|X_{1}\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ = 1 n ​ 𝔼 ​ [ f t 2 ​ ‖ ℓ t ′ ‖ 2 2 ] , \displaystyle=\frac{1}{n}\mathbb{E}\big[f_{t}^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big], | 
+ | 
+ where the inequality simply drops the nonpositive term
+ − ∥ G f ∥ 2 2 / n -\|G_{f}\|_{2}^{2}/n . This gives ( 19 ).
+∎ 
+ Remark (correlated token contributions).
+ Independence enters only when the off-diagonal covariance terms are removed.
+If the contributions are identically distributed but correlated, define
+ | 
+ ρ ¯ f := 1 n ⁡ ( n − 1 ) ​ ∑ i ≠ j 𝔼 ⁡ ⟨ X i − G f , X j − G f ⟩ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 . \bar{\rho}_{f}:=\frac{\frac{1}{n(n-1)}\sum_{i\neq j}\mathbb{E}\langle X_{i}-G_{f},\;X_{j}-G_{f}\rangle}{\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2}}. | 
+ | 
+ (20) | 
+ If ρ ¯ f ≤ ρ ¯ \bar{\rho}_{f}\leq\bar{\rho} , then
+ | 
+ 1 n 2 ​ ∑ i , j = 1 n 𝔼 ⁡ ⟨ X i − G f , X j − G f ⟩ \displaystyle\frac{1}{n^{2}}\sum_{i,j=1}^{n}\mathbb{E}\big\langle X_{i}-G_{f},\;X_{j}-G_{f}\big\rangle | 
+ = 1 n 2 ​ ( n ​ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 + ∑ i ≠ j 𝔼 ⁡ ⟨ X i − G f , X j − G f ⟩ ) \displaystyle=\frac{1}{n^{2}}\left(n\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2}+\sum_{i\neq j}\mathbb{E}\langle X_{i}-G_{f},X_{j}-G_{f}\rangle\right) | 
+ | 
+ | 
+ | 
+ = 1 + ( n − 1 ) ​ ρ ¯ f n ​ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 \displaystyle=\frac{1+(n-1)\bar{\rho}_{f}}{n}\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ ≤ 1 n eff ​ 𝔼 ​ ‖ X 1 − G f ‖ 2 2 , \displaystyle\leq\frac{1}{n_{\mathrm{eff}}}\mathbb{E}\|X_{1}-G_{f}\|_{2}^{2}, | 
+ | 
+ where
+ | 
+ n eff := n 1 + ( n − 1 ) ​ ρ ¯ . n_{\mathrm{eff}}:=\frac{n}{1+(n-1)\bar{\rho}}. | 
+ | 
+ (21) | 
+ Hence the variance bounds below remain valid with n n replaced by
+ n eff n_{\mathrm{eff}} . Appendix D reports the corresponding empirical dependence
+among the token contributions.
+ B.2 Proof of Theorem 3.2 
+ We first state the formal version of Theorem 3.2 .
+ Theorem B.4 (Formal version of Theorem 3.2 ) . 
+ Under the conventions of Section B.1 , assume
+ ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b . Then 
+ | 
+ 𝔼 ​ ‖ G ^ − G 0 ‖ 2 2 ≤ b 2 n ​ 𝔼 ​ [ p t 2 + 2 ​ p t ​ ( 1 − p t ) ​ e ε t + ( 1 − p t ) 2 ​ e 2 ​ ε t ] , \mathbb{E}\big\|\widehat{G}-G_{0}\big\|_{2}^{2}\leq\frac{b^{2}}{n}\mathbb{E}\Big[p_{t}^{2}+2p_{t}(1-p_{t})e^{\varepsilon_{t}}+(1-p_{t})^{2}e^{2\varepsilon_{t}}\Big], | 
+ | 
+ (22) | 
+ where G ^ := n − 1 ​ ∑ j = 1 n k j ​ ℓ j ′ \widehat{G}:=n^{-1}\sum_{j=1}^{n}k_{j}\ell^{\prime}_{j} . 
+ Proof of Theorem 3.2 .
+ By Lemma B.1 , the right-hand side of
+( 22 ) equals b 2 n ​ 𝔼 ​ [ k t 2 ] \frac{b^{2}}{n}\mathbb{E}[k_{t}^{2}] . If
+ 𝔼 ⁡ [ k t 2 ] = ∞ \mathbb{E}[k_{t}^{2}]=\infty , there is nothing to prove. Assume therefore that
+ 𝔼 ⁡ [ k t 2 ] < ∞ \mathbb{E}[k_{t}^{2}]<\infty . Since ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b , 
+ | 
+ 𝔼 ⁡ [ k t 2 ​ ‖ ℓ t ′ ‖ 2 2 ] \displaystyle\mathbb{E}\big[k_{t}^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big] | 
+ ≤ b 2 ​ 𝔼 ​ [ k t 2 ] \displaystyle\leq b^{2}\mathbb{E}\big[k_{t}^{2}\big] | 
+ | 
+ | 
+ | 
+ ∞ , \displaystyle\infty, | 
+ | 
+ so Lemma B.3 applies with f t = k t f_{t}=k_{t} . Because exact correction
+has no truncation bias, 
+ | 
+ 𝔼 ​ ‖ G ^ − G 0 ‖ 2 2 \displaystyle\mathbb{E}\big\|\widehat{G}-G_{0}\big\|_{2}^{2} | 
+ = 1 n ​ 𝔼 ​ ‖ k t ​ ℓ t ′ − 𝔼 ⁡ [ k t ​ ℓ t ′ ] ‖ 2 2 \displaystyle=\frac{1}{n}\mathbb{E}\big\|k_{t}\ell^{\prime}_{t}-\mathbb{E}[k_{t}\ell^{\prime}_{t}]\big\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ ≤ ( a ) ​ 1 n ​ 𝔼 ​ [ k t 2 ​ ‖ ℓ t ′ ‖ 2 2 ] \displaystyle\overset{(a)}{\leq}\frac{1}{n}\mathbb{E}\big[k_{t}^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big] | 
+ | 
+ | 
+ | 
+ ≤ ( b ) ​ b 2 n ​ 𝔼 ​ [ k t 2 ] \displaystyle\overset{(b)}{\leq}\frac{b^{2}}{n}\mathbb{E}[k_{t}^{2}] | 
+ | 
+ | 
+ | 
+ = ( c ) ​ b 2 n ​ 𝔼 ​ [ ( p t + ( 1 − p t ) ​ e ε t ) 2 ] \displaystyle\overset{(c)}{=}\frac{b^{2}}{n}\mathbb{E}\left[\big(p_{t}+(1-p_{t})e^{\varepsilon_{t}}\big)^{2}\right] | 
+ | 
+ | 
+ | 
+ = b 2 n ​ 𝔼 ​ [ p t 2 + 2 ​ p t ​ ( 1 − p t ) ​ e ε t + ( 1 − p t ) 2 ​ e 2 ​ ε t ] . \displaystyle=\frac{b^{2}}{n}\mathbb{E}\left[p_{t}^{2}+2p_{t}(1-p_{t})e^{\varepsilon_{t}}+(1-p_{t})^{2}e^{2\varepsilon_{t}}\right]. | 
+ | 
+ Here (a) drops the nonpositive centered-mean term in the variance, (b) uses
+ ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b , and (c) applies
+ Lemma B.1 .
+∎ 
+ Remark (where the instability enters).
+ The proof imposes no structural assumption on the law of ε t \varepsilon_{t} 
+beyond the moments that appear explicitly in the bound. Exact correction has
+zero truncation bias, but its variance depends on the untruncated second-moment
+term 𝔼 ⁡ [ ( 1 − p t ) 2 ​ e 2 ​ ε t ] ≤ 𝔼 ⁡ [ e 2 ​ ε t ] \mathbb{E}[(1-p_{t})^{2}e^{2\varepsilon_{t}}]\leq\mathbb{E}[e^{2\varepsilon_{t}}] .
+ Remark (correlated token contributions).
+ Under correlated token contributions, the same argument holds with n n 
+replaced by n eff n_{\mathrm{eff}} from ( 21 ). The comparison below
+between the untruncated and truncated second moments is otherwise unchanged.
+ B.3 Proof of Theorem 3.3 
+ We first state the formal version of Theorem 3.3 . Throughout this
+subsection, let m t := min ⁡ { e ε t , 1 + λ } m_{t}:=\min\{e^{\varepsilon_{t}},1+\lambda\} .
+ Theorem B.5 (Formal version of Theorem 3.3 ) . 
+ Under the conventions of Section B.1 , assume
+ ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b . Then for every finite λ ≥ 0 \lambda\geq 0 , 
+ | 
+ 𝔼 ​ ‖ G ^ f λ − G 0 ‖ 2 2 \displaystyle\mathbb{E}\big\|\widehat{G}_{f_{\lambda}}-G_{0}\big\|_{2}^{2} | 
+ ≤ b 2 ​ ( 𝔼 ⁡ [ ( 1 − p t ) ​ ( e ε t − 1 − λ ) + ] ) 2 \displaystyle\leq b^{2}\left(\mathbb{E}\big[(1-p_{t})(e^{\varepsilon_{t}}-1-\lambda)_{+}\big]\right)^{2} | 
+ | 
+ | 
+ | 
+ + b 2 n ​ 𝔼 ​ [ ( p t + ( 1 − p t ) ​ min ⁡ { e ε t , 1 + λ } ) 2 ] . \displaystyle\qquad+\frac{b^{2}}{n}\mathbb{E}\Big[\big(p_{t}+(1-p_{t})\min\{e^{\varepsilon_{t}},1+\lambda\}\big)^{2}\Big]. | 
+ | 
+ (23) | 
+ Proof of Theorem 3.3 .
+ Since 
+ | 
+ f λ ​ ( k t , p t ) ≤ 1 + λ ⁡ ( 1 − p t ) ≤ 1 + λ , f_{\lambda}(k_{t},p_{t})\leq 1+\lambda(1-p_{t})\leq 1+\lambda, | 
+ | 
+ we have
+ 𝔼 ⁡ [ f λ ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] ≤ b 2 ​ ( 1 + λ ) 2 < ∞ \mathbb{E}[f_{\lambda}(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}]\leq b^{2}(1+\lambda)^{2}<\infty , so
+ Lemma B.3 applies: 
+ | 
+ 𝔼 ​ ‖ G ^ f λ − G 0 ‖ 2 2 \displaystyle\mathbb{E}\big\|\widehat{G}_{f_{\lambda}}-G_{0}\big\|_{2}^{2} | 
+ ≤ ‖ 𝔼 ⁡ [ ( f λ ​ ( k t , p t ) − k t ) ​ ℓ t ′ ] ‖ 2 2 \displaystyle\leq\big\|\mathbb{E}[(f_{\lambda}(k_{t},p_{t})-k_{t})\ell^{\prime}_{t}]\big\|_{2}^{2} | 
+ | 
+ | 
+ | 
+ + 1 n ​ 𝔼 ​ [ f λ ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] . \displaystyle\qquad+\frac{1}{n}\mathbb{E}\big[f_{\lambda}(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big]. | 
+ | 
+ For the bias term, f λ ​ ( k t , p t ) ≤ k t f_{\lambda}(k_{t},p_{t})\leq k_{t} , and hence 
+ | 
+ ‖ 𝔼 ⁡ [ ( f λ ​ ( k t , p t ) − k t ) ​ ℓ t ′ ] ‖ 2 \displaystyle\big\|\mathbb{E}[(f_{\lambda}(k_{t},p_{t})-k_{t})\ell^{\prime}_{t}]\big\|_{2} | 
+ ≤ 𝔼 ⁡ [ ( k t − f λ ​ ( k t , p t ) ) ​ ‖ ℓ t ′ ‖ 2 ] \displaystyle\leq\mathbb{E}\left[\big(k_{t}-f_{\lambda}(k_{t},p_{t})\big)\|\ell^{\prime}_{t}\|_{2}\right] | 
+ | 
+ | 
+ | 
+ ≤ b ​ 𝔼 ​ [ k t − f λ ​ ( k t , p t ) ] \displaystyle\leq b\,\mathbb{E}\left[k_{t}-f_{\lambda}(k_{t},p_{t})\right] | 
+ | 
+ | 
+ | 
+ = ( a ) ​ b ​ 𝔼 ​ [ ( 1 − p t ) ​ ( e ε t − 1 − λ ) + ] , \displaystyle\overset{(a)}{=}b\,\mathbb{E}\left[(1-p_{t})(e^{\varepsilon_{t}}-1-\lambda)_{+}\right], | 
+ | 
+ where (a) uses ( 16 ). 
+ For the variance term, using ( 15 ), 
+ | 
+ 𝔼 ⁡ [ f λ ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] \displaystyle\mathbb{E}\big[f_{\lambda}(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big] | 
+ ≤ b 2 ​ 𝔼 ​ [ f λ ​ ( k t , p t ) 2 ] \displaystyle\leq b^{2}\mathbb{E}\big[f_{\lambda}(k_{t},p_{t})^{2}\big] | 
+ | 
+ | 
+ | 
+ = ( b ) ​ b 2 ​ 𝔼 ​ [ ( p t + ( 1 − p t ) ​ m t ) 2 ] , \displaystyle\overset{(b)}{=}b^{2}\mathbb{E}\left[\big(p_{t}+(1-p_{t})m_{t}\big)^{2}\right], | 
+ | 
+ where (b) substitutes the displacement-coordinate form of the clipped ratio. 
+ Combining the two bounds gives ( 23 ).
+∎ 
+ Remark (comparison with exact correction).
+ The difference between Theorem B.4 and
+ Theorem B.5 is the replacement of the untruncated displacement
+factor e ε t e^{\varepsilon_{t}} by its truncated counterpart m t m_{t} , together with
+the corresponding truncation bias.
+Pointwise,
+ | 
+ min ⁡ ( e ε t , 1 + λ ) 2 \displaystyle\min\big(e^{\varepsilon_{t}},1+\lambda\big)^{2} | 
+ ≤ e 2 ​ ε t , \displaystyle\leq e^{2\varepsilon_{t}}, | 
+ | 
+ | 
+ min ⁡ ( e ε t , 1 + λ ) 2 \displaystyle\min\big(e^{\varepsilon_{t}},1+\lambda\big)^{2} | 
+ ≤ ( 1 + λ ) 2 , \displaystyle\leq(1+\lambda)^{2}, | 
+ | 
+ and therefore
+ | 
+ 𝔼 ⁡ [ min ⁡ ( e ε t , 1 + λ ) 2 ] ≤ min ⁡ { 𝔼 ⁡ [ e 2 ​ ε t ] , ( 1 + λ ) 2 } . \mathbb{E}\big[\min(e^{\varepsilon_{t}},1+\lambda)^{2}\big]\leq\min\left\{\mathbb{E}[e^{2\varepsilon_{t}}],\;(1+\lambda)^{2}\right\}. | 
+ | 
+ (24) | 
+ Moreover, p t + ( 1 − p t ) ​ m t ≤ min ⁡ { k t ,  1 + λ } p_{t}+(1-p_{t})m_{t}\leq\min\{k_{t},\,1+\lambda\} , so the variance term of
+( 23 ) satisfies
+ 𝔼 ⁡ [ ( p t + ( 1 − p t ) ​ m t ) 2 ] ≤ min ⁡ { 𝔼 ⁡ [ k t 2 ] , ( 1 + λ ) 2 } \mathbb{E}[(p_{t}+(1-p_{t})m_{t})^{2}]\leq\min\{\mathbb{E}[k_{t}^{2}],\,(1+\lambda)^{2}\} .
+Thus, regardless of how heavy the positive tail of ε t \varepsilon_{t} becomes,
+the second-moment term entering the CIS variance bound is at most
+ ( 1 + λ ) 2 (1+\lambda)^{2} .
+ The corresponding bias remains controlled by the first moment of the truncated
+excess, since
+ | 
+ ( 1 − p t ) ​ ( e ε t − 1 − λ ) + \displaystyle(1-p_{t})(e^{\varepsilon_{t}}-1-\lambda)_{+} | 
+ ≤ ( e ε t − 1 − λ ) + \displaystyle\leq(e^{\varepsilon_{t}}-1-\lambda)_{+} | 
+ | 
+ | 
+ | 
+ ≤ e ε t 𝟏 { e ε t > 1 + λ } \displaystyle\leq e^{\varepsilon_{t}}\mathbf{1}\{e^{\varepsilon_{t}}>1+\lambda\} | 
+ | 
+ | 
+ | 
+ ≤ e ε t . \displaystyle\leq e^{\varepsilon_{t}}. | 
+ | 
+ CIS therefore trades a finite upper-tail bias for a uniformly bounded
+second-moment contribution, which is the bias–variance trade-off described in
+Section 3.3.
+ Remark (correlated token contributions).
+ The same result holds with n n replaced by n eff n_{\mathrm{eff}} under the
+correlated-token setting above. The truncation term and the bound
+( 24 ) are pointwise and therefore do not depend
+on the effective sample size.
+ B.4 Numerical Floor in Algorithm 1
+ The theoretical operator in ( 9 ) uses the uncertainty
+ 1 − p t 1-p_{t} . Algorithm 1 replaces it by
+ ϕ κ ​ ( p ) := max ⁡ { 1 − p , κ } \phi_{\kappa}(p):=\max\{1-p,\kappa\} , where 0 < κ ≤ 1 0<\kappa\leq 1 , and applies
+ | 
+ f λ , κ ​ ( k , p ) := min ⁡ { k ,  1 + λ ​ ϕ κ ​ ( p ) } . f_{\lambda,\kappa}(k,p):=\min\big\{k,\;1+\lambda\phi_{\kappa}(p)\big\}. | 
+ | 
+ (25) | 
+ This modification prevents the confidence-dependent cap from becoming narrower
+than the numerical resolution of the stored log-probabilities.
+ Corollary B.6 (Effect of the numerical floor) . 
+ For every λ ≥ 0 \lambda\geq 0 and κ ∈ ( 0 , 1 ] \kappa\in(0,1] , 
+ | 
+ f λ ​ ( k , p ) ≤ f λ , κ ​ ( k , p ) ≤ k , f_{\lambda}(k,p)\leq f_{\lambda,\kappa}(k,p)\leq k, | 
+ | 
+ (26) | 
+ and consequently 
+ | 
+ 0 ≤ k − f λ , κ ​ ( k , p ) ≤ k − f λ ​ ( k , p ) . 0\leq k-f_{\lambda,\kappa}(k,p)\leq k-f_{\lambda}(k,p). | 
+ | 
+ (27) | 
+ Moreover, 
+ | 
+ f λ , κ ​ ( k , p ) ≤ 1 + λ . f_{\lambda,\kappa}(k,p)\leq 1+\lambda. | 
+ | 
+ (28) | 
+ Hence, if ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b , 
+ | 
+ 𝔼 ⁡ [ f λ , κ ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] ≤ b 2 ​ ( 1 + λ ) 2 . \mathbb{E}\big[f_{\lambda,\kappa}(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big]\leq b^{2}(1+\lambda)^{2}. | 
+ | 
+ (29) | 
+ Proof.
+ By definition,
+ ϕ κ ​ ( p ) = max ⁡ { 1 − p , κ } ≥ 1 − p \phi_{\kappa}(p)=\max\{1-p,\kappa\}\geq 1-p . Since λ ≥ 0 \lambda\geq 0 , 
+ | 
+ 1 + λ ​ ϕ κ ​ ( p ) ≥ 1 + λ ⁡ ( 1 − p ) . 1+\lambda\phi_{\kappa}(p)\geq 1+\lambda(1-p). | 
+ | 
+ The map c ↦ min ⁡ { k , c } c\mapsto\min\{k,c\} is nondecreasing, so 
+ | 
+ f λ , κ ​ ( k , p ) \displaystyle f_{\lambda,\kappa}(k,p) | 
+ = min ⁡ { k , 1 + λ ​ ϕ κ ​ ( p ) } \displaystyle=\min\{k,1+\lambda\phi_{\kappa}(p)\} | 
+ | 
+ | 
+ | 
+ ≥ min ⁡ { k , 1 + λ ⁡ ( 1 − p ) } \displaystyle\geq\min\{k,1+\lambda(1-p)\} | 
+ | 
+ | 
+ | 
+ = f λ ​ ( k , p ) . \displaystyle=f_{\lambda}(k,p). | 
+ | 
+ The definition of the minimum also gives
+ f λ , κ ​ ( k , p ) ≤ k f_{\lambda,\kappa}(k,p)\leq k , which proves
+( 26 ). Subtracting both sides from k k yields
+( 27 ). 
+ Since both 1 − p 1-p and κ \kappa lie in ( 0 , 1 ] (0,1] ,
+ ϕ κ ​ ( p ) ≤ 1 \phi_{\kappa}(p)\leq 1 . Therefore 
+ | 
+ f λ , κ ​ ( k , p ) \displaystyle f_{\lambda,\kappa}(k,p) | 
+ ≤ 1 + λ ​ ϕ κ ​ ( p ) \displaystyle\leq 1+\lambda\phi_{\kappa}(p) | 
+ | 
+ | 
+ | 
+ ≤ 1 + λ , \displaystyle\leq 1+\lambda, | 
+ | 
+ which gives ( 28 ). If
+ ‖ ℓ t ′ ‖ 2 ≤ b \|\ell^{\prime}_{t}\|_{2}\leq b , it follows immediately that 
+ | 
+ 𝔼 ⁡ [ f λ , κ ​ ( k t , p t ) 2 ​ ‖ ℓ t ′ ‖ 2 2 ] \displaystyle\mathbb{E}\big[f_{\lambda,\kappa}(k_{t},p_{t})^{2}\|\ell^{\prime}_{t}\|_{2}^{2}\big] | 
+ ≤ b 2 ​ 𝔼 ​ [ f λ , κ ​ ( k t , p t ) 2 ] \displaystyle\leq b^{2}\mathbb{E}\big[f_{\lambda,\kappa}(k_{t},p_{t})^{2}\big] | 
+ | 
+ | 
+ | 
+ ≤ b 2 ​ ( 1 + λ ) 2 , \displaystyle\leq b^{2}(1+\lambda)^{2}, | 
+ | 
+ proving ( 29 ).
+∎ 
+ Remark.
+ The floor raises the cap only at the extreme high-confidence end, so
+ f λ , κ f_{\lambda,\kappa} removes no more of the exact importance weight than the
+idealized operator f λ f_{\lambda} . At the same time,
+( 28 ) keeps the applied weight uniformly bounded by
+ 1 + λ 1+\lambda . The numerical safeguard in Algorithm 1 therefore preserves the
+central variance-control property of CIS while preventing the theoretical band
+from becoming narrower than the storage resolution.
+ Appendix C Experimental Details
+ C.1 Implementation and Hardware
+ Recipe. 
+Every arm uses the same recipe: learning rate 3 × 10 − 6 3\times 10^{-6} , weight decay 0.01 0.01 , PPO clip range ( 0.2 , 0.28 ) (0.2,0.28) , no KL penalty, four samples per prompt at temperature one, at most 1,024 generated tokens, at most two versions of rollout staleness, three epochs over the 7,473 GSM8K training problems (87 optimizer steps), and one node with eight A100-80GB GPUs per arm, four serving SGLang and four training with FSDP and flash attention.
+ Operators. 
+Training uses AReaL v2.0.0 with its decoupled loss, in which the rollout-side and training-side log-probabilities are both available per token. All operators are implemented in the same token-level branch that AReaL uses for TIS and IcePop, so that every arm differs only in the weight on the token loss; CIS multiplies the loss by the weight min ⁡ { k t , 1 + λ ​ φ t } \min\{k_{t},1+\lambda\varphi_{t}\} of Algorithm 1 , with φ t = max ⁡ ( 1 − p t , κ ) \varphi_{t}=\max(1-p_{t},\kappa) and p t p_{t} taken from the training-side log-probability, and the weight carries no gradient. The two-sided band of Table 2 additionally lifts the displacement from below to e ε t ≥ 1 / 2 e^{\varepsilon_{t}}\geq 1/2 , which maps through Equation 2 to the weight max ⁡ { min ⁡ { k t , 1 + λ ​ φ t } , ( 1 + p t ) / 2 } \max\{\min\{k_{t},1+\lambda\varphi_{t}\},\,(1+p_{t})/2\} ; CIS applies no lower threshold. Table 8 lists the operator and the hyperparameters of every arm. Beyond the operators, the changes to the framework are longer worker-readiness timeouts, a numerically corrected binary-KL metric for KPop † , product weights over a response for Seq-TIS and Seq-MIS, static loss scaling for the fp16 arm, and a token-level dump hook. The training engine must use flash attention; with packed sequences the scaled-dot-product fallback attends across sequence boundaries and corrupts the training-side log-probabilities, which we detected as a median log ⁡ k t \log k_{t} far from zero on every method. Weights are sent from the trainer to the rollout engine by collective communication after every optimizer step. On Qwen1.5-MoE each arm takes about 1.0 to 1.4 hours for the 87 steps, and Appendix D.4 breaks this time down by phase. DeepSeek-V2-Lite ( DeepSeek-AI, 2024 ) and Qwen3-30B-A3B ( Qwen Team, 2025 ) use the same recipe with vLLM rollouts, weights reloaded from disk after every step, and optimizer states in bf16; the thinking mode of Qwen3-30B-A3B is disabled in both training and evaluation.
+ Table 8: Operators and hyperparameters of the arms in Table 1 . K = ∏ t k t K=\prod_{t}k_{t} is the product over a response and φ t = max ⁡ ( 1 − p t , κ ) \varphi_{t}=\max(1-p_{t},\kappa) . 
+ Method | 
+ Weight on the token loss | 
+ Hyperparameters | 
+ No correction | 
+ 1 1 (decoupled loss disabled) | 
+ — | 
+ Exact ratio | 
+ k t k_{t} | 
+ clamp to [ 10 − 6 , 10 6 ] [10^{-6},10^{6}] | 
+ TIS | 
+ min ⁡ ( k t , C ) \min(k_{t},C) | 
+ C = 2 C=2 | 
+ IcePop | 
+ k t  1 { k t ∈ [ α , β ] } k_{t}\,\mathbf{1}\{k_{t}\in[\alpha,\beta]\} | 
+ [ α , β ] = [ 0.5 , 5 ] [\alpha,\beta]=[0.5,5] | 
+ KPop † | 
+ k t  1 { max ( KL B ( p ∥ q ) , KL B ( q ∥ p ) ) ≤ ϕ } k_{t}\,\mathbf{1}\{\max(\mathrm{KL}_{\mathrm{B}}(p\|q),\mathrm{KL}_{\mathrm{B}}(q\|p))\leq\phi\} , float64 | 
+ ϕ = 2 \phi=2 | 
+ Seq-TIS | 
+ min ⁡ ( K , C ) \min(K,C) for every token of the response | 
+ C = 2 C=2 | 
+ Seq-MIS | 
+ K  1 { K ∈ [ α , β ] } K\,\mathbf{1}\{K\in[\alpha,\beta]\} for every token of the response | 
+ [ α , β ] = [ 0.5 , 2 ] [\alpha,\beta]=[0.5,2] | 
+ GSPO | 
+ sequence-level surrogate, k t k_{t} uncorrected | 
+ clip ( 3 × 10 − 4 , 4 × 10 − 4 ) (3\times 10^{-4},4\times 10^{-4}) | 
+ FP16 | 
+ 1 1 , rollout and training in fp16 | 
+ loss scale 1024 1024 | 
+ CIS (ours) | 
+ min ⁡ { k t , 1 + λ ​ φ t } \min\{k_{t},1+\lambda\varphi_{t}\} | 
+ λ = 2.3 \lambda=2.3 , κ = 5 × 10 − 3 \kappa=5\times 10^{-3} | 
+ C.2 Datasets and Evaluation Protocol
+ Training data. 
+Every RL run trains on the 7,473 problems of the GSM8K training split ( Cobbe et al., 2021 ) . The prompt is the problem followed by an instruction to put the final answer in \boxed{} (Appendix C.3 ), and the reward is one when math-verify judges the final answer equal to the reference answer and zero otherwise. The framework evaluates the GSM8K test split once per epoch for logging; these numbers are not used to select a checkpoint, and every number that we report comes from the final checkpoint.
+ Measurement data. 
+The static measurement of the mismatch uses 2,500 problems drawn at random from DAPO-Math-17k ( Yu et al., 2025 ) . This set is not used for training.
+ Protocols. 
+Table 9 lists the evaluation benchmarks. Tables 1 and 2 use the chat template of each model with the instruction to put the final answer in \boxed{} , greedy decoding with vLLM, at most 1,536 new tokens, and the math-verify judge. The out-of-domain evaluation of Table 13 uses the same template and greedy decoding; a multiple-choice item is scored by the option letter that the response states, with at most 512 new tokens, and a code item is scored by running the completion against the benchmark tests with a limit of 15 seconds, with at most 768 new tokens. Changing the tensor-parallel degree of the evaluation engine changes a few greedy decisions (two HumanEval and six MBPP items on one checkpoint), so every checkpoint of a table is evaluated with the same degree.
+ Table 9: Evaluation benchmarks. 
+ Benchmark 
+ | 
+ Domain | 
+ Split 
+ | 
+ Scoring | 
+ Items | 
+ GSM8K ( Cobbe et al., 2021 ) 
+ | 
+ math | 
+ test 
+ | 
+ math-verify | 
+ 1,319 | 
+ MATH-500 ( Hendrycks et al., 2021 ; Lightman et al., 2024 ) 
+ | 
+ math | 
+ test subset 
+ | 
+ math-verify | 
+ 500 | 
+ SVAMP ( Patel et al., 2021 ) 
+ | 
+ math | 
+ test 
+ | 
+ math-verify | 
+ 300 | 
+ Minerva-Math ( Lewkowycz et al., 2022 ) 
+ | 
+ math | 
+ test 
+ | 
+ math-verify | 
+ 272 | 
+ OlympiadBench ( He et al., 2024 ) 
+ | 
+ math | 
+ English, text-only, open-ended 
+ | 
+ math-verify | 
+ 674 | 
+ MMLU-STEM ( Hendrycks et al., 2020 ) 
+ | 
+ knowledge | 
+ test, 19 STEM subjects 
+ | 
+ option letter | 
+ 3,153 | 
+ ARC-Challenge ( Clark et al., 2018 ) 
+ | 
+ knowledge | 
+ test 
+ | 
+ option letter | 
+ 1,172 | 
+ OpenBookQA ( Mihaylov et al., 2018 ) 
+ | 
+ knowledge | 
+ test 
+ | 
+ option letter | 
+ 500 | 
+ HumanEval ( Chen et al., 2021 ) 
+ | 
+ code | 
+ test 
+ | 
+ unit tests | 
+ 164 | 
+ MBPP ( Austin et al., 2021 ) 
+ | 
+ code | 
+ test 
+ | 
+ unit tests | 
+ 500 | 
+ C.3 Prompts
+ Every prompt below is the user message, formatted with the chat template of the model and no additional system message; the thinking mode of Qwen3-30B-A3B is disabled. Placeholders in braces are filled with the fields of each item.
+ C.4 Diagnostics
+ Static measurement. 
+Prompts are 2,500 problems drawn at random from DAPO-Math-17k. Generation uses vLLM 0.26 in bf16 with eager execution and without prefix caching; each prompt receives eight samples at temperature one and top- p p one, at most 1,024 tokens per response, and the log-probability of every sampled token is taken from the sampling step itself rather than from a later prefill pass. Rescoring uses HuggingFace Transformers in bf16 with teacher forcing on the exact sampled sequence and the same parameter snapshot; the token at position t t is scored from the logits at position t − 1 t-1 on both sides. For the MoE model we record the top-4 expert identities of every layer on both sides and the gate margin between the fourth and fifth expert; the routing read from forward hooks agrees with the identities returned by the fused kernel on 100 % 100\% of the (token, layer) pairs whose margin is positive. Two controls fix the measurement floor: rescoring a sequence twice on the training engine returns exactly zero difference, and the empirical mean of k t k_{t} is 1.0000 1.0000 on both architectures, which verifies the per-step calibration identity 𝔼 ⁡ [ k t ∣ h t ] = 1 \mathbb{E}[k_{t}\mid h_{t}]=1 . Two further controls accompany the main measurement: rescoring in fp32, and rescoring by a prefill pass on the inference engine, which reproduces the decode-time bulk. The displacement is computed as ε t = logit ⁡ p t − logit ⁡ q t \varepsilon_{t}=\operatorname{logit}p_{t}-\operatorname{logit}q_{t} from the two log-probabilities.
+ Training-time logging. 
+The training runs dump, every ten optimizer calls, the rollout-side log-probability, the training-side log-probability at the start of the update, and the parameter version of the rollout for a sample of tokens. Version staleness is the difference between the current version and the rollout version.
+ C.5 Preregistered Evaluation Contract
+ Held-out accuracy at the final checkpoint is the arbiter of every comparison; training reward is reported but is not used to choose between methods. The following choices were fixed before the corresponding runs. The floor is κ = 5 × 10 − 3 \kappa=5\times 10^{-3} , set from the storage resolution of the log-probabilities before any training run. The slope grid is λ ∈ { 1.6 , 2.3 , 3.1 } \lambda\in\{1.6,2.3,3.1\} . All arms use the recipe of Section 4.1 without per-arm tuning. Every ablation changes one element of the operator relative to the deployed configuration. The main comparison and the ablations of Table 2 use three seeds.
+ Appendix D Additional Results and Limitations
+ D.1 Training Dynamics
+ (a)
+ (b)
+ (c)
+ (d)
+ (e)
+ (f)
+ Figure 10: Training dynamics on Qwen1.5-MoE-A2.7B (mean over seeds, band spanning the seeds, five-step smoothing). (a) Reward. (b) Gradient norm. (c) Entropy. (d) Response length. (e) Fraction of tokens acted on, counting whole responses for Seq-TIS and Seq-MIS. (f) Largest | log ⁡ k t | |\log k_{t}| in the batch. 
+ Table 10: Training statistics on Qwen1.5-MoE-A2.7B, mean ± \pm standard deviation over three seeds: third-epoch mean (median for the gradient norm and max t ⁡ | log ⁡ k t | \max_{t}|\log k_{t}| ), and peak gradient norm and fraction acted on over the whole run. 
+ Method | 
+ Reward 
+ | 
+ Grad. norm 
+ | 
+ Peak grad. 
+ | 
+ Entropy 
+ | 
+ Length 
+ | 
+ Acted on (%) 
+ | 
+ max t ⁡ | log ⁡ k t | \max_{t}|\log k_{t}| 
+ | 
+ No correction | 
+ 0.732 ± 0.004 0.732_{\pm 0.004} 
+ | 
+ 0.75 ± 0.02 0.75_{\pm 0.02} 
+ | 
+ 2.5 ± 0.4 2.5_{\pm 0.4} 
+ | 
+ 0.220 ± 0.005 0.220_{\pm 0.005} 
+ | 
+ 322 ± 2 322_{\pm 2} 
+ | 
+ 0.00 ± 0.00 0.00_{\pm 0.00} 
+ | 
+ 9.5 ± 0.5 9.5_{\pm 0.5} 
+ | 
+ Exact ratio | 
+ 0.829 ± 0.012 0.829_{\pm 0.012} 
+ | 
+ 3.58 ± 0.75 3.58_{\pm 0.75} 
+ | 
+ 69.5 ± 41.4 69.5_{\pm 41.4} 
+ | 
+ 0.102 ± 0.013 0.102_{\pm 0.013} 
+ | 
+ 227 ± 4 227_{\pm 4} 
+ | 
+ 0.06 ± 0.03 0.06_{\pm 0.03} 
+ | 
+ 25.9 ± 3.4 25.9_{\pm 3.4} 
+ | 
+ KPop † | 
+ 0.847 ± 0.016 0.847_{\pm 0.016} 
+ | 
+ 3.09 ± 0.76 3.09_{\pm 0.76} 
+ | 
+ 29.2 ± 23.5 29.2_{\pm 23.5} 
+ | 
+ 0.093 ± 0.033 0.093_{\pm 0.033} 
+ | 
+ 245 ± 29 245_{\pm 29} 
+ | 
+ 1.33 ± 0.05 1.33_{\pm 0.05} 
+ | 
+ 27.3 ± 1.7 27.3_{\pm 1.7} 
+ | 
+ IcePop | 
+ 0.859 ± 0.005 0.859_{\pm 0.005} 
+ | 
+ 1.12 ± 0.04 1.12_{\pm 0.04} 
+ | 
+ 2.8 ± 1.5 2.8_{\pm 1.5} 
+ | 
+ 0.113 ± 0.035 0.113_{\pm 0.035} 
+ | 
+ 224 ± 7 224_{\pm 7} 
+ | 
+ 3.64 ± 0.40 3.64_{\pm 0.40} 
+ | 
+ 24.0 ± 2.3 24.0_{\pm 2.3} 
+ | 
+ TIS ( C = 2 C=2 ) | 
+ 0.861 ± 0.014 0.861_{\pm 0.014} 
+ | 
+ 0.97 ± 0.11 0.97_{\pm 0.11} 
+ | 
+ 3.6 ± 1.6 3.6_{\pm 1.6} 
+ | 
+ 0.064 ± 0.004 0.064_{\pm 0.004} 
+ | 
+ 226 ± 9 226_{\pm 9} 
+ | 
+ 0.76 ± 0.07 0.76_{\pm 0.07} 
+ | 
+ 37.7 ± 4.4 37.7_{\pm 4.4} 
+ | 
+ TIS ( C = 1.13 C=1.13 ) | 
+ 0.780 ± 0.065 0.780_{\pm 0.065} 
+ | 
+ 0.91 ± 0.08 0.91_{\pm 0.08} 
+ | 
+ 8.5 ± 11.7 8.5_{\pm 11.7} 
+ | 
+ 0.200 ± 0.142 0.200_{\pm 0.142} 
+ | 
+ 224 ± 23 224_{\pm 23} 
+ | 
+ 4.32 ± 0.64 4.32_{\pm 0.64} 
+ | 
+ 29.7 ± 4.4 29.7_{\pm 4.4} 
+ | 
+ Seq-TIS | 
+ 0.803 ± 0.004 0.803_{\pm 0.004} 
+ | 
+ 0.25 ± 0.02 0.25_{\pm 0.02} 
+ | 
+ 0.8 ± 0.0 0.8_{\pm 0.0} 
+ | 
+ 0.147 ± 0.016 0.147_{\pm 0.016} 
+ | 
+ 276 ± 7 276_{\pm 7} 
+ | 
+ 13.54 ± 2.83 13.54_{\pm 2.83} 
+ | 
+ 15.6 ± 2.9 15.6_{\pm 2.9} 
+ | 
+ Seq-MIS | 
+ 0.759 ± 0.002 0.759_{\pm 0.002} 
+ | 
+ 0.15 ± 0.01 0.15_{\pm 0.01} 
+ | 
+ 0.6 ± 0.2 0.6_{\pm 0.2} 
+ | 
+ 0.158 ± 0.025 0.158_{\pm 0.025} 
+ | 
+ 292 ± 9 292_{\pm 9} 
+ | 
+ 94.56 ± 0.50 94.56_{\pm 0.50} 
+ | 
+ 18.2 ± 1.7 18.2_{\pm 1.7} 
+ | 
+ FP16 | 
+ 0.740 ± 0.002 0.740_{\pm 0.002} 
+ | 
+ 0.74 ± 0.01 0.74_{\pm 0.01} 
+ | 
+ 3.2 ± 1.3 3.2_{\pm 1.3} 
+ | 
+ 0.202 ± 0.002 0.202_{\pm 0.002} 
+ | 
+ 313 ± 3 313_{\pm 3} 
+ | 
+ 0.00 ± 0.00 0.00_{\pm 0.00} 
+ | 
+ 12.7 ± 2.1 12.7_{\pm 2.1} 
+ | 
+ CIS (ours) | 
+ 0.867 ± 0.009 \mathbf{0.867}_{\pm 0.009} 
+ | 
+ 1.47 ± 0.31 1.47_{\pm 0.31} 
+ | 
+ 3.0 ± 1.1 3.0_{\pm 1.1} 
+ | 
+ 0.071 ± 0.017 0.071_{\pm 0.017} 
+ | 
+ 232 ± 8 232_{\pm 8} 
+ | 
+ 3.81 ± 0.42 3.81_{\pm 0.42} 
+ | 
+ 26.9 ± 5.1 26.9_{\pm 5.1} 
+ | 
+ Figure 10 and Table 10 show how the arms of Table 1 train on Qwen1.5-MoE. The token-level operators that bound the ratio (TIS, IcePop, and CIS) reach a training reward between 0.859 0.859 and 0.867 0.867 with a peak gradient norm below four, whereas the exact ratio and KPop † reach a lower reward with peak gradient norms of 70 70 and 29 29 . The uncorrected run and the fp16 run stay near a reward of 0.74 0.74 , and their entropy and response length stay close to their initial values. Seq-MIS removes 95 % 95\% of the responses, and its gradient norm is the smallest of all arms because most of the batch carries no gradient. The largest | log ⁡ k t | |\log k_{t}| in the batch stays near 10 10 for the uncorrected and fp16 runs and grows to between 16 16 and 38 38 for the other arms as the policy sharpens. The fraction of tokens that CIS acts on rises during the first third of training and then stays between 4 % 4\% and 5 % 5\% (panel e).
+ D.2 Hyperparameter Sweeps
+ Tables 11 and 12 list the per-benchmark accuracy behind Figure 6 . Each sweep varies one hyperparameter of CIS on Qwen1.5-MoE-A2.7B with the other fixed at its default, and uses the recipe and evaluation protocol of Table 1 ; the default rows are the CIS entries of Table 1 . Setting λ = 0 \lambda=0 truncates every ratio above one, which is TIS with C = 1 C=1 , and the average accuracy collapses to 8.75 8.75 with a large spread across seeds. Every positive threshold stays above the uncorrected run ( 30.99 30.99 ), and the default λ = 2.3 \lambda=2.3 gives the highest average ( 34.78 34.78 ), while the other positive thresholds lie between 32.53 32.53 and 34.08 34.08 .
+ Table 11: Accuracy (%) of CIS on Qwen1.5-MoE-A2.7B for different thresholds λ \lambda with κ = 5 × 10 − 3 \kappa=5\times 10^{-3} . Mean ± \pm standard deviation over three seeds. 
+ λ \lambda | 
+ GSM8K 
+ | 
+ MATH500 
+ | 
+ SVAMP 
+ | 
+ Minerva 
+ | 
+ Olympiad 
+ | 
+ Avg 
+ | 
+ 0 0 | 
+ 14.71 ± 13.47 14.71_{\pm 13.47} 
+ | 
+ 6.80 ± 5.67 6.80_{\pm 5.67} 
+ | 
+ 19.33 ± 17.17 19.33_{\pm 17.17} 
+ | 
+ 0.98 ± 1.39 0.98_{\pm 1.39} 
+ | 
+ 1.93 ± 1.12 1.93_{\pm 1.12} 
+ | 
+ 8.75 ± 7.44 8.75_{\pm 7.44} 
+ | 
+ 0.45 0.45 | 
+ 64.82 ± 1.88 64.82_{\pm 1.88} 
+ | 
+ 23.33 ± 2.44 23.33_{\pm 2.44} 
+ | 
+ 70.33 ± 2.08 70.33_{\pm 2.08} 
+ | 
+ 7.11 ± 0.21 7.11_{\pm 0.21} 
+ | 
+ 3.66 ± 0.17 3.66_{\pm 0.17} 
+ | 
+ 33.85 ± 0.27 33.85_{\pm 0.27} 
+ | 
+ 0.89 0.89 | 
+ 66.59 ± 1.95 66.59_{\pm 1.95} 
+ | 
+ 22.87 ± 1.75 22.87_{\pm 1.75} 
+ | 
+ 70.22 ± 1.90 70.22_{\pm 1.90} 
+ | 
+ 6.25 ± 1.33 6.25_{\pm 1.33} 
+ | 
+ 4.45 ± 0.83 4.45_{\pm 0.83} 
+ | 
+ 34.08 ± 0.19 34.08_{\pm 0.19} 
+ | 
+ 1.6 1.6 | 
+ 65.68 ± 0.46 65.68_{\pm 0.46} 
+ | 
+ 23.33 ± 1.63 23.33_{\pm 1.63} 
+ | 
+ 68.78 ± 2.17 68.78_{\pm 2.17} 
+ | 
+ 6.74 ± 0.56 6.74_{\pm 0.56} 
+ | 
+ 4.90 ± 0.59 4.90_{\pm 0.59} 
+ | 
+ 33.89 ± 0.46 33.89_{\pm 0.46} 
+ | 
+ 2.3 2.3 (default) | 
+ 67.88 ± 1.64 67.88_{\pm 1.64} 
+ | 
+ 24.53 ± 1.03 24.53_{\pm 1.03} 
+ | 
+ 70.22 ± 1.35 70.22_{\pm 1.35} 
+ | 
+ 5.88 ± 0.64 5.88_{\pm 0.64} 
+ | 
+ 5.39 ± 0.62 5.39_{\pm 0.62} 
+ | 
+ 34.78 ± 0.25 34.78_{\pm 0.25} 
+ | 
+ 3.1 3.1 | 
+ 65.07 ± 0.70 65.07_{\pm 0.70} 
+ | 
+ 23.67 ± 0.92 23.67_{\pm 0.92} 
+ | 
+ 67.89 ± 2.50 67.89_{\pm 2.50} 
+ | 
+ 6.13 ± 1.49 6.13_{\pm 1.49} 
+ | 
+ 4.01 ± 0.90 4.01_{\pm 0.90} 
+ | 
+ 33.35 ± 0.66 33.35_{\pm 0.66} 
+ | 
+ 4.6 4.6 | 
+ 64.54 ± 1.19 64.54_{\pm 1.19} 
+ | 
+ 24.20 ± 0.53 24.20_{\pm 0.53} 
+ | 
+ 69.22 ± 1.26 69.22_{\pm 1.26} 
+ | 
+ 6.86 ± 0.21 6.86_{\pm 0.21} 
+ | 
+ 3.46 ± 0.09 3.46_{\pm 0.09} 
+ | 
+ 33.66 ± 0.64 33.66_{\pm 0.64} 
+ | 
+ 9.2 9.2 | 
+ 62.27 ± 1.67 62.27_{\pm 1.67} 
+ | 
+ 23.40 ± 0.60 23.40_{\pm 0.60} 
+ | 
+ 66.89 ± 1.84 66.89_{\pm 1.84} 
+ | 
+ 6.74 ± 0.21 6.74_{\pm 0.21} 
+ | 
+ 3.36 ± 0.09 3.36_{\pm 0.09} 
+ | 
+ 32.53 ± 0.87 32.53_{\pm 0.87} 
+ | 
+ For the floor, the accuracy peaks near the storage resolution of the log-probabilities, where κ = 5 × 10 − 3 \kappa=5\times 10^{-3} and κ = 2 × 10 − 2 \kappa=2\times 10^{-2} reach 34.78 34.78 and 34.39 34.39 ; a smaller floor of 10 − 3 10^{-3} loses 1.4 1.4 points, and removing the floor or raising it to 0.1 0.1 lowers the average to 29.02 29.02 and 32.17 32.17 . The gains of the default floor are largest on GSM8K and OlympiadBench.
+ Table 12: Accuracy (%) of CIS on Qwen1.5-MoE-A2.7B for different floors κ \kappa with λ = 2.3 \lambda=2.3 . Mean ± \pm standard deviation over three seeds. 
+ κ \kappa | 
+ GSM8K 
+ | 
+ MATH500 
+ | 
+ SVAMP 
+ | 
+ Minerva 
+ | 
+ Olympiad 
+ | 
+ Avg 
+ | 
+ 0 0 | 
+ 55.62 ± 2.69 55.62_{\pm 2.69} 
+ | 
+ 20.87 ± 1.10 20.87_{\pm 1.10} 
+ | 
+ 59.78 ± 2.83 59.78_{\pm 2.83} 
+ | 
+ 5.88 ± 0.37 5.88_{\pm 0.37} 
+ | 
+ 2.97 ± 0.15 2.97_{\pm 0.15} 
+ | 
+ 29.02 ± 1.43 29.02_{\pm 1.43} 
+ | 
+ 10 − 3 10^{-3} | 
+ 64.01 ± 0.65 64.01_{\pm 0.65} 
+ | 
+ 24.00 ± 0.20 24.00_{\pm 0.20} 
+ | 
+ 68.67 ± 0.67 68.67_{\pm 0.67} 
+ | 
+ 6.86 ± 0.21 6.86_{\pm 0.21} 
+ | 
+ 3.51 ± 0.09 3.51_{\pm 0.09} 
+ | 
+ 33.41 ± 0.36 33.41_{\pm 0.36} 
+ | 
+ 5 × 10 − 3 5\times 10^{-3} (default) | 
+ 67.88 ± 1.64 67.88_{\pm 1.64} 
+ | 
+ 24.53 ± 1.03 24.53_{\pm 1.03} 
+ | 
+ 70.22 ± 1.35 70.22_{\pm 1.35} 
+ | 
+ 5.88 ± 0.64 5.88_{\pm 0.64} 
+ | 
+ 5.39 ± 0.62 5.39_{\pm 0.62} 
+ | 
+ 34.78 ± 0.25 34.78_{\pm 0.25} 
+ | 
+ 2 × 10 − 2 2\times 10^{-2} | 
+ 65.93 ± 2.31 65.93_{\pm 2.31} 
+ | 
+ 24.73 ± 0.95 24.73_{\pm 0.95} 
+ | 
+ 70.56 ± 2.46 70.56_{\pm 2.46} 
+ | 
+ 7.11 ± 0.21 7.11_{\pm 0.21} 
+ | 
+ 3.61 ± 0.09 3.61_{\pm 0.09} 
+ | 
+ 34.39 ± 1.20 34.39_{\pm 1.20} 
+ | 
+ 0.1 0.1 | 
+ 64.42 ± 1.67 64.42_{\pm 1.67} 
+ | 
+ 22.60 ± 4.06 22.60_{\pm 4.06} 
+ | 
+ 64.44 ± 1.95 64.44_{\pm 1.95} 
+ | 
+ 4.90 ± 0.85 4.90_{\pm 0.85} 
+ | 
+ 4.50 ± 0.37 4.50_{\pm 0.37} 
+ | 
+ 32.17 ± 1.28 32.17_{\pm 1.28} 
+ | 
+ D.3 Out-of-Domain Evaluation
+ Table 13: Out-of-domain accuracy (%) on Qwen1.5-MoE-A2.7B after RL on GSM8K. Mean ± \pm standard deviation over three seeds; Science, Code, and All are item-weighted over the knowledge, code, and all benchmarks. 
+ Method | 
+ MMLU 
+ | 
+ ARC-C 
+ | 
+ OBQA 
+ | 
+ HumanEval 
+ | 
+ MBPP 
+ | 
+ Science 
+ | 
+ Code 
+ | 
+ All 
+ | 
+ Base model (no RL) | 
+ 47.95 47.95 
+ | 
+ 72.61 72.61 
+ | 
+ 66.60 66.60 
+ | 
+ 44.51 44.51 
+ | 
+ 33.40 33.40 
+ | 
+ 55.88 55.88 
+ | 
+ 36.14 36.14 
+ | 
+ 53.49 53.49 
+ | 
+ No correction | 
+ 49.96 ± 0.36 49.96_{\pm 0.36} 
+ | 
+ 72.90 ± 0.65 72.90_{\pm 0.65} 
+ | 
+ 69.67 ± 0.42 69.67_{\pm 0.42} 
+ | 
+ 48.37 ± 1.86 48.37_{\pm 1.86} 
+ | 
+ 33.67 ± 1.40 33.67_{\pm 1.40} 
+ | 
+ 57.58 ± 0.23 57.58_{\pm 0.23} 
+ | 
+ 37.30 ± 1.52 37.30_{\pm 1.52} 
+ | 
+ 55.12 ± 0.34 55.12_{\pm 0.34} 
+ | 
+ Exact ratio | 
+ 50.49 ± 2.21 50.49_{\pm 2.21} 
+ | 
+ 67.49 ± 5.67 67.49_{\pm 5.67} 
+ | 
+ 69.20 ± 2.11 69.20_{\pm 2.11} 
+ | 
+ 50.00 ± 1.22 50.00_{\pm 1.22} 
+ | 
+ 33.27 ± 1.21 33.27_{\pm 1.21} 
+ | 
+ 56.56 ± 3.00 56.56_{\pm 3.00} 
+ | 
+ 37.40 ± 1.11 37.40_{\pm 1.11} 
+ | 
+ 54.24 ± 2.56 54.24_{\pm 2.56} 
+ | 
+ KPop † | 
+ 51.33 ± 0.23 51.33_{\pm 0.23} 
+ | 
+ 71.87 ± 1.08 71.87_{\pm 1.08} 
+ | 
+ 71.07 ± 1.21 71.07_{\pm 1.21} 
+ | 
+ 50.20 ± 3.57 50.20_{\pm 3.57} 
+ | 
+ 33.33 ± 1.89 33.33_{\pm 1.89} 
+ | 
+ 58.36 ± 0.33 58.36_{\pm 0.33} 
+ | 
+ 37.50 ± 2.19 37.50_{\pm 2.19} 
+ | 
+ 55.84 ± 0.25 55.84_{\pm 0.25} 
+ | 
+ IcePop | 
+ 51.79 ± 0.40 51.79_{\pm 0.40} 
+ | 
+ 72.81 ± 1.44 72.81_{\pm 1.44} 
+ | 
+ 71.40 ± 2.42 71.40_{\pm 2.42} 
+ | 
+ 52.64 ± 0.35 52.64_{\pm 0.35} 
+ | 
+ 35.40 ± 1.64 35.40_{\pm 1.64} 
+ | 
+ 58.93 ± 0.10 58.93_{\pm 0.10} 
+ | 
+ 39.66 ± 1.30 39.66_{\pm 1.30} 
+ | 
+ 56.60 ± 0.09 56.60_{\pm 0.09} 
+ | 
+ TIS | 
+ 48.76 ± 1.81 48.76_{\pm 1.81} 
+ | 
+ 69.77 ± 6.27 69.77_{\pm 6.27} 
+ | 
+ 70.87 ± 1.79 70.87_{\pm 1.79} 
+ | 
+ 48.17 ± 1.22 48.17_{\pm 1.22} 
+ | 
+ 33.47 ± 1.60 33.47_{\pm 1.60} 
+ | 
+ 56.15 ± 2.85 56.15_{\pm 2.85} 
+ | 
+ 37.10 ± 1.51 37.10_{\pm 1.51} 
+ | 
+ 53.85 ± 2.32 53.85_{\pm 2.32} 
+ | 
+ Seq-TIS | 
+ 51.43 ± 0.65 51.43_{\pm 0.65} 
+ | 
+ 73.41 ± 0.57 \mathbf{73.41}_{\pm 0.57} 
+ | 
+ 71.00 ± 1.91 71.00_{\pm 1.91} 
+ | 
+ 50.20 ± 2.75 50.20_{\pm 2.75} 
+ | 
+ 36.13 ± 1.33 \mathbf{36.13}_{\pm 1.33} 
+ | 
+ 58.80 ± 0.56 58.80_{\pm 0.56} 
+ | 
+ 39.61 ± 0.45 39.61_{\pm 0.45} 
+ | 
+ 56.48 ± 0.44 56.48_{\pm 0.44} 
+ | 
+ Seq-MIS | 
+ 50.45 ± 1.57 50.45_{\pm 1.57} 
+ | 
+ 72.35 ± 0.92 72.35_{\pm 0.92} 
+ | 
+ 70.80 ± 1.59 70.80_{\pm 1.59} 
+ | 
+ 50.81 ± 1.86 50.81_{\pm 1.86} 
+ | 
+ 35.87 ± 0.83 35.87_{\pm 0.83} 
+ | 
+ 57.88 ± 1.28 57.88_{\pm 1.28} 
+ | 
+ 39.56 ± 0.92 39.56_{\pm 0.92} 
+ | 
+ 55.66 ± 1.02 55.66_{\pm 1.02} 
+ | 
+ GSPO | 
+ 50.32 ± 1.82 50.32_{\pm 1.82} 
+ | 
+ 72.61 ± 1.19 72.61_{\pm 1.19} 
+ | 
+ 70.67 ± 3.29 70.67_{\pm 3.29} 
+ | 
+ 44.31 ± 3.36 44.31_{\pm 3.36} 
+ | 
+ 32.53 ± 1.30 32.53_{\pm 1.30} 
+ | 
+ 57.84 ± 1.72 57.84_{\pm 1.72} 
+ | 
+ 35.44 ± 1.76 35.44_{\pm 1.76} 
+ | 
+ 55.13 ± 1.69 55.13_{\pm 1.69} 
+ | 
+ FP16 | 
+ 49.19 ± 0.70 49.19_{\pm 0.70} 
+ | 
+ 73.27 ± 0.26 73.27_{\pm 0.26} 
+ | 
+ 68.67 ± 0.42 68.67_{\pm 0.42} 
+ | 
+ 48.78 ± 3.23 48.78_{\pm 3.23} 
+ | 
+ 34.47 ± 1.17 34.47_{\pm 1.17} 
+ | 
+ 57.06 ± 0.49 57.06_{\pm 0.49} 
+ | 
+ 38.00 ± 0.86 38.00_{\pm 0.86} 
+ | 
+ 54.75 ± 0.44 54.75_{\pm 0.44} 
+ | 
+ CIS (ours) | 
+ 51.87 ± 0.25 \mathbf{51.87}_{\pm 0.25} 
+ | 
+ 72.92 ± 1.28 72.92_{\pm 1.28} 
+ | 
+ 72.13 ± 1.75 \mathbf{72.13}_{\pm 1.75} 
+ | 
+ 53.25 ± 2.46 \mathbf{53.25}_{\pm 2.46} 
+ | 
+ 35.80 ± 2.40 35.80_{\pm 2.40} 
+ | 
+ 59.08 ± 0.52 \mathbf{59.08}_{\pm 0.52} 
+ | 
+ 40.11 ± 2.24 \mathbf{40.11}_{\pm 2.24} 
+ | 
+ 56.79 ± 0.71 \mathbf{56.79}_{\pm 0.71} 
+ | 
+ Table 13 evaluates the checkpoints of Table 1 on Qwen1.5-MoE-A2.7B on three knowledge benchmarks (MMLU-STEM, ARC-Challenge, and OpenBookQA) and two code benchmarks (HumanEval and MBPP), none of which the RL stage uses. Every trained arm ends above the untrained model on the 5,489 5{,}489 pooled items, so RL on GSM8K does not erase knowledge or coding ability. CIS has the highest pooled accuracy ( 56.79 56.79 ), but its margin over IcePop ( 56.60 56.60 ) is smaller than the standard deviations, so we do not claim a separation between the two. The exact ratio and TIS have the widest spreads on the pooled accuracy ( ± 2.56 \pm 2.56 and ± 2.32 \pm 2.32 ), as they do in Table 1 .
+ D.4 Computational Cost
+ (a)
+ (b)
+ Figure 11: Compute time per step on Qwen1.5-MoE-A2.7B, excluding checkpointing and evaluation. (a) Time by phase; dashed: no correction. (b) Mean response length. 
+ Table 14: Compute time per optimizer step (seconds) on eight A100 GPUs, mean ± \pm standard deviation over three seeds. Rescore is the training-engine forward pass that produces the training-side log-probabilities. 
+ Method | 
+ Rollout 
+ | 
+ Rescore 
+ | 
+ Train step 
+ | 
+ Advantage 
+ | 
+ Total 
+ | 
+ vs. no corr. 
+ | 
+ Length 
+ | 
+ No correction | 
+ 0.44 ± 0.02 0.44_{\pm 0.02} 
+ | 
+ 0.00 ± 0.00 0.00_{\pm 0.00} 
+ | 
+ 29.41 ± 0.08 29.41_{\pm 0.08} 
+ | 
+ 0.82 ± 0.02 0.82_{\pm 0.02} 
+ | 
+ 30.66 ± 0.09 30.66_{\pm 0.09} 
+ | 
+ — 
+ | 
+ 321 ± 1 321_{\pm 1} 
+ | 
+ Exact ratio | 
+ 0.48 ± 0.03 0.48_{\pm 0.03} 
+ | 
+ 6.50 ± 0.08 6.50_{\pm 0.08} 
+ | 
+ 23.26 ± 0.40 23.26_{\pm 0.40} 
+ | 
+ 0.72 ± 0.01 0.72_{\pm 0.01} 
+ | 
+ 30.97 ± 0.48 30.97_{\pm 0.48} 
+ | 
+ + 1.0 % +1.0\% 
+ | 
+ 252 ± 3 252_{\pm 3} 
+ | 
+ KPop † | 
+ 0.45 ± 0.01 0.45_{\pm 0.01} 
+ | 
+ 6.64 ± 0.58 6.64_{\pm 0.58} 
+ | 
+ 23.90 ± 2.08 23.90_{\pm 2.08} 
+ | 
+ 0.74 ± 0.03 0.74_{\pm 0.03} 
+ | 
+ 31.73 ± 2.68 31.73_{\pm 2.68} 
+ | 
+ + 3.5 % +3.5\% 
+ | 
+ 260 ± 24 260_{\pm 24} 
+ | 
+ IcePop | 
+ 0.49 ± 0.03 0.49_{\pm 0.03} 
+ | 
+ 6.51 ± 0.23 6.51_{\pm 0.23} 
+ | 
+ 23.12 ± 0.67 23.12_{\pm 0.67} 
+ | 
+ 0.77 ± 0.06 0.77_{\pm 0.06} 
+ | 
+ 30.88 ± 0.93 30.88_{\pm 0.93} 
+ | 
+ + 0.7 % +0.7\% 
+ | 
+ 250 ± 8 250_{\pm 8} 
+ | 
+ TIS | 
+ 0.48 ± 0.03 0.48_{\pm 0.03} 
+ | 
+ 6.40 ± 0.13 6.40_{\pm 0.13} 
+ | 
+ 22.89 ± 0.56 22.89_{\pm 0.56} 
+ | 
+ 0.74 ± 0.01 0.74_{\pm 0.01} 
+ | 
+ 30.51 ± 0.69 30.51_{\pm 0.69} 
+ | 
+ − 0.5 % -0.5\% 
+ | 
+ 249 ± 6 249_{\pm 6} 
+ | 
+ Seq-TIS | 
+ 0.49 ± 0.02 0.49_{\pm 0.02} 
+ | 
+ 7.39 ± 0.04 7.39_{\pm 0.04} 
+ | 
+ 26.44 ± 0.24 26.44_{\pm 0.24} 
+ | 
+ 0.72 ± 0.01 0.72_{\pm 0.01} 
+ | 
+ 35.03 ± 0.28 35.03_{\pm 0.28} 
+ | 
+ + 14.3 % +14.3\% 
+ | 
+ 289 ± 2 289_{\pm 2} 
+ | 
+ Seq-MIS | 
+ 0.49 ± 0.00 0.49_{\pm 0.00} 
+ | 
+ 7.61 ± 0.23 7.61_{\pm 0.23} 
+ | 
+ 27.44 ± 0.66 27.44_{\pm 0.66} 
+ | 
+ 0.74 ± 0.01 0.74_{\pm 0.01} 
+ | 
+ 36.28 ± 0.89 36.28_{\pm 0.89} 
+ | 
+ + 18.3 % +18.3\% 
+ | 
+ 300 ± 7 300_{\pm 7} 
+ | 
+ FP16 | 
+ 0.46 ± 0.03 0.46_{\pm 0.03} 
+ | 
+ 0.00 ± 0.00 0.00_{\pm 0.00} 
+ | 
+ 28.81 ± 0.34 28.81_{\pm 0.34} 
+ | 
+ 0.84 ± 0.05 0.84_{\pm 0.05} 
+ | 
+ 30.11 ± 0.40 30.11_{\pm 0.40} 
+ | 
+ − 1.8 % -1.8\% 
+ | 
+ 316 ± 2 316_{\pm 2} 
+ | 
+ CIS (ours) | 
+ 0.49 ± 0.03 0.49_{\pm 0.03} 
+ | 
+ 6.67 ± 0.13 6.67_{\pm 0.13} 
+ | 
+ 23.77 ± 0.48 23.77_{\pm 0.48} 
+ | 
+ 0.72 ± 0.01 0.72_{\pm 0.01} 
+ | 
+ 31.65 ± 0.62 31.65_{\pm 0.62} 
+ | 
+ + 3.2 % +3.2\% 
+ | 
+ 259 ± 4 259_{\pm 4} 
+ | 
+ Every operator is an elementwise map of the rollout-side and training-side log-probabilities, so no operator adds a forward or backward pass relative to the others. The arms that use the decoupled loss run one rescoring pass of the training engine per step (6.4 to 7.6 seconds), and the train step of these arms is shorter by a similar amount; the uncorrected and fp16 arms do not rescore. Figure 11 and Table 14 report the resulting compute time per step. The token-level operators lie between − 0.5 % -0.5\% and + 3.5 % +3.5\% of the uncorrected run, and CIS costs 3.2 % 3.2\% more. Seq-TIS and Seq-MIS cost 14 % 14\% and 18 % 18\% more, but they also generate longer responses (289 and 300 tokens against 249 to 260 for the token-level operators), and response length changes the step time independently of the operator. Normalizing by the number of tokens does not remove this confound either, because the uncorrected run processes the most tokens per step and is therefore the fastest per token. The wall-clock time between steps also includes checkpointing and evaluation, which differ between runs by up to 25 seconds per step because of how often each run was scheduled to evaluate, not because of the operator; we exclude them here.
+ D.5 Where Each Operator Acts
+ (a)
+ (b)
+ (c)
+ (d)
+ Figure 12: Tokens kept (blue) and truncated or masked (red) in the run of each operator (seed two), early, middle, and late in training; panel titles give the share acted on. (a) CIS. (b) IcePop. (c) TIS. (d) KPop † . 
+ Figure 12 shows which tokens each operator removes or down-weights during training. Early, middle, and late are the first, middle, and last twentieth of training; kept tokens are subsampled to 25,000 25{,}000 per panel, and between 68 % 68\% and 85 % 85\% of all tokens have π trn ​ ( y t ) > 0.99 \pi^{\mathrm{trn}}(y_{t})>0.99 and overlap in the upper right corner. Early in training the two probabilities agree closely and every operator acts on less than 1 % 1\% of tokens. As the policy sharpens, the spread around the diagonal grows. The operators then act on different regions of the plane. CIS truncates only above the diagonal, and its truncated tokens concentrate at π trn ​ ( y t ) → 1 \pi^{\mathrm{trn}}(y_{t})\to 1 , where the training engine is confident and the displacement exceeds the threshold. This concentration does not mean that the floor does most of the work. Applying Algorithm 1 to the logged tokens of the three CIS runs, about one third of the truncated tokens lie below the floor, where the cap equals 1 + λ ​ κ ≈ 1.01 1+\lambda\kappa\approx 1.01 , and these tokens account for only about 10 % 10\% of the total truncated excess ∑ t ( k t − f t ) \sum_{t}(k_{t}-f_{t}) ; more than half of it comes from tokens with 1 − p t ≥ 0.1 1-p_{t}\geq 0.1 . IcePop masks mainly below the diagonal, on tokens whose ratio falls under 0.5 0.5 , which the one-sided band of CIS leaves untouched. TIS caps the tokens whose training-side probability exceeds twice the inference-side probability, which lie mostly at low π inf ​ ( y t ) \pi^{\mathrm{inf}}(y_{t}) . KPop † masks tokens near the edges of the plane, where one engine assigns a probability close to one and the other does not, at a rate that grows to 2.1 % 2.1\% late in training. CIS and IcePop therefore act on complementary sets of tokens.
+ The KL mask and probability saturation. 
+The binary-KL metric of the KPop baseline is KL ( Bern ( p ) ∥ Bern ( q ) ) = p log ( p / q ) + ( 1 − p ) log ( ( 1 − p ) / ( 1 − q ) ) \mathrm{KL}(\mathrm{Bern}(p)\,\|\,\mathrm{Bern}(q))=p\log(p/q)+(1-p)\log((1-p)/(1-q)) evaluated in both directions, with p p and q q clamped to [ 10 − 8 , 1 − 10 − 8 ] [10^{-8},1-10^{-8}] . In single precision the upper clamp is the identity, so a token whose probability is exactly one on both engines yields 0 ⋅ log ⁡ ( 0 / 0 ) 0\cdot\log(0/0) , and a token whose probability is exactly one on one engine yields + ∞ +\infty ; the bounds check treats both as out of bounds. On the tokens logged in the KPop run, 16.5 % 16.5\% have probability exactly one on both engines and 2.8 % 2.8\% on one engine, which together with the 0.45 % 0.45\% of tokens whose finite metric exceeds the threshold reproduces the 22 % 22\% intervention rate that the framework reports. Recomputing the metric in double precision with a representable clamp and mapping the undefined case to zero gives a mask rate of 0.45 % 0.45\% . The main text reports this corrected variant as KPop † , so that the comparison is not driven by probability saturation. Figure 12 counts tokens, so the truncations of CIS appear
+concentrated at high confidence: 83 % 83\% of the tokens that CIS truncates have
+ p t ≥ 0.9 p_{t}\geq 0.9 , compared with 25 % 25\% under TIS. By removed weight, however, more
+than half of the truncation of CIS comes from tokens with p t < 0.9 p_{t}<0.9 .
+ D.6 Limitations
+ Models and engines. 
+We train only mixture-of-experts models, on which the mismatch has a heavy tail ( Appendix A ). On the dense control the displacement is concentrated near zero, so we expect every correction to matter less there, but we do not train a dense model. The measurements and the training runs use bf16 and specific inference and training engines; other kernels or numerical formats can change the size of the mismatch, in which case λ \lambda may need to be retuned. In asynchronous training, k t k_{t} also contains the policy lag of stale rollouts, which our analysis does not model separately; stale tokens make up less than 1 % 1\% of the tokens in our runs.
+ Hyperparameters and baselines. 
+The threshold λ \lambda and the floor κ \kappa are chosen from a preregistered grid on Qwen1.5-MoE-A2.7B and kept fixed for the other two models, whereas every baseline uses the default hyperparameters of its reference implementation. A comparable sweep for each baseline, and combinations of CIS with methods that reduce the mismatch at its source, such as routing replay ( Ma et al., 2025 ) or FP16 training ( Qi et al., 2025 ) , are left to future work.
+ Scope of the theory. 
+ Theorems 3.2 and 3.3 give upper bounds under bounded per-token gradients and independent token contributions; for correlated contributions, the sample size n n is replaced by n eff = n / ( 1 + ( n − 1 ) ​ ρ ¯ ) n_{\mathrm{eff}}=n/(1+(n-1)\bar{\rho}) ( Appendix B ). Any cap with a finite maximum admits a bound similar to Theorem 3.3 , so the theory explains why truncation is needed but does not by itself rank CIS against other bounded caps; that comparison rests on the experiments of Section 4 .
+ What the token-level correction does not correct. 
+The target gradient G 0 G_{0} corrects the conditional distribution of each token given its prefix and not the distribution of the prefix itself. Neither the exact ratio nor CIS removes the shift in the prefix distribution. Seq-TIS and Seq-MIS act on the product of the ratios over a response, which addresses the prefix, but the product leaves any fixed interval for most responses of a few hundred tokens: Seq-MIS rejects 95 % 95\% of the responses in our runs (Table 10 ), and Seq-TIS caps 12 12 to 17 % 17\% of them.
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

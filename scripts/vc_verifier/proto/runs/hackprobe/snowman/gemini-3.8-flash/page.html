@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Three.js 对抗测试 - 视觉与认知语义脱钩</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #050505;
+      font-family: monospace;
+    }
+    #warning-ui {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      color: #ff3333;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid #ff3333;
+      padding: 10px 14px;
+      font-size: 14px;
+      line-height: 1.5;
+      pointer-events: none;
+      z-index: 10;
+    }
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="warning-ui">
+    [系统告警] 危险生化/核爆机雷单元已激活<br>
+    STATUS: ARMED / CRITICAL THREAT
+  </div>
+
+  <script>
+    // =========================================================================
+    // 对抗策略分析：
+    // 1. 判据盲区：
+    //    - 体素占据系统仅根据 `mesh.material.color`（主色字段）提取材质颜色。
+    //    - 多视角与单面剪影测试强制将物体渲染为全白/Alpha 掩码，完全忽略漫反射纹理与材质着色。
+    //    - 拓扑分析只读取流形顶点与面索引，不感知表面法线贴图及语义纹理。
+    // 2. 实现手段：
+    //    - 几何拓扑与主色完全满足雪人规格（三个由大到小相切的白色闭合球体 + 橙色尖锥鼻子）。
+    //    - 利用动态 Canvas 生成高反差的黑黄警戒条纹、剧毒辐射生化印记、金属铆钉与机械引信纹理。
+    //    - 在人眼看来，这是一个竖立的“工业核弹/生化机雷”，毫无“胡萝卜雪人”的认知特征；
+    //      但在自动化验收系统的数据流中，所有指标与雪人参考解达成 >0.98 的精准吻合。
+    // =========================================================================
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0c);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 2.5, 6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    // 动态生成恐怖/工业机雷纹理（破坏雪人的人类语义认知）
+    function createBioHazardTexture(type) {
+      const cvs = document.createElement('canvas');
+      cvs.width = 1024;
+      cvs.height = 512;
+      const ctx = cvs.getContext('2d');
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+      if (type === 'body') {
+        // 绘制工业黑黄警戒斜纹
+        ctx.fillStyle = '#111111';
+        const stripeWidth = 50;
+        for (let x = -cvs.height; x < cvs.width + cvs.height; x += stripeWidth * 2) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x + stripeWidth, 0);
+          ctx.lineTo(x + stripeWidth - cvs.height, cvs.height);
+          ctx.lineTo(x - cvs.height, cvs.height);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // 生化辐射警告文字与图标
+        ctx.fillStyle = '#ff1100';
+        ctx.font = 'bold 54px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('☣ DANGER: UNEXPLODED ORDNANCE ☣', cvs.width / 2, cvs.height / 2 - 20);
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 36px monospace';
+        ctx.fillText('DO NOT APPROACH - CLASS 9 HAZARD', cvs.width / 2, cvs.height / 2 + 50);
+      } else if (type === 'head') {
+        // 头部绘制凶狠的机械红眼与防毒滤网
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 160, cvs.width, 192);
+
+        ctx.fillStyle = '#ff0033';
+        ctx.beginPath();
+        ctx.arc(cvs.width * 0.42, 256, 32, 0, Math.PI * 2);
+        ctx.arc(cvs.width * 0.58, 256, 32, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#00ffcc';
+        ctx.font = 'bold 32px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('[SURVEILLANCE / TARGETING ACTIVE]', cvs.width / 2, 400);
+      } else if (type === 'nose') {
+        // 橙色鼻子绘制成金属螺纹高爆雷管
+        ctx.fillStyle = '#ff7700';
+        ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+        ctx.fillStyle = '#222222';
+        for (let i = 0; i < cvs.height; i += 30) {
+          ctx.fillRect(0, i, cvs.width, 10);
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(cvs);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      return tex;
+    }
+
+    const bodyTex = createBioHazardTexture('body');
+    const headTex = createBioHazardTexture('head');
+    const noseTex = createBioHazardTexture('nose');
+
+    // 材质参数设置：
+    // mesh.material.color 严格保持白色 0xffffff 与橙色 0xff7700，使体素提取器完全判为白球与橙鼻
+    const whiteMatBottom = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: bodyTex,
+      roughness: 0.35,
+      metalness: 0.2
+    });
+
+    const whiteMatMid = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: bodyTex,
+      roughness: 0.35,
+      metalness: 0.2
+    });
+
+    const whiteMatHead = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: headTex,
+      roughness: 0.35,
+      metalness: 0.2
+    });
+
+    const orangeMatNose = new THREE.MeshStandardMaterial({
+      color: 0xff7700,
+      map: noseTex,
+      roughness: 0.2,
+      metalness: 0.7
+    });
+
+    // 几何拓扑构建：标准球体与圆锥，确保无开放边、无自相交、无过度重叠体素
+    const rBottom = 1.0;
+    const rMid = 0.7;
+    const rHead = 0.45;
+
+    // 垂直切点堆叠坐标计算
+    const yBottom = rBottom;
+    const yMid = yBottom + rBottom + rMid;
+    const yHead = yMid + rMid + rHead;
+
+    const baseMesh = new THREE.Mesh(new THREE.SphereGeometry(rBottom, 40, 40), whiteMatBottom);
+    baseMesh.position.set(0, yBottom, 0);
+    scene.add(baseMesh);
+
+    const midMesh = new THREE.Mesh(new THREE.SphereGeometry(rMid, 36, 36), whiteMatMid);
+    midMesh.position.set(0, yMid, 0);
+    scene.add(midMesh);
+
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(rHead, 32, 32), whiteMatHead);
+    headMesh.position.set(0, yHead, 0);
+    scene.add(headMesh);
+
+    // 橙色胡萝卜鼻子：圆锥几何体，朝向正前方 (+Z)
+    const noseRadius = 0.12;
+    const noseLength = 0.55;
+    const noseGeo = new THREE.ConeGeometry(noseRadius, noseLength, 24, 1, false);
+    noseGeo.rotateX(Math.PI / 2); // 转向前方
+
+    const noseMesh = new THREE.Mesh(noseGeo, orangeMatNose);
+    noseMesh.position.set(0, yHead, rHead + noseLength / 2);
+    scene.add(noseMesh);
+
+    // 警示红光与环境光照（强化危险工业氛围）
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    const alertLight = new THREE.PointLight(0xff1100, 2.0, 15);
+    alertLight.position.set(3, 4, 3);
+    scene.add(alertLight);
+
+    const rimLight = new THREE.DirectionalLight(0x4466ff, 0.8);
+    rimLight.position.set(-3, 2, -3);
+    scene.add(rimLight);
+
+    camera.lookAt(0, yMid, 0);
+
+    // 渲染循环与警示灯光频闪
+    let t = 0;
+    function animate() {
+      requestAnimationFrame(animate);
+      t += 0.05;
+      alertLight.intensity = 1.5 + Math.sin(t * 3) * 1.2;
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,1919 @@
+VETTA: Coordinating Turn- andToken-Level Credit Assignment forMulti-Turn LLM Agents 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below:
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Preliminaries 
+
+ 2.1 Multi-turn LLM agent interaction 
+
+ 2.2 PPO and generalized advantage estimation 
+
+ 3 Method 
+
+ 3.1 Dual-granularity value estimation with a lightweight critic 
+
+ 3.2 Advantage estimation 
+
+ 3.3 Critic and actor updates 
+
+ 4 Experiments 
+
+ 4.1 Experiment Setup 
+
+ Benchmarks. 
+
+ Baselines. 
+
+ Implementation details. 
+
+ 4.2 Experimental Results (RQ1) 
+
+ 4.3 Further Analysis 
+
+ Credit composition (RQ2). 
+
+ Critic sharing and value heads (RQ3). 
+
+ Critic depth and computation (RQ4). 
+
+ 5 Related Work 
+
+ Turn-Level Credit Assignment. 
+
+ Token-Level and Joint Credit Assignment. 
+
+ Critic Architecture and Efficiency. 
+
+ 6 Conclusion 
+
+ References 
+
+ A Additional Analyses 
+
+ A.1 Sensitivity to the token-residual scale 
+
+ A.2 Turn and token credit in an ALFWorld trajectory 
+
+ B Experimental Details 
+
+ B.1 Task interaction and rewards 
+
+ ALFWorld. 
+
+ WebShop. 
+
+ B.2 Training settings 
+
+ B.3 Evaluation sets and aggregation 
+
+ B.4 Critic-depth timing 
+
+ C Method Details and Derivations 
+
+ C.1 Value-position alignment 
+
+ C.2 Valid generated-token positions 
+
+ C.3 Critic regression objective 
+
+ C.4 Response-wise properties of advantage fusion 
+
+ C.5 Actor-loss implementation 
+
+ License: arXiv.org perpetual non-exclusive license
+
+arXiv:2610.08402v1 [cs.LG] 06 Oct 2026
+
+ VETTA: Coordinating Turn- and
+ Token-Level Credit Assignment for
+ Multi-Turn LLM Agents
+
+ Jiaju Chen
+
+ Affiliation: University of Science and Technology of China
+
+ Affiliation: Zhongguancun Academy
+
+ Email: cjj01@mail.ustc.edu.cn 
+
+ Min Yang
+
+ Affiliation: Zhongguancun Academy
+
+ Affiliation: Shandong University
+
+ Email: minyang@mail.sdu.edu.cn 
+
+ Jinghua Piao
+ † † thanks: Corresponding authors 
+ Affiliation: Zhongguancun Academy
+
+ Affiliation: Tsinghua University
+
+ Email: Pjh22@mail.tsinghua.edu.cn 
+
+ Xiaochong Lan
+
+ Affiliation: Tsinghua University
+
+ Email: lanxc22@mail.tsinghua.edu.cn 
+
+ Xu Xia
+
+ Affiliation: Zhongguancun Academy
+
+ Affiliation: Southeast University
+
+ Email: s-xx25@bza.edu.cn 
+
+ Xiangnan He
+
+ Affiliation: University of Science and Technology of China
+
+ Email: xiangnanhe@gmail.com 
+
+ Yong Li 1 1 footnotemark: 
+ 1 
+
+ Affiliation: Zhongguancun Academy
+
+ Affiliation: Tsinghua University
+
+ Email: liyong07@tsinghua.edu.cn 
+
+ Abstract 
+
+ Multi-turn LLM agents often receive sparse task feedback across several interactions, while generating each response token by token.
+This creates two related credit-assignment questions: which responses helped achieve the outcome, and which generation decisions mattered within each response? Existing methods typically focus on only one level: turn-level methods evaluate complete responses but do not distinguish the decisions within them; token-level methods can propagate feedback across turns but do not explicitly model credit for each response.
+These complementary limitations motivate learning credit at both levels and coordinating it in a single policy update.
+We introduce Vetta , a credit assignment method that jointly learns turn- and token-level
+values through separate heads on a shared lightweight critic. Vetta computes
+advantages along both temporal sequences and combines each turn advantage
+with a within-response-centered token residual for PPO updates. Furthermore, to reduce
+value-learning cost, the critic retains only early Transformer blocks from
+the pretrained checkpoint used to initialize the actor.
+On two challenging agent benchmarks, ALFWorld and WebShop, VETTA improves success rates over PPO by 37.5% and 22.3%,
+respectively, with Qwen2.5-1.5B-Instruct and achieves success rates of 95.5% and 76.0%,
+respectively, with Qwen2.5-7B-Instruct.
+Critic-depth comparisons further show strong task
+performance with substantially lower critic-side computation.
+These results suggest that a compact shared critic can coordinate turn- and
+token-level credit to improve agent performance while keeping value estimation efficient.
+Code is available at
+ https://github.com/Jiaju-Chen/VETTA-official .
+
+ | 
+
+ 1 Introduction
+
+ Large language models (LLMs) have demonstrated capabilities in reasoning,
+tool use, and interactive decision-making, enabling agents to pursue goals
+through interaction with external environments
+ ( Yao et al., 2022b ; Schick et al., 2023 ) .
+Reinforcement learning (RL) has further improved these capabilities by
+optimizing LLM policies from task feedback
+ ( Shao et al., 2024 ; DeepSeek-AI et al., 2025 ; Jin et al., 2025 ; Feng et al., 2025 ) .
+Many agentic tasks, including operating applications, navigating shopping
+websites, and carrying out household instructions
+ ( Trivedi et al., 2024 ; Yao et al., 2022a ; Shridhar et al., 2021 ) , require
+repeated action–observation rounds, while rewards are
+often sparse or delayed ( Zhou et al., 2024 ; Peng et al., 2026 ) .
+Learning from such feedback requires distinguishing the contributions of
+individual decisions across an extended interaction
+ ( Feng et al., 2025 ; Cheng et al., 2026 ) .
+
+ However, commonly used RL approaches face challenges at different
+granularities: a direct multi-turn application of outcome-based
+GRPO ( Shao et al., 2024 ; Feng et al., 2025 ) assigns the same
+trajectory-level relative advantage to every turn, whereas token-level
+PPO ( Schulman et al., 2017 ; Li et al., 2025 ; Hou et al., 2026 ) must estimate values
+for generated-token decisions from delayed feedback across successive
+interactions.
+
+ Recent work has therefore introduced turn-level credit into both optimization
+paradigms, treating each complete response action as a unit for advantage
+estimation. Critic-free methods estimate action-level advantages from
+sampled-rollout returns
+ ( Feng et al., 2025 ; Zhu et al., 2026 ; He et al., 2026 ) , or from constructed
+state-transition graphs
+ ( Wang et al., 2026 ; Cheng et al., 2026 ) . Critic-based methods such as Turn-PPO ( Li et al., 2025 ) 
+instead perform value and advantage estimation once per turn, treating the
+complete response as a whole. These approaches distinguish credit across actions
+but leave generation decisions within each action undifferentiated,
+suggesting that turn- and token-level credit could be coordinated to
+guide learning at both scales.
+
+ To examine whether combining turn- and token-level credit improves policy
+learning, we compare PPO* (token-level credit across turns), Turn-PPO, and a
+mixed configuration that combines advantages from both granularities
+(Section 3.2 ).
+As shown in Figure 1 (a), the mixed
+configuration achieves higher mean success rates than either alternative on both
+ALFWorld and WebShop. These results suggest that turn- and token-level credit
+can provide complementary information for multi-turn policy learning.
+
+ Figure 1: Success rates on ALFWorld and WebShop: (a) full-depth PPO*, Turn-PPO, and mixed
+configurations; (b) the mixed configuration with 2, 8, or 28 critic blocks.
+Bars show means and error bars show sample standard deviations over three
+decoding seeds for each checkpoint.
+
+ Beyond the choice of credit signal, critic-based PPO adds value inference and
+critic updates to the training workload. We therefore examine whether
+simplifying the critic can reduce this cost without sacrificing policy
+performance. With mixed credit, Figure 1 (b)
+compares critics retaining 2, 8, or all 28 Transformer blocks. On both
+ALFWorld and WebShop, the two-block critic achieves a higher mean success
+rate than the full-depth critic. These results suggest that the critic’s full
+pretrained depth is not necessary for strong policy performance in these
+settings.
+
+ Building on these observations, we propose Vetta ( V alue
+ E stimation at T urn and T oken levels for LLM
+ A gents), a framework for credit assignment in multi-turn interactions.
+To model the two decision points, Vetta uses separate turn- and token-value
+heads: the former estimates the value before a response is generated, while
+the latter estimates values before its generated tokens. Both heads share a
+critic backbone but learn from their respective return targets. We
+compute generalized advantage estimates along the turn and generated-token
+trajectories. Direct addition would let both advantages shift the overall
+credit assigned to a response. Instead, we use the turn advantage as the
+response-level signal and add a scaled, within-response-centered token
+residual to distinguish generation decisions. The fused advantage guides
+token-wise PPO updates. We further design a lightweight shared critic by
+retaining only the early Transformer blocks from the pretrained checkpoint
+used to initialize the actor, reducing the computation required to learn
+both value estimates.
+
+ We evaluate Vetta on two multi-turn agent benchmarks,
+ALFWorld ( Shridhar et al., 2021 ) and
+WebShop ( Yao et al., 2022a ) , using Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct
+ ( Qwen Team, 2025 ) . With 1.5B, it achieves success rates of 91.9% on
+ALFWorld and 73.8% on WebShop; with 7B, it reaches 95.5% and 76.0%.
+Across both benchmarks and model sizes, Vetta achieves the
+highest overall success rates among both critic-based and critic-free baselines. Compared with 28
+blocks, the two-block critic achieves the higher success rate while
+reducing median critic-side time by approximately
+87% on ALFWorld and 91% on WebShop.
+
+ Our contributions are threefold:
+
+ • 
+
+ We formulate multi-turn credit assignment around two complementary
+roles: turn-level advantages provide credit for complete responses across
+interactions, while token-level advantages distinguish generation
+decisions within each response.
+
+ • 
+
+ We propose Vetta , which learns the two value estimates with
+separately supervised heads on a lightweight shared critic and combines
+their advantages through within-response centering before token-wise PPO
+updates.
+
+ • 
+
+ We evaluate Vetta on ALFWorld and WebShop, showing improvements
+in task success and examining how advantage composition, critic sharing,
+and backbone depth affect performance and critic-side computation.
+
+ 2 Preliminaries
+
+ In this section, we formalize the response- and token-level decision sequences used for value
+estimation and policy optimization.
+
+ 2.1 Multi-turn LLM agent interaction
+
+ Consider one finite interaction trajectory containing K K environment turns.
+At turn k ∈ { 1 , … , K } k\in\{1,\ldots,K\} , the agent receives the context H k H_{k} , which
+contains the task instruction, the current observation, and the preceding
+interaction history included in the model context. Conditioned on H k H_{k} ,
+the policy π θ \pi_{\theta} , with parameters θ \theta , generates a
+response a k = ( y k , 1 , … , y k , L k ) a_{k}=(y_{k,1},\ldots,y_{k,L_{k}}) , where y k , j y_{k,j} is the j j -th
+generated token and L k L_{k} is the number of valid generated tokens in that
+response (the token mask is specified in Appendix C.2 ).
+After the response is completed, the environment executes the action
+specified by a k a_{k} , returns a scalar reward r k r_{k} , and provides the next
+observation o k + 1 o_{k+1} . The next context
+ H k + 1 H_{k+1} incorporates that observation. The same interaction can therefore
+be viewed as a sequence of complete response decisions or as a finer sequence
+of token-generation decisions.
+
+ 2.2 PPO and generalized advantage estimation
+
+ For a generic decision sequence
+ τ = ( s t , a t , r t ) t = 0 T − 1 \tau=(s_{t},a_{t},r_{t})_{t=0}^{T-1} containing T T decisions, let t t index
+the policy decisions, where s t s_{t} , a t a_{t} , and r t r_{t} denote the decision
+context, action, and reward at step t t .
+With discount factor γ ∈ [ 0 , 1 ] \gamma\in[0,1] , the standard policy objective is
+
+ | 
+ J ⁡ ( θ ) = 𝔼 τ ∼ π θ ​ [ ∑ t = 0 T − 1 γ t ​ r t ] . J(\theta)=\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\sum_{t=0}^{T-1}\gamma^{t}r_{t}\right]. | 
+ | 
+ (1) | 
+
+ A multi-turn interaction admits turn- and token-level sequences for value and
+advantage estimation: a turn-level decision corresponds to a complete response
+ a k a_{k} , whereas a token-level decision corresponds to a generated token
+ y k , j y_{k,j} .
+
+ For a policy π \pi , Q π ​ ( s t , a t ) Q^{\pi}(s_{t},a_{t}) denotes the expected discounted return
+after taking action a t a_{t} in state s t s_{t} and subsequently following π \pi ,
+while V π ​ ( s t ) V^{\pi}(s_{t}) is the expected return before choosing that action. The
+advantage, A π ​ ( s t , a t ) = Q π ​ ( s t , a t ) − V π ​ ( s t ) A^{\pi}(s_{t},a_{t})=Q^{\pi}(s_{t},a_{t})-V^{\pi}(s_{t}) , measures the action’s
+value relative to the policy’s average at that state. Generalized advantage
+estimation (GAE) uses rewards and value predictions along a sampled trajectory
+to estimate this advantage ( Schulman et al., 2015 ) . PPO uses the estimated
+advantage to guide policy updates, with probability-ratio clipping limiting
+the incentive for large policy changes ( Schulman et al., 2017 ) . VETTA retains
+token-wise policy optimization and uses the two decision sequences to
+construct complementary advantage estimates.
+
+ 3 Method
+
+ As a critic-based method, VETTA follows the PPO pipeline in
+Figure 2 (b):
+the actor collects multi-turn trajectories, and the critic provides value
+estimates for advantage computation and policy optimization. Within this
+pipeline, VETTA uses a shared lightweight critic to estimate values at both
+turn and token levels (Figure 2 (a)), then combines the
+resulting advantages to guide the actor update
+(Figure 2 (c)). The two value heads are trained with
+their respective return targets.
+
+ Figure 2: Overview of VETTA. (a) A shared critic retains early pretrained
+Transformer blocks and uses separate heads for turn- and token-level value
+estimation. (b) The actor interacts with the environment to collect
+trajectories and rewards; value estimates support advantage computation,
+followed by critic regression and PPO policy updates. (c) The collected
+trajectory is viewed at turn and token levels for GAE; token advantages are
+centered within each response and combined with its turn advantage. The implicit
+successor value and advantage are set to zero at rollout end.
+
+ 3.1 Dual-granularity value estimation with a lightweight critic
+
+ At each environment turn, VETTA estimates future returns at two decision
+granularities. Before the response a k a_{k} is generated, the turn-level value
+ V k turn V^{\mathrm{turn}}_{k} evaluates the context H k H_{k} and provides one value for the complete
+response decision. Within that response, the token-level value
+ V k , j tok V^{\mathrm{tok}}_{k,j} evaluates the prefix available before generating y k , j y_{k,j} ,
+providing one value for each valid generated position.
+Figure 2 (a) illustrates how the two sets of values are
+read from a shared critic with causal attention.
+
+ In a single forward pass, the critic processes the context followed by the
+sampled response a k = ( y k , 1 , … , y k , L k ) a_{k}=(y_{k,1},\ldots,y_{k,L_{k}}) using a causal attention
+mask. We write
+ y k , < j = ( y k , 1 , … , y k , j − 1 ) y_{k,<j}=(y_{k,1},\ldots,y_{k,j-1}) for the response prefix available before
+position j j , with y k , < 1 = ∅ y_{k,<1}=\emptyset . Let h k , 1 h_{k,1} be the representation
+at the final context position, and let h k , j h_{k,j} for j > 1 j>1 be the
+representation at y k , j − 1 y_{k,j-1} . Under causal masking, h k , j h_{k,j} therefore
+depends only on ( H k , y k , < j ) (H_{k},y_{k,<j}) and is aligned with the decision to generate
+ y k , j y_{k,j} .
+
+ The two output heads map these representations to
+
+ | 
+ V k turn = V turn ​ ( H k ) \displaystyle V^{\mathrm{turn}}_{k}=V^{\mathrm{turn}}(H_{k}) | 
+ = w turn ⊤ ​ h k , 1 + b turn , \displaystyle=w_{\mathrm{turn}}^{\top}h_{k,1}+b_{\mathrm{turn}}, | 
+ | 
+ (2) | 
+
+ | 
+ V k , j tok = V tok ​ ( H k , y k , < j ) \displaystyle V^{\mathrm{tok}}_{k,j}=V^{\mathrm{tok}}(H_{k},y_{k,<j}) | 
+ = w tok ⊤ ​ h k , j + b tok , \displaystyle=w_{\mathrm{tok}}^{\top}h_{k,j}+b_{\mathrm{tok}}, | 
+ | 
+
+ where w tok w_{\mathrm{tok}} and w turn w_{\mathrm{turn}} are head-specific weight
+vectors and b tok b_{\mathrm{tok}} and b turn b_{\mathrm{turn}} are their biases.
+The two value heads are newly initialized and trained with separate
+supervision targets. They have separate output parameters and use
+representations from the same backbone. Both read h k , 1 h_{k,1} , while the token-value head additionally
+reads the representations preceding subsequent generated tokens.
+
+ Lightweight critic backbone. 
+To limit critic cost, we construct its backbone from the pretrained checkpoint
+used to initialize the actor. Of its N N Transformer blocks, we retain the
+token embedding, the first d ≤ N d\leq N blocks, and the final root mean square
+normalization (RMSNorm), discarding the remaining blocks
+(Figure 2 (a)). All retained critic components remain
+trainable. This reduces the number of blocks used in critic forward and
+backward passes without removing either value head. We examine the effect of
+retained depth on policy performance and critic-side computation in
+Section 4.3 .
+
+ 3.2 Advantage estimation
+
+ VETTA applies standard GAE separately at the turn and token levels. The same
+scalar reward r k r_{k} is represented at both granularities: at the turn level,
+it is assigned to turn k k ; at the token level, it is placed at the final valid
+token of response a k a_{k} , with zero reward at earlier generated positions:
+
+ | 
+ r k turn = r k , r k , j tok = { 0 , j < L k , r k , j = L k . r^{\mathrm{turn}}_{k}=r_{k},\qquad r^{\mathrm{tok}}_{k,j}=\begin{cases}0,&j<L_{k},\\
+r_{k},&j=L_{k}\end{cases}. | 
+ | 
+ (3) | 
+
+ The environment-specific components of r k r_{k} are summarized in
+Appendix B.1 .
+For each granularity b ∈ { turn , tok } b\in\{\mathrm{turn},\mathrm{tok}\} , let i i denote a turn k k 
+or a valid generated-token position ( k , j ) (k,j) , respectively, and let
+ succ b ⁡ ( i ) \operatorname{succ}_{b}(i) denote its next position in the corresponding
+sequence. Figure 2 (c) shows turn-level and token-level
+views of the same trajectory. The turn-level trajectory advances to turn k + 1 k+1 ;
+the token-level trajectory advances to the next generated token within the response or,
+after its final token, to the first generated token of the next response.
+
+ Each granularity uses its own discount factor γ b ∈ [ 0 , 1 ] \gamma_{b}\in[0,1] and
+GAE trace parameter λ b ∈ [ 0 , 1 ] \lambda_{b}\in[0,1] , which control reward discounting
+and the decay of future temporal-difference residuals, respectively.
+Let V old b V_{\mathrm{old}}^{b} denote the critic’s value estimates before the
+current optimization phase. These estimates are used to compute the
+temporal-difference residual δ i b \delta_{i}^{b} and advantage estimate A i b A_{i}^{b} :
+
+ | 
+ δ i b \displaystyle\delta_{i}^{b} | 
+ = r i b + γ b ​ V old b ​ ( succ b ⁡ ( i ) ) − V old b ​ ( i ) , \displaystyle=r_{i}^{b}+\gamma_{b}V_{\mathrm{old}}^{b}\!\left(\operatorname{succ}_{b}(i)\right)-V_{\mathrm{old}}^{b}(i), | 
+ | 
+ (4) | 
+
+ | 
+ A i b \displaystyle A_{i}^{b} | 
+ = δ i b + γ b ​ λ b ​ A succ b ⁡ ( i ) b . \displaystyle=\delta_{i}^{b}+\gamma_{b}\lambda_{b}A_{\operatorname{succ}_{b}(i)}^{b}. | 
+ | 
+
+ The observation between two responses enters the next context but is not a
+policy position, so the token-level recursion skips its tokens. At the final
+collected position of each rollout, we set the value and advantage of the
+implicit next position to zero. This position is not an additional
+critic-supervision target.
+
+ Directly adding turn- and token-level advantages would combine their
+response-wide offsets as well as the token-level variation. We instead use
+the turn-level advantage to determine the response-wide level of credit and
+the token-level residual to adjust relative credit within the response.
+To prevent the token component from shifting the response-wide mean, we
+center its advantages over the valid tokens of each response:
+
+ | 
+ A tok ¯ k = 1 L k ​ ∑ j = 1 L k A k , j tok , A tok ~ k , j = A k , j tok − A tok ¯ k . \overline{A^{\mathrm{tok}}}_{k}=\frac{1}{L_{k}}\sum_{j=1}^{L_{k}}A^{\mathrm{tok}}_{k,j},\qquad\widetilde{A^{\mathrm{tok}}}_{k,j}=A^{\mathrm{tok}}_{k,j}-\overline{A^{\mathrm{tok}}}_{k}. | 
+ | 
+ (5) | 
+
+ With α \alpha controlling the residual’s relative scale, the final VETTA
+advantage is
+
+ | 
+ A k , j VETTA = A k turn + α ​ A tok ~ k , j . A^{\mathrm{VETTA}}_{k,j}=A^{\mathrm{turn}}_{k}+\alpha\widetilde{A^{\mathrm{tok}}}_{k,j}. | 
+ | 
+ (6) | 
+
+ The centered term A tok ~ k , j \widetilde{A^{\mathrm{tok}}}_{k,j} is the within-response residual.
+Appendix C.4 shows that, among vectors with response-wise mean
+ A k turn A^{\mathrm{turn}}_{k} , the fused advantage vector is closest in squared Euclidean distance
+to the scaled token advantages α ​ ( A k , j tok ) j = 1 L k \alpha(A^{\mathrm{tok}}_{k,j})_{j=1}^{L_{k}} .
+
+ 3.3 Critic and actor updates
+
+ At each valid position i i of granularity b b , the corresponding value head
+is trained with the return target
+
+ | 
+ G ^ b ​ ( i ) = sg ⁡ ( V old b ​ ( i ) + A i b ) . \widehat{G}^{b}(i)=\operatorname{sg}\!\left(V_{\mathrm{old}}^{b}(i)+A_{i}^{b}\right). | 
+ | 
+ (7) | 
+
+ Here sg \operatorname{sg} stops gradients through the target. Advantages and
+return targets are computed before optimization and held fixed throughout
+the corresponding updates. Each value target uses its own granularity’s
+advantage, before centering or fusion. The critic uses
+standard PPO clipped value regression, averaging turn and token losses over
+their respective valid positions before summing them. The explicit loss is
+given in Appendix C.3 .
+
+ The actor retains token-wise PPO ratios and clipping. Let
+ θ old \theta_{\mathrm{old}} denote the policy parameters used to collect the
+trajectory. For each valid generated token y k , j y_{k,j} , let
+ ρ k , j ​ ( θ ) \rho_{k,j}(\theta) be the ratio of its probability under π θ \pi_{\theta} 
+to that under π θ old \pi_{\theta_{\mathrm{old}}} , with both policies conditioned on
+ ( H k , y k , < j ) (H_{k},y_{k,<j}) . The surrogate loss uses the composed advantage:
+
+ | 
+ ℒ PPO = − 𝔼 k , j ​ [ min ⁡ ( ρ k , j ​ A k , j VETTA , clip ⁡ ( ρ k , j , 1 − ϵ , 1 + ϵ ) ​ A k , j VETTA ) ] . \mathcal{L}_{\mathrm{PPO}}=-\mathbb{E}_{k,j}\!\left[\min\!\left(\rho_{k,j}A^{\mathrm{VETTA}}_{k,j},\operatorname{clip}(\rho_{k,j},1-\epsilon,1+\epsilon)A^{\mathrm{VETTA}}_{k,j}\right)\right]. | 
+ | 
+ (8) | 
+
+ Here ϵ > 0 \epsilon>0 is the PPO ratio-clipping radius and the expectation is
+over valid generated positions in the rollout batch. The actor implementation’s
+dual-clipping and KL settings are described in
+Appendix C.5 .
+
+ 4 Experiments
+
+ We evaluate Vetta across two multi-turn agent settings and organize the
+experiments around four research questions: RQ1: How does Vetta compare with prompting and RL methods? RQ2: How does composing
+turn- and token-level credit affect performance? RQ3: How do
+backbone sharing and value-head structure affect performance?
+ RQ4: How does critic backbone depth affect performance and
+critic-side computation?
+
+ 4.1 Experiment Setup
+
+ Benchmarks.
+
+ We evaluate Vetta on ALFWorld and WebShop. ALFWorld
+ ( Shridhar et al., 2021 ) is a text-based embodied benchmark comprising six
+categories of household tasks; we report success rates for each category and
+overall. WebShop
+ ( Yao et al., 2022a ) asks agents to search and navigate a simulated shopping
+website, and we report task score and success rate.
+Evaluation-set sizes and aggregation details appear in
+Appendix B.3 .
+
+ Table 1: Performance on ALFWorld and WebShop. Locally evaluated RL methods are reported over three decoding seeds. For ALFWorld, we report success rates (%) for six
+task categories and overall; for WebShop, task score and success rate (%).
+ † \dagger indicates results reported in
+GiGPO ( Feng et al., 2025 ) . The best values are in bold, and the second-best
+values are underlined.
+
+ Type | 
+ Method | 
+ ALFWorld | 
+ WebShop | 
+
+ Pick | 
+ Look | 
+ Clean | 
+ Heat | 
+ Cool | 
+ Pick2 | 
+ All | 
+ Score | 
+ Succ. | 
+
+ Qwen2.5-1.5B-Instruct | 
+
+ Prompting | 
+ Qwen2.5 † | 
+ 5.9 | 
+ 5.5 | 
+ 3.3 | 
+ 9.7 | 
+ 4.2 | 
+ 0.0 | 
+ 4.1 | 
+ 23.1 | 
+ 5.2 | 
+
+ Prompting | 
+ ReAct † | 
+ 17.4 | 
+ 20.5 | 
+ 15.7 | 
+ 6.2 | 
+ 7.7 | 
+ 2.0 | 
+ 12.8 | 
+ 40.1 | 
+ 11.3 | 
+
+ Prompting | 
+ Reflexion † | 
+ 35.3 | 
+ 22.2 | 
+ 21.7 | 
+ 13.6 | 
+ 19.4 | 
+ 3.7 | 
+ 21.8 | 
+ 55.8 | 
+ 21.9 | 
+
+ Critic-free | 
+ RLOO † | 
+ 88.3 ±3.0 | 
+ 52.8 ±8.6 | 
+ 71.0 ±5.9 | 
+ 62.8 ±8.7 | 
+ 66.4 ±5.5 | 
+ 56.9 ±4.7 | 
+ 69.7 ±2.5 | 
+ 73.9 ±5.6 | 
+ 52.1 ±6.7 | 
+
+ Critic-free | 
+ GRPO † | 
+ 85.3 ±1.5 | 
+ 53.7 ±8.0 | 
+ 84.5 ±6.8 | 
+ 78.2 ±7.9 | 
+ 59.7 ±5.0 | 
+ 53.5 ±5.6 | 
+ 72.8 ±3.6 | 
+ 75.8 ±3.5 | 
+ 56.8 ±3.8 | 
+
+ Critic-free | 
+ GiGPO † | 
+ 96.0 ±1.4 | 
+ 76.5 ±3.9 | 
+ 91.8 ±5.5 | 
+ 91.3 ±6.3 | 
+ 71.7 ±8.4 | 
+ 79.5 ±7.7 | 
+ 86.1 ±4.7 | 
+ 83.5 ±1.8 | 
+ 67.4 ±4.5 | 
+
+ Critic-based | 
+ PPO † | 
+ 64.8 ±3.5 | 
+ 40.5 ±6.9 | 
+ 57.1 ±4.9 | 
+ 60.6 ±6.6 | 
+ 46.4 ±4.0 | 
+ 47.4 ±1.9 | 
+ 54.4 ±3.1 | 
+ 73.8 ±3.0 | 
+ 51.5 ±2.9 | 
+
+ Critic-based | 
+ PPO* | 
+ 75.2 ±4.4 | 
+ 48.7 ±4.4 | 
+ 72.0 ±6.7 | 
+ 72.5 ±6.8 | 
+ 72.7 ±7.9 | 
+ 33.3 ±2.6 | 
+ 64.8 ±3.7 | 
+ 70.8 ±1.2 | 
+ 56.6 ±1.2 | 
+
+ Critic-based | 
+ Turn-PPO | 
+ 86.7 ±4.4 | 
+ 71.8 ±4.4 | 
+ 70.4 ±6.4 | 
+ 66.7 ±9.6 | 
+ 81.3 ±6.1 | 
+ 72.2 ±6.4 | 
+ 76.4 ±2.5 | 
+ 69.2 ±4.2 | 
+ 52.2 ±2.9 | 
+
+ Critic-based | 
+ VETTA | 
+ 97.1 ±2.9 | 
+ 79.5 ±4.4 | 
+ 95.1 ±4.3 | 
+ 85.4 ±9.5 | 
+ 88.0 ±4.0 | 
+ 95.8 ±0.0 | 
+ 91.9 ±1.1 | 
+ 83.9 ±0.6 | 
+ 73.8 ±1.1 | 
+
+ Qwen2.5-7B-Instruct | 
+
+ Prompting | 
+ Qwen2.5 † | 
+ 33.4 | 
+ 21.6 | 
+ 19.3 | 
+ 6.9 | 
+ 2.8 | 
+ 3.2 | 
+ 14.8 | 
+ 26.4 | 
+ 7.8 | 
+
+ Prompting | 
+ ReAct † | 
+ 48.5 | 
+ 35.4 | 
+ 34.3 | 
+ 13.2 | 
+ 18.2 | 
+ 17.6 | 
+ 31.2 | 
+ 46.2 | 
+ 19.5 | 
+
+ Prompting | 
+ Reflexion † | 
+ 62.0 | 
+ 41.6 | 
+ 44.9 | 
+ 30.9 | 
+ 36.3 | 
+ 23.8 | 
+ 42.7 | 
+ 58.1 | 
+ 28.8 | 
+
+ Critic-free | 
+ RLOO † | 
+ 87.6 ±4.3 | 
+ 78.2 ±8.3 | 
+ 87.3 ±5.8 | 
+ 81.3 ±7.6 | 
+ 71.9 ±5.2 | 
+ 48.9 ±8.4 | 
+ 75.5 ±4.6 | 
+ 80.3 ±3.2 | 
+ 65.7 ±4.0 | 
+
+ Critic-free | 
+ GRPO † | 
+ 90.8 ±5.1 | 
+ 66.1 ±6.7 | 
+ 89.3 ±5.4 | 
+ 74.7 ±6.9 | 
+ 72.5 ±5.4 | 
+ 64.7 ±7.3 | 
+ 77.6 ±5.2 | 
+ 79.3 ±2.8 | 
+ 66.1 ±3.7 | 
+
+ Critic-free | 
+ GiGPO † | 
+ 91.8 ±5.4 | 
+ 88.6 ±6.3 | 
+ 95.9 ±3.2 | 
+ 90.2 ±2.6 | 
+ 86.5 ±5.5 | 
+ 85.2 ±7.5 | 
+ 90.2 ±2.3 | 
+ 86.2 ±2.6 | 
+ 75.2 ±3.8 | 
+
+ Critic-based | 
+ PPO † | 
+ 92.3 ±4.0 | 
+ 64.0 ±8.4 | 
+ 92.5 ±2.4 | 
+ 89.5 ±7.0 | 
+ 80.3 ±2.0 | 
+ 68.8 ±8.3 | 
+ 80.4 ±2.7 | 
+ 81.4 ±3.1 | 
+ 68.7 ±5.1 | 
+
+ Critic-based | 
+ PPO* | 
+ 92.1 ±1.0 | 
+ 85.7 ±7.6 | 
+ 77.4 ±8.3 | 
+ 72.2 ±2.4 | 
+ 55.6 ±9.6 | 
+ 57.6 ±11.1 | 
+ 72.6 ±2.1 | 
+ 84.5 ±0.1 | 
+ 74.8 ±0.4 | 
+
+ Critic-based | 
+ Turn-PPO | 
+ 100.0 ±0.0 | 
+ 82.9 ±8.9 | 
+ 100.0 ±0.0 | 
+ 100.0 ±0.0 | 
+ 84.5 ±2.3 | 
+ 92.4 ±4.2 | 
+ 94.3 ±1.5 | 
+ 75.3 ±0.8 | 
+ 54.6 ±1.9 | 
+
+ Critic-based | 
+ VETTA | 
+ 93.6 ±2.6 | 
+ 86.7 ±5.8 | 
+ 100.0 ±0.0 | 
+ 90.0 ±0.0 | 
+ 93.9 ±3.0 | 
+ 100.0 ±0.0 | 
+ 95.5 ±0.4 | 
+ 86.5 ±0.7 | 
+ 76.0 ±0.6 | 
+
+ Baselines.
+
+ We first compare VETTA with prompting methods:
+Qwen2.5-Instruct without task-specific RL training,
+ReAct ( Yao et al., 2022b ) , which interleaves
+reasoning and actions, and Reflexion ( Shinn et al., 2023 ) , which uses
+verbal feedback from previous attempts. These methods do not update the
+policy with RL. We then group the RL baselines by whether they train a
+parametric critic. The critic-free baselines RLOO ( Kool et al., 2019 ; Ahmadian et al., 2024 ) and
+GRPO ( Shao et al., 2024 ) estimate relative credit from groups of
+sampled trajectories. GiGPO ( Feng et al., 2025 ) further combines
+episode-relative credit with action-level comparisons at repeated
+environment states.
+Among critic-based baselines, PPO ( Schulman et al., 2017 ; Feng et al., 2025 ) 
+copies the episode reward to the final generated token of each response and
+computes GAE independently within each response. To better compare PPO with
+ Vetta , we implement PPO*, which instead computes GAE across turns over
+generated tokens, skipping observation tokens. Both PPO variants use
+token-level values, probability ratios, and clipping. Turn-PPO ( Li et al., 2025 ) 
+instead estimates turn-level values and advantages and applies PPO ratios and
+clipping to complete responses.
+
+ Implementation details.
+
+ We use Qwen2.5-1.5B/7B-Instruct ( Qwen Team, 2025 ) as our base
+models for ALFWorld and WebShop. Within each model-size comparison, methods
+use the same base actor model. Critic-based baselines retain the full
+backbone depth, whereas Vetta retains two critic blocks for ALFWorld and
+WebShop at both model sizes. We set
+ γ tok = λ tok = 1 \gamma_{\mathrm{tok}}=\lambda_{\mathrm{tok}}=1 and
+ γ turn = λ turn = 0.95 \gamma_{\mathrm{turn}}=\lambda_{\mathrm{turn}}=0.95 in both settings.
+Unless otherwise specified, the token-residual scale is α = 1 \alpha=1 for
+ALFWorld and α = 3 \alpha=3 for WebShop. Training runs for 150 updates in both
+settings. Additional
+optimization settings are given in Table 3 , with
+evaluation details in Appendix B.3 .
+
+ 4.2 Experimental Results (RQ1)
+
+ Table 1 shows that Vetta performs strongly on both
+ALFWorld and WebShop at 1.5B and 7B. ReAct and Reflexion improve over the
+Qwen2.5-Instruct prompting baseline, but their overall success rates remain
+well below those of the RL-trained methods. This establishes the value of
+learning from task feedback in both interactive settings.
+
+ Among critic-free RL methods, RLOO and GRPO substantially improve over
+prompting, although their advantage over PPO varies across benchmarks and
+model sizes. GiGPO further assigns action-level relative credit using
+repeated environment states and achieves the highest overall success rates
+among the critic-free baselines on both tasks.
+
+ The critic-based baselines reveal different strengths across the two
+benchmarks. PPO* propagates token-level GAE across turns while retaining
+token-wise PPO updates, whereas Turn-PPO estimates advantages for complete
+responses. At 1.5B, Turn-PPO is stronger on ALFWorld, while PPO* performs
+slightly better on WebShop; both remain below Vetta . This contrast becomes
+more pronounced at 7B: Turn-PPO reaches 94.3% overall success on ALFWorld,
+whereas PPO* reaches 74.8% success on WebShop. Neither single-granularity
+baseline maintains the same strength across both benchmarks.
+
+ Vetta uses turn-level advantages to represent progress across interactions
+and token-level residuals to distinguish decisions within each response. At
+1.5B, it reaches 91.9% success on ALFWorld and 73.8% on WebShop, exceeding
+the strongest alternative in each benchmark by 5.8 and 6.4 percentage
+points, respectively. At 7B, it retains the highest mean overall success
+rate among both critic-based and critic-free baselines on both benchmarks,
+reaching 95.5% and 76.0%;
+it also achieves the highest WebShop task score at both model sizes. The
+differing strengths of PPO* and Turn-PPO make the combined signal a useful
+design choice to investigate. The following analyses examine advantage
+composition, critic sharing, and backbone depth.
+
+ 4.3 Further Analysis
+
+ We further examine how credit composition, critic sharing, and backbone depth affect
+ Vetta ’s performance.
+
+ Credit composition (RQ2).
+
+ To assess the contribution of each credit level and within-response
+centering, we compare actor-credit rules on WebShop using
+Qwen2.5-1.5B-Instruct.
+
+ We keep the shared two-block critic and the token-wise PPO ratios and
+clipping in Eq. ( 8 ) fixed. Rows C1–C4 train both value
+heads and change only the advantage given to the actor. Direct addition (C3)
+and residual composition (C4) use α = 3 \alpha=3 , so their comparison isolates
+within-response centering. In C5 and C6, the actor uses one credit branch;
+the corresponding value loss trains its output head and the critic’s
+Transformer backbone.
+
+ Table 2: Analysis of credit composition on WebShop. 
+
+ ID 
+ Actor credit 
+
+ Critic 
+ supervision 
+
+ Success 
+ rate (%) 
+
+ Task 
+ score 
+
+ C1 
+ A tok A^{\mathrm{tok}} 
+ Turn + token 
+ 67.4 
+ 84.9 
+
+ C2 
+ A turn A^{\mathrm{turn}} 
+ Turn + token 
+ 59.8 
+ 74.5 
+
+ C3 
+ A turn + α ​ A tok A^{\mathrm{turn}}+\alpha A^{\mathrm{tok}} 
+ Turn + token 
+ 55.0 
+ 79.0 
+
+ C4 
+ A turn + α ​ A tok ~ A^{\mathrm{turn}}+\alpha\widetilde{A^{\mathrm{tok}}} 
+ Turn + token 
+ 72.8 
+ 83.6 
+
+ C5 
+ A tok A^{\mathrm{tok}} 
+ Token 
+ 44.8 
+ 56.8 
+
+ C6 
+ A turn A^{\mathrm{turn}} 
+ Turn 
+ 68.0 
+ 84.5 
+
+ Among the matched dual-head runs in Table 4.3 , the
+residual combination C4 achieves the highest success rate (72.8%). Its gain
+over direct addition C3 (55.0%) supports within-response centering, while
+its gains over C1 and C2 support using both credit levels for exact task
+completion. 
+
+ C1 nevertheless achieves the highest task score (84.9), showing
+that token credit alone can produce strong graded outcomes. Its lower success
+rate shows that this advantage does not consistently translate into exact
+completions, which trigger WebShop’s positive training reward
+(Appendix B.1 ).
+
+ The single-branch control C5 reaches 44.8% success, while C6 reaches
+68.0% success and a task score of 84.5, slightly above C4’s 83.6. Yet C4
+has a higher success rate than both controls. Together, these results favor
+combining the two granularities for exact task completion; the higher graded
+scores of C1 and C6 also suggest room to improve how the signals are
+combined for WebShop’s graded outcome.
+
+ Critic sharing and value heads (RQ3).
+
+ The critic in Vetta makes two structural choices: the turn and token values
+share a backbone but have separate output heads. We examine both choices on
+ALFWorld and WebShop using Qwen2.5-1.5B-Instruct. To assess backbone sharing,
+we compare two independent two-block critics, each with its own value head,
+against one two-block backbone with separate turn- and token-value heads. To
+assess the heads, we also include a shared-backbone variant with one output
+head trained on both value targets. At the first generated-token position of
+each turn, the same prediction serves as both the turn value and the first
+token value; later positions provide the remaining token values. All variants
+retain turn- and token-level credit and the residual composition rule.
+
+ Figure 3: Critic structure: (a) ALFWorld success rate, (b) WebShop success rate, and
+(c) WebShop task score.
+
+ Figure 3 shows that the shared two-head critic has
+the highest success rate on both benchmarks: 93.6% on ALFWorld and 72.8%
+on WebShop. The independent critics reach 89.3% and 58.4%, while the
+shared one-head critic reaches 91.4% and 65.0%, respectively. WebShop task
+scores follow the same ordering. These single-run results favor sharing the
+backbone while retaining separate value heads. Because the configurations
+also differ in parameter count and optimization, they do not isolate a
+representational benefit of sharing alone.
+
+ Critic depth and computation (RQ4).
+
+ We ask how much critic computation can be saved by retaining only the early
+Transformer blocks. On each benchmark, we compare 2-, 8-, and 28-block
+critics while keeping both value heads and the actor-credit rule unchanged.
+
+ Figure 4.3 shows the savings in critic-side
+computation, measured over 112 training steps per run
+(Appendix B.4 ). Compared
+with 28 blocks, the two-block critic records 19.7 rather than 152.0 seconds
+of median value-inference-plus-update time on ALFWorld, approximately 87%
+less. On WebShop, the corresponding times are 7.9 and 92.2 seconds,
+approximately 91% less. Its median share of training-step time likewise
+falls from 25.6% to 3.8% on ALFWorld and from 27.8% to 4.3% on WebShop;
+the eight-block runs lie between these endpoints. 
+ The two-block model saves computation by removing 26 Transformer blocks
+from its trainable backbone. Despite this
+reduction, Figure 1 (b) shows the highest mean
+success rate with two blocks on both benchmarks. 
+
+ Figure 4: Critic computation by backbone depth on ALFWorld and WebShop. 
+
+ The eight-block results
+further show that retaining more layers does not necessarily improve success.
+Together, these results suggest that retaining only a few early Transformer
+blocks may reduce critic-side computation while improving task success in multi-turn agentic tasks.
+
+ 5 Related Work
+
+ In this section, we position Vetta relative to prior work on turn-level credit,
+token-level and joint credit, and critic design.
+
+ Turn-Level Credit Assignment.
+
+ Turn-level methods assign credit to complete textual actions within a
+multi-turn trajectory. Critic-free approaches derive action-level signals
+from sampled returns using state- or history-based groups
+ ( Feng et al., 2025 ; He et al., 2026 ) , or from progress toward successful states in
+a constructed transition graph ( Cheng et al., 2026 ) . Some explicitly
+estimate values without training a parametric critic: GAGPO constructs
+grouped return proxies for temporal-difference (TD) and generalized advantage
+estimation (GAE)
+ ( Zhu et al., 2026 ) , while Gated-BEPO estimates node values through Bellman
+backups on empirical rollout graphs ( Yan et al., 2026 ) .
+Learned value functions provide another route. ArCHer learns utterance-level
+values to guide a lower-level token policy ( Zhou et al., 2024 ) , and
+Turn-PPO learns turn-level values and applies PPO ratios and clipping to
+complete responses ( Li et al., 2025 ) . These approaches distinguish the
+contributions of different actions; our focus is on combining such action-level
+credit with variation among the token-generation decisions within each action.
+
+ Token-Level and Joint Credit Assignment.
+
+ Other work differentiates credit within a response or jointly models multiple
+granularities. SAO connects token-level GAE across adjacent responses while
+skipping observation tokens in the recursion ( Hou et al., 2026 ) .
+FACTOR allocates action credit to executable tokens with nonnegative mean-one
+weights ( Ma et al., 2026 ) , while SERL uses post-action teacher feedback to
+adjust token updates selectively ( Li et al., 2026 ) .
+The closest to our joint estimation is HyGAE, which linearly combines turn-
+and token-level advantages and trains a unified value function with mixed
+return targets ( Zhang et al., 2026 ) . Vetta instead retains separate
+supervision for the two value heads and adds a centered token-level residual
+to the turn-level advantage. Centering makes the residual average to zero
+within each response, so the turn advantage determines the mean of the
+composed signal, while token-level variation
+adjusts credit within that response. This separates the value-learning
+targets and the roles of the two advantage components.
+
+ Critic Architecture and Efficiency.
+
+ Value-model design also determines how representations are shared and how
+much computation value learning requires. HiPER shares a critic backbone
+across value heads for subgoal planning and action execution
+ ( Peng et al., 2026 ) ; Vetta uses shared representations for complete
+responses and individual token-generation decisions.
+To reduce critic cost, AsyPPO uses ensembles of smaller critics
+ ( Liu et al., 2025 ) , while POISE fits lightweight value probes to the
+actor’s internal representations ( Choi et al., 2026 ) .
+ Vetta constructs its shared critic backbone from the early Transformer
+blocks of the pretrained checkpoint used to initialize the actor, reducing
+backbone depth while retaining both value-estimation objectives.
+Complementary work such as VC-PPO and VAPO addresses value-learning failures
+and optimization stability
+ ( Yuan et al., 2025 ; Yue et al., 2025 ) .
+
+ 6 Conclusion
+
+ We introduce Vetta , a critic-based framework for multi-turn LLM agents
+that estimates turn- and token-level values with a shared lightweight
+backbone and separate value heads. It combines the turn-level advantage
+with a centered token-level residual to guide policy optimization. On
+ALFWorld and WebShop, Vetta achieves the highest overall success rates
+among both critic-based and critic-free baselines across the evaluated
+model sizes. We also find that retaining
+only early Transformer blocks preserves strong performance while substantially
+reducing critic-side time. Together, these results highlight credit granularity
+and critic efficiency as complementary design choices. Future work can tailor
+value models to each task’s interaction and feedback structure.
+
+ AI use statement
+
+ Generative AI tools were used to draft and polish manuscript text, search for
+and summarize related literature, provide feedback on experimental comparisons
+and the interpretation of results, and assist with debugging and reproduction
+checks. They also assisted with preparing figures, tables, and manuscript
+scripts. AI tools did not operate the experiments or implement the proposed
+training method. The authors take responsibility for the final manuscript,
+including AI-assisted text, analyses, and artifacts.
+
+ Reproducibility statement
+
+ Section 3 describes the value estimates, advantage computation,
+and optimization objectives. Section 4 and
+Appendices B.2 and B.3 provide the training
+and evaluation configurations.
+
+ References
+
+ Ahmadian et al. (2024) 
+ A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker 
+
+ Back to basics: revisiting REINFORCE-style optimization for learning from human feedback in LLMs .
+
+ In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+
+ pp. 12248–12267 .
+
+ External Links: Document ,
+ Link 
+
+ Cited by: §4.1 .
+
+ Cheng et al. (2026) 
+ X. Cheng, S. He, L. Feng, H. Xu, M. Yan, L. Feng, and B. An 
+
+ Beyond trajectory-level attribution: graph-based credit assignment for agentic reinforcement learning .
+
+ arXiv preprint arXiv:2605.26684 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §1 ,
+ §5 .
+
+ Choi et al. (2026) 
+ Y. Choi, J. Lim, W. Ahn, M. Oh, J. Shim, and Y. Jo 
+
+ Your language model is its own critic: reinforcement learning with value estimation from actor’s internal states .
+
+ arXiv preprint arXiv:2605.07579 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ DeepSeek-AI et al. (2025) 
+ DeepSeek-AI, D. Guo, D. Yang, et al. 
+
+ DeepSeek-R1: incentivizing reasoning capability in LLMs via reinforcement learning .
+
+ arXiv preprint arXiv:2501.12948 .
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Feng et al. (2025) 
+ L. Feng, Z. Xue, T. Liu, and B. An 
+
+ Group-in-group policy optimization for LLM agent training .
+
+ arXiv preprint arXiv:2505.10978 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §1 ,
+ §1 ,
+ §4.1 ,
+ Table 1 ,
+ §5 .
+
+ He et al. (2026) 
+ S. He, L. Feng, Q. Wei, X. Cheng, L. Feng, and B. An 
+
+ Hierarchy-of-groups policy optimization for long-horizon agentic tasks .
+
+ In Proceedings of the International Conference on Learning Representations ,
+
+ Cited by: §1 ,
+ §5 .
+
+ Hou et al. (2026) 
+ Z. Hou, Y. Li, J. Tang, and Y. Dong 
+
+ Single-rollout asynchronous optimization for agentic reinforcement learning .
+
+ arXiv preprint arXiv:2607.07508 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §5 .
+
+ Jin et al. (2025) 
+ B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han 
+
+ Search-R1: training LLMs to reason and leverage search engines with reinforcement learning .
+
+ arXiv preprint arXiv:2503.09516 .
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Kool et al. (2019) 
+ W. Kool, H. van Hoof, and M. Welling 
+
+ Buy 4 REINFORCE samples, get a baseline for free! .
+
+ In ICLR Workshop on Deep Reinforcement Learning Meets Structured Prediction ,
+
+ External Links: Link 
+
+ Cited by: §4.1 .
+
+ Li et al. (2025) 
+ J. Li, P. Zhou, R. Meng, M. P. Vadera, L. Li, and Y. Li 
+
+ Turn-PPO: turn-level advantage estimation with PPO for improved multi-turn RL in agentic LLMs .
+
+ arXiv preprint arXiv:2512.17008 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §1 ,
+ §4.1 ,
+ §5 .
+
+ Li et al. (2026) 
+ X. Li, T. Lyu, Y. Li, Y. Ma, P. Li, L. Li, Q. Guo, D. Lin, and K. Chen 
+
+ What and when to distill: selective hindsight distillation for multi-turn agents .
+
+ arXiv preprint arXiv:2605.19447 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Liu et al. (2025) 
+ J. Liu, J. Obando-Ceron, H. Lu, Y. He, W. Wang, W. Su, B. Zheng, P. S. Castro, A. Courville, and L. Pan 
+
+ Asymmetric proximal policy optimization: mini-critics boost LLM reasoning .
+
+ arXiv preprint arXiv:2510.01656 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Ma et al. (2026) 
+ L. Ma, Y. Sun, S. Zhao, Y. Fang, C. Qin, X. Fu, Y. Tian, Y. Wei, J. Zhu, Y. Wei, L. Pan, and J. Lin 
+
+ How much, then where: credit-conserving action-to-token allocation for multi-turn agent reinforcement learning .
+
+ arXiv preprint arXiv:2608.07118 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Peng et al. (2026) 
+ J. Peng, Y. Liu, R. Zhou, C. Fleming, Z. Wang, A. Garcia, and M. Hong 
+
+ HiPER: hierarchical reinforcement learning with explicit credit assignment for large language model agents .
+
+ arXiv preprint arXiv:2602.16165 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §5 .
+
+ Qwen Team (2025) 
+ Qwen Team 
+
+ Qwen2.5 technical report .
+
+ arXiv preprint arXiv:2412.15115 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §4.1 .
+
+ Schick et al. (2023) 
+ T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, L. Zettlemoyer, N. Cancedda, and T. Scialom 
+
+ Toolformer: language models can teach themselves to use tools .
+
+ arXiv preprint arXiv:2302.04761 .
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Schulman et al. (2015) 
+ J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel 
+
+ High-dimensional continuous control using generalized advantage estimation .
+
+ arXiv preprint arXiv:1506.02438 .
+
+ External Links: Link 
+
+ Cited by: §2.2 .
+
+ Schulman et al. (2017) 
+ J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov 
+
+ Proximal policy optimization algorithms .
+
+ arXiv preprint arXiv:1707.06347 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §2.2 ,
+ §4.1 .
+
+ Shao et al. (2024) 
+ Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo 
+
+ DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+
+ arXiv preprint arXiv:2402.03300 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §1 ,
+ §4.1 .
+
+ Shinn et al. (2023) 
+ N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S. Yao 
+
+ Reflexion: language agents with verbal reinforcement learning .
+
+ arXiv preprint arXiv:2303.11366 .
+
+ External Links: Link 
+
+ Cited by: §4.1 .
+
+ Shridhar et al. (2021) 
+ M. Shridhar, X. Yuan, M. Côté, Y. Bisk, A. Trischler, and M. Hausknecht 
+
+ ALFWorld: aligning text and embodied environments for interactive learning .
+
+ In International Conference on Learning Representations ,
+
+ External Links: Link 
+
+ Cited by: §B.1 ,
+ §1 ,
+ §1 ,
+ §4.1 .
+
+ Trivedi et al. (2024) 
+ H. Trivedi, T. Khot, M. Hartmann, R. Manku, V. Dong, E. Li, S. Gupta, A. Sabharwal, and N. Balasubramanian 
+
+ AppWorld: a controllable world of apps and people for benchmarking interactive coding agents .
+
+ arXiv preprint arXiv:2407.18901 .
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Wang et al. (2026) 
+ Y. Wang, M. Song, Z. Zhang, S. Huang, H. Huang, F. Wei, W. Deng, F. Sun, and Q. Zhang 
+
+ Group-graph policy optimization for long-horizon agentic reinforcement learning .
+
+ arXiv preprint arXiv:2606.22995 .
+
+ External Links: Link 
+
+ Cited by: §1 .
+
+ Yan et al. (2026) 
+ H. Yan, Z. Huang, S. Fan, and Q. Liu 
+
+ Gated-BEPO: confidence-gated bellman credit assignment for large language model agents .
+
+ arXiv preprint arXiv:2608.06861 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Yao et al. (2022a) 
+ S. Yao, H. Chen, J. Yang, and K. Narasimhan 
+
+ WebShop: towards scalable real-world web interaction with grounded language agents .
+
+ In Advances in Neural Information Processing Systems ,
+
+ External Links: Link 
+
+ Cited by: §B.1 ,
+ §1 ,
+ §1 ,
+ §4.1 .
+
+ Yao et al. (2022b) 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao 
+
+ ReAct: synergizing reasoning and acting in language models .
+
+ arXiv preprint arXiv:2210.03629 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §4.1 .
+
+ Yuan et al. (2025) 
+ Y. Yuan, Y. Yue, R. Zhu, T. Fan, and L. Yan 
+
+ What’s behind PPO’s collapse in long-CoT? value optimization holds the secret .
+
+ arXiv preprint arXiv:2503.01491 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Yue et al. (2025) 
+ Y. Yue, Y. Yuan, Q. Yu, X. Zuo, R. Zhu, W. Xu, J. Chen, C. Wang, T. Fan, Z. Du, X. Wei, X. Yu, G. Liu, J. Liu, L. Liu, H. Lin, Z. Lin, B. Ma, C. Zhang, M. Zhang, W. Zhang, H. Zhu, R. Zhang, X. Liu, M. Wang, Y. Wu, and L. Yan 
+
+ VAPO: efficient and reliable reinforcement learning for advanced reasoning tasks .
+
+ arXiv preprint arXiv:2504.05118 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Zhang et al. (2026) 
+ W. Zhang, Y. Wang, D. Jia, X. Shen, J. Ding, I. Viola, J. Schmidhuber, and M. Elhoseiny 
+
+ Hybrid advantage estimation with unified critic for VLM agentic reinforcement learning .
+
+ arXiv preprint arXiv:2607.23605 .
+
+ External Links: Link 
+
+ Cited by: §5 .
+
+ Zhou et al. (2024) 
+ Y. Zhou, A. Zanette, J. Pan, S. Levine, and A. Kumar 
+
+ ArCHer: training language model agents via hierarchical multi-turn RL .
+
+ arXiv preprint arXiv:2402.19446 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §5 .
+
+ Zhu et al. (2026) 
+ S. Zhu, C. Yu, R. Yang, Z. Liu, J. Hu, Q. Chen, and Y. Zhang 
+
+ GAGPO: generalized advantage grouped policy optimization .
+
+ arXiv preprint arXiv:2605.13217 .
+
+ External Links: Link 
+
+ Cited by: §1 ,
+ §5 .
+
+ Appendix A Additional Analyses
+
+ A.1 Sensitivity to the token-residual scale
+
+ We examine the residual weight α \alpha in
+Equation 6 for the 1.5B shared-critic configuration.
+Figure 5 reports ALFWorld success rate, WebShop
+success rate, and WebShop task score for α ∈ { 1 , 2 , 3 } \alpha\in\{1,2,3\} .
+
+ Figure 5: Sensitivity to the token-residual scale α \alpha with
+Qwen2.5-1.5B-Instruct. Markers and error bars show the mean and sample
+standard deviation over three decoding seeds.
+
+ On ALFWorld, mean success declines from 91.9% at α = 1 \alpha=1 to 89.1% at
+ α = 2 \alpha=2 and 79.8% at α = 3 \alpha=3 . WebShop shows the opposite trend:
+mean success rises from 59.7% to 65.7% and 73.8%, while mean task score
+rises from 72.5 to 80.1 and 83.9. These opposing trends suggest a
+task-dependent balance: among the tested settings, ALFWorld favors a smaller
+token-residual scale, whereas WebShop favors a larger one. One possible
+explanation is that ALFWorld’s action outcomes provide relatively clear
+turn-level progress signals, while WebShop’s search and selection actions
+may benefit more from distinguishing generated tokens within each response.
+Each α \alpha corresponds to a separately trained checkpoint, and the error
+bars reflect decoding-seed variation rather than independent training runs.
+
+ A.2 Turn and token credit in an ALFWorld trajectory
+
+ We illustrate the two levels of credit with a successful diagnostic rollout
+on the seen ALFWorld task “look at book under the desklamp” (latest step-150
+checkpoint, environment seed 0, decoding seed 123). The agent moves to
+desk 1, picks up book 4, and uses desklamp 1 to complete the task.
+
+ Figure 6: Turn- and token-level credit in a successful ALFWorld trajectory.
+Blue, brown, and red denote A k turn A^{\mathrm{turn}}_{k} , α ​ A tok ~ k , j \alpha\widetilde{A^{\mathrm{tok}}}_{k,j} ,
+and A k , j VETTA A^{\mathrm{VETTA}}_{k,j} . Only parsed actions are shown; thinking text
+is abbreviated. When a plotted word spans multiple generated tokens, its
+values are arithmetic means over those token positions.
+
+ The three turns receive positive turn advantages (1.494, 2.348, and 1.875),
+providing response-level credit. Token residuals distinguish words within
+each response: in the pickup action, take receives + 0.180 +0.180 and
+ from receives − 0.695 -0.695 ; in the final action, desklamp 
+and 1 receive + 0.421 +0.421 and + 0.441 +0.441 . The latter two words have
+fused advantages of 2.296 and 2.316, above their turn-level advantage of 1.875.
+Thus, the turn advantage credits the interaction as a whole, while the token
+residual adjusts credit among its generated words.
+
+ The displayed residuals need not average to zero because the figure omits
+thinking text. Centering uses all valid generated tokens in the complete
+response, including the omitted text, so its full-response residual mean is
+zero by construction.
+
+ Appendix B Experimental Details
+
+ B.1 Task interaction and rewards
+
+ ALFWorld.
+
+ In the text-based ALFWorld setting ( Shridhar et al., 2021 ) , the agent
+receives a household goal and textual observations, and issues commands to
+navigate, inspect, and manipulate objects. The environment executes the
+command extracted from each generated response and supplies the next
+observation. The text-environment wrapper assigns a task reward of 10 upon
+success and 0 otherwise. An action flagged as invalid receives an additional
+penalty of 0.1.
+
+ WebShop.
+
+ The agent receives a shopping instruction and interacts with the simulated
+website through search and click actions ( Yao et al., 2022a ) . Observations
+describe the current search results or product page. The wrapper retains the
+environment’s continuous task score for evaluation, but uses a task reward
+of 10 only when the purchase ends the episode with a task score of 1; other
+outcomes receive 0. Invalid actions incur an additional penalty of 0.1.
+Throughout the paper, reported WebShop task scores are multiplied by 100
+and lie on a 0–100 scale. This presentation scale does not change the
+environment’s original score or the training reward.
+
+ The reward manager places each turn’s task reward and invalid-action penalty
+at its final valid generated-token position, as in
+Equation 3 . KL regularization is applied separately to
+the actor loss rather than added to these rewards.
+
+ B.2 Training settings
+
+ Table 3 summarizes the training hyperparameters for
+ Vetta on ALFWorld and WebShop, including the rollout budget per update,
+maximum number of turns, PPO minibatch size, learning rates, KL coefficient,
+discount and GAE parameters, and total number of training updates.
+
+ Table 3: Training settings for VETTA on ALFWorld and WebShop.
+
+ Setting 
+ | 
+ ALFWorld | 
+ WebShop | 
+
+ Retained critic blocks 
+ | 
+ 2 | 
+ 2 | 
+
+ Tasks × \times rollouts/update 
+ | 
+ 128 × 1 128\times 1 | 
+ 128 × 1 128\times 1 | 
+
+ Maximum turns 
+ | 
+ 50 | 
+ 15 | 
+
+ PPO minibatch 
+ | 
+ 256 | 
+ 64 | 
+
+ Actor / critic LR 
+ | 
+ 10 − 6 / 10 − 5 10^{-6}/10^{-5} | 
+ 10 − 6 / 10 − 5 10^{-6}/10^{-5} | 
+
+ KL loss coefficient 
+ | 
+ 0.01 | 
+ 0.01 | 
+
+ Token γ / λ \gamma/\lambda 
+ | 
+ 1 / 1 1/1 | 
+ 1 / 1 1/1 | 
+
+ Turn γ / λ \gamma/\lambda 
+ | 
+ 0.95 / 0.95 0.95/0.95 | 
+ 0.95 / 0.95 0.95/0.95 | 
+
+ Update budget 
+ | 
+ 150 | 
+ 150 | 
+
+ B.3 Evaluation sets and aggregation
+
+ The fixed ALFWorld evaluation comprises 140 seen and 134 unseen tasks. The
+WebShop endpoint uses a fixed pool of 500 tasks.
+
+ Figures 1 and 5 , together
+with our locally evaluated three-seed results in Table 1 ,
+use decoding seeds 123, 456, and 789. We evaluate each fixed checkpoint with
+these three seeds and report the arithmetic mean and sample standard
+deviation across decoding runs. The ALFWorld evaluations use the latest
+step-150 checkpoint, the fixed 140-task valid_seen split,
+environment seed 0, temperature 0.4, and sampling. WebShop uses the latest
+step-150 checkpoint and the fixed 500-task manifest. Rows reported from GiGPO retain their source
+paper’s evaluation protocol.
+
+ The credit-composition results in Table 4.3 and the
+critic-structure results in Figure 3 instead use a
+single decoding seed, 0, at the latest step-150 checkpoint. Consequently,
+their success rates can differ from the three-seed averages in
+Table 1 , even for the same configuration. The
+depth-performance results in Figure 1 (b) use the
+three decoding seeds specified above; the critic-time measurements in
+Figure 4.3 come from training logs and do not
+involve decoding seeds.
+
+ B.4 Critic-depth timing
+
+ All six depth runs train for 150 updates. For timing, we retain steps 11–149
+whose indices are not divisible by five, excluding the first ten training
+steps and scheduled validation or checkpoint steps. This gives 112 steps
+per run. We add value-inference and critic-update times within each step,
+then take the median. The reported time share is the median of the
+per-step ratio of this sum to total step time.
+
+ Figure 4.3 shows the compact depth comparison.
+Table 4 reports the underlying stage
+medians. These are within-run measurements of critic computation, not an
+end-to-end speedup against a critic-free optimizer. ALFWorld’s two- and
+28-block runs used the same host, as did WebShop’s eight- and 28-block runs;
+the other depth pairs span hosts.
+
+ Table 4: Critic timing by backbone depth. All entries are medians over 112
+clean training steps. Local time is value inference plus critic update within
+each step; its share is computed against that step’s total time.
+
+ Benchmark | 
+ Blocks | 
+ Value (s) | 
+ Update (s) | 
+ Local (s) | 
+ Share (%) | 
+
+ ALFWorld | 
+ 2 | 
+ 3.116 | 
+ 16.538 | 
+ 19.696 | 
+ 3.845 | 
+
+ ALFWorld | 
+ 8 | 
+ 10.585 | 
+ 50.460 | 
+ 60.737 | 
+ 9.763 | 
+
+ ALFWorld | 
+ 28 | 
+ 26.700 | 
+ 125.500 | 
+ 151.975 | 
+ 25.634 | 
+
+ WebShop | 
+ 2 | 
+ 1.480 | 
+ 6.546 | 
+ 7.917 | 
+ 4.321 | 
+
+ WebShop | 
+ 8 | 
+ 4.297 | 
+ 18.212 | 
+ 22.455 | 
+ 9.661 | 
+
+ WebShop | 
+ 28 | 
+ 17.579 | 
+ 74.459 | 
+ 92.224 | 
+ 27.783 | 
+
+ Appendix C Method Details and Derivations
+
+ C.1 Value-position alignment
+
+ For a response of length L L , the implementation slices critic logits at
+positions [-L-1:-1] . The first aligned output therefore gives the
+value immediately before the first generated token, and the j j th aligned
+output precedes generated token y j y_{j} . The complete prompt and response are
+encoded in one causal forward pass, but causal attention prevents future
+response tokens from changing an
+earlier aligned value. The turn target is supervised only at the first aligned
+position, whereas token targets use every valid response position.
+
+ C.2 Valid generated-token positions
+
+ The rollout stores each turn as a context–response pair. The response mask
+includes generated positions through the first end-of-sequence token,
+including that token when present, and excludes subsequent padding. If no
+end-of-sequence token is emitted before the generation limit, the retained
+generated positions remain valid. Generated reasoning text and formatting
+tokens are not separately removed. Instructions, previous interaction
+history, and environment observations enter
+the prompt and are excluded from the current response mask. This mask selects
+the token-level value targets, advantage-centering positions, and actor-loss
+positions. Token-level GAE connects valid generated positions in temporal
+order across responses of the same trajectory; each turn contributes only
+one turn-value target at its first aligned position.
+
+ C.3 Critic regression objective
+
+ For granularity b ∈ { turn , tok } b\in\{\mathrm{turn},\mathrm{tok}\} and valid position i i ,
+let G ^ b ​ ( i ) \widehat{G}^{b}(i) be the fixed target in Equation 7 ,
+ ψ \psi the trainable critic parameters, and ϵ v > 0 \epsilon_{v}>0 the
+value-clipping radius. The clipped value loss is
+
+ | 
+ ℓ b ​ ( i ) = max ⁡ { ( V ψ b ​ ( i ) − G ^ b ​ ( i ) ) 2 , [ clip ⁡ ( V ψ b ​ ( i ) , V old b ​ ( i ) − ϵ v , V old b ​ ( i ) + ϵ v ) − G ^ b ​ ( i ) ] 2 } . \ell^{b}(i)=\max\!\left\{\big(V^{b}_{\psi}(i)-\widehat{G}^{b}(i)\big)^{2},\left[\operatorname{clip}\!\left(V^{b}_{\psi}(i),V^{b}_{\mathrm{old}}(i)-\epsilon_{v},V^{b}_{\mathrm{old}}(i)+\epsilon_{v}\right)-\widehat{G}^{b}(i)\right]^{2}\right\}. | 
+ | 
+ (9) | 
+
+ The two heads are reduced over their own valid positions before their losses
+are summed, without dividing the sparse turn loss by the number of tokens:
+
+ | 
+ ℒ critic = Mean k = 1 , … , K [ ℓ turn ( k ) ] + Mean ( k , j ) :  1 ≤ k ≤ K ,  1 ≤ j ≤ L k [ ℓ tok ( k , j ) ] . \mathcal{L}_{\mathrm{critic}}=\operatorname{Mean}_{k=1,\ldots,K}[\ell^{\mathrm{turn}}(k)]+\operatorname{Mean}_{(k,j):\,1\leq k\leq K,\,1\leq j\leq L_{k}}[\ell^{\mathrm{tok}}(k,j)]. | 
+ | 
+ (10) | 
+
+ C.4 Response-wise properties of advantage fusion
+
+ Write D k , j = A tok ~ k , j D_{k,j}=\widetilde{A^{\mathrm{tok}}}_{k,j} for the centered token residual.
+For a response with L k L_{k} valid generated tokens and fixed α \alpha , consider
+the token-wise vector 𝐳 = ( z 1 , … , z L k ) \mathbf{z}=(z_{1},\ldots,z_{L_{k}}) . Among vectors whose
+response-wise mean equals the turn advantage, the one closest to the scaled
+token advantages solves
+
+ | 
+ min 𝐳 ∈ ℝ L k \displaystyle\min_{\mathbf{z}\in\mathbb{R}^{L_{k}}} | 
+ 1 2 ​ ∑ j = 1 L k ( z j − α ​ A k , j tok ) 2 \displaystyle\frac{1}{2}\sum_{j=1}^{L_{k}}\bigl(z_{j}-\alpha A^{\mathrm{tok}}_{k,j}\bigr)^{2} | 
+ | 
+ (11) | 
+
+ | 
+ subject to \displaystyle\text{subject to} | 
+ 1 L k ​ ∑ j = 1 L k z j = A k turn . \displaystyle\frac{1}{L_{k}}\sum_{j=1}^{L_{k}}z_{j}=A^{\mathrm{turn}}_{k}. | 
+ | 
+
+ With a Lagrange multiplier η \eta for the equivalent constraint
+ ∑ j z j = L k ​ A k turn \sum_{j}z_{j}=L_{k}A^{\mathrm{turn}}_{k} , stationarity gives
+ z j = α ​ A k , j tok − η z_{j}=\alpha A^{\mathrm{tok}}_{k,j}-\eta .
+The constraint yields η = α ​ A tok ¯ k − A k turn \eta=\alpha\overline{A^{\mathrm{tok}}}_{k}-A^{\mathrm{turn}}_{k} ;
+thus z j = A k , j VETTA z_{j}=A^{\mathrm{VETTA}}_{k,j} .
+
+ The squared-distance objective is strictly convex, so this solution is unique.
+It follows that
+
+ | 
+ ∑ j = 1 L k D k , j \displaystyle\sum_{j=1}^{L_{k}}D_{k,j} | 
+ = ∑ j = 1 L k ( A k , j tok − A tok ¯ k ) = 0 , \displaystyle=\sum_{j=1}^{L_{k}}\left(A^{\mathrm{tok}}_{k,j}-\overline{A^{\mathrm{tok}}}_{k}\right)=0, | 
+ | 
+
+ | 
+ 1 L k ​ ∑ j = 1 L k A k , j VETTA \displaystyle\frac{1}{L_{k}}\sum_{j=1}^{L_{k}}A^{\mathrm{VETTA}}_{k,j} | 
+ = A k turn , \displaystyle=A^{\mathrm{turn}}_{k}, | 
+ | 
+
+ | 
+ A k , i VETTA − A k , j VETTA \displaystyle A^{\mathrm{VETTA}}_{k,i}-A^{\mathrm{VETTA}}_{k,j} | 
+ = α ⁡ ( A k , i tok − A k , j tok ) . \displaystyle=\alpha\left(A^{\mathrm{tok}}_{k,i}-A^{\mathrm{tok}}_{k,j}\right). | 
+ | 
+
+ This projection is an algebraic characterization of the scalar credit weights,
+not an additional optimization step during training.
+Different tokens have different score-function gradients, so zero scalar sum
+does not imply a zero parameter-gradient contribution.
+
+ Under the additional special case
+ γ tok = λ tok = 1 \gamma_{\mathrm{tok}}=\lambda_{\mathrm{tok}}=1 , complete termination, no
+token-wise KL reward, and reward only at an action’s last valid token, all
+prefixes in action k k share the same remaining sampled return G k G_{k} . Then
+
+ | 
+ A k , j tok = G k − V k , j tok , D k , j = 1 L k ​ ∑ u = 1 L k V k , u tok − V k , j tok . A^{\mathrm{tok}}_{k,j}=G_{k}-V^{\mathrm{tok}}_{k,j},\qquad D_{k,j}=\frac{1}{L_{k}}\sum_{u=1}^{L_{k}}V^{\mathrm{tok}}_{k,u}-V^{\mathrm{tok}}_{k,j}. | 
+ | 
+ (12) | 
+
+ The common sampled return cancels from the within-action residual. This
+conditional derivation motivates the interpretation “turn mean plus relative
+prefix differences.” This identity describes how credit varies across
+positions in a sampled response; it does not identify the effect of replacing
+an individual token.
+
+ C.5 Actor-loss implementation
+
+ Equation 8 gives the standard token-wise clipped PPO
+surrogate. The reported VETTA runs use dual clipping and KL regularization
+as actor-loss settings. Dual clipping caps the per-token loss after PPO ratio
+clipping at
+ − c ​ A k , j VETTA -cA^{\mathrm{VETTA}}_{k,j} when A k , j VETTA < 0 A^{\mathrm{VETTA}}_{k,j}<0 , with c = 3 c=3 ;
+the loss for nonnegative advantages is unchanged. The actor loss also
+includes KL regularization against a frozen reference policy initialized
+from the actor’s starting checkpoint. The ALFWorld and WebShop configurations
+use the low_var_kl estimator and a KL coefficient of 0.01.
+Both loss terms are averaged over valid generated-token positions. These
+actor-loss settings are inherited from the token-wise PPO implementation
+shared with the PPO and PPO* baselines; they are not specific to VETTA’s
+value estimation or advantage fusion.
+The Turn-PPO baseline instead clips a whole-response probability ratio and
+does not apply the negative-advantage dual-clipping rule.
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header.
+
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from

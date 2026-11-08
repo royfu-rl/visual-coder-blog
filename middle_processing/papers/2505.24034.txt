@@ -1,0 +1,6129 @@
+SOURCE: https://arxiv.org/html/2505.24034
+
+
+
+LlamaRL: A Distributed Asynchronous Reinforcement Learning Framework for Efficient Large-scale LLM Training
+
+Report GitHub Issue
+
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+
+Learn more
+
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 
+Introduction
+
+1.1 
+Challenges of Scaling RL for LLM
+
+Flexibility to Support Various RL Algorithms.
+
+Scaling to Larger Models and More GPUs.
+
+Insufficient GPU Usage due to Idle Bubbles.
+
+1.2 
+Contributions
+
+2 
+Background
+
+Large language models (LLM).
+
+Scaling laws.
+
+Reinforcement learning for LLMs.
+
+Training algorithms and systems for RL.
+
+3 
+Related Work
+
+Different Optimizations for Inference and Training.
+
+Co-located Model Placement.
+
+Distributed Model Placement.
+
+Asynchronous RL and Off-policyness
+
+Scaling up.
+
+4 
+High Level Strategies
+
+4.1 
+Co-located model offloading
+
+4.2 
+Asynchronous off-policy RL
+
+4.3 
+Fine-grained parallelisms and quantization
+
+5 
+System Design
+
+5.1 
+High Level Architecture
+
+5.1.1 
+Executor
+
+5.1.2 
+Communication Channel
+
+5.1.3 
+Controller
+
+5.2 
+Distributed Direct Memory Access (DDMA) Weights Update
+
+5.3 
+Example: RL with Offloaded Reward and Generator
+
+6 
+LlamaRL
+ Off-policy Learning
+
+Mitigating training instability.
+
+Comparison to PPO clipping.
+
+7 
+Theoretical justification of 
+LlamaRL
+ Speedup
+
+8 
+Experiments
+
+8.1 
+Experiment setup
+
+LlamaRL
+ vs. Baseline.
+
+Experimental configurations.
+
+8.2 
+Efficiency comparison
+
+8.3 
+Quality comparison to on-policy learning
+
+Remark.
+
+9 
+Conclusion
+
+References
+
+A 
+A Comparative Discussion with PPO and GRPO
+
+PPO clipping.
+
+A deep root in trust region policy optimization for PPO clipping.
+
+Key difference from the 
+LlamaRL
+ case.
+
+B 
+Lemmas for Theoretical Justification for LlamaRL Speed-up
+
+    License: CC BY 4.0
+  
+
+arXiv:2505.24034v2 [cs.LG] 02 Jun 2025
+
+LlamaRL
+: A Distributed Asynchronous Reinforcement Learning Framework for Efficient Large-scale LLM Training
+
+Meta GenAI
+
+Affiliation: 
+A detailed contributor list can be found in the appendix of this paper.
+
+Abstract
+
+Reinforcement Learning (RL) has become the most effective post-training approach for improving the capabilities of Large Language Models (LLMs). In practice, due to the high demands on latency and memory, it is particularly challenging to develop an efficient RL framework that reliably manages policy models with hundreds to thousands of billions of parameters.
+
+In this paper, we present 
+LlamaRL
+, a fully-distributed, asynchronous RL framework optimized for efficient training of large-scale LLMs with various model sizes (8B, 70B and 405B parameters) on GPU clusters with a handful to thousands devices. 
+LlamaRL
+ introduces a streamlined, single-controller architecture built entirely on native PyTorch, enabling modularity, ease of use, and seamless scalability to thousands of GPUs. We also provide a theoretical analysis of 
+LlamaRL
+’s efficiency, including a formal proof that its asynchronous design leads to strict RL speed-up. Empirically during the Llama 3 post training, by leveraging best practices such as co-located model offloading, asynchronous off-policy training, and distributed direct memory access for weight synchronization, 
+LlamaRL
+ achieves significant efficiency gains—up to 10.7x speedup compared to the DeepSpeed-Chat like systems on a 405B-parameter policy model. Furthermore, the efficiency advantage continues to grow with increasing model scale, demonstrating the framework’s suitability for future large-scale RL training.
+
+†
+†
+date: 
+August 24, 2026
+
+1 
+Introduction
+
+Reinforcement Learning (RL) has become the most effective post-training approach for improving the capabilities of Large Language Models (LLMs) 
+(
+Ouyang et al.,, 2022
+; 
+Jaech et al.,, 2024
+; 
+DeepSeek-AI,, 2025
+)
+. In practice, due to the high demands on latency and memory, it is particularly challenging to develop an efficient RL framework that reliably manages policy models with hundreds to thousands of billions of parameters.
+
+In this paper, we present 
+LlamaRL
+, a fully-distributed, asynchronous reinforcement learning (RL) framework optimized for efficient training of large-scale language models (LLMs) with different sizes (8B, 70B and 405B parameters, 
+(
+Llama Team,, 2024
+)
+) on GPU clusters with a handful to thousands H100 GPUs. 
+LlamaRL
+ introduces a streamlined, single-controller architecture built entirely on native PyTorch, enabling modularity, ease of use, and seamless scalability to thousands of GPUs. We also provide a theoretical analysis of 
+LlamaRL
+’s efficiency, including a formal proof that its asynchronous design leads to strict RL speed-up. Empirically, by leveraging best practices such as co-located model offloading, asynchronous off-policy training, and GPU-native distributed weight synchronization via NVLink, 
+LlamaRL
+ achieves significant efficiency gains—up to 10.7x speedup compared to state-of-the-art systems (e.g., DeepSpeed-Chat 
+(
+Yao et al.,, 2023
+)
+) on a 405B-parameter policy model. Furthermore, the efficiency advantage continues to grow with increasing model scale, demonstrating the framework’s suitability for future large-scale RL training.
+
+1.1 
+Challenges of Scaling RL for LLM
+
+Started as a relatively lightweight calibration against human preferences 
+(
+Christiano et al.,, 2017
+; 
+Ouyang et al.,, 2022
+)
+, RL has recently proved effective at enabling powerful capabilities such as reasoning 
+(
+Jaech et al.,, 2024
+; 
+DeepSeek-AI,, 2025
+)
+, code generation 
+(
+Gehring et al.,, 2024
+; 
+Wei et al.,, 2025
+)
+, among others. Therefore, an efficient, succinct and highly-scalable RL training framework would accelerate research progress and become beneficial to a bigger community. However, implementing such a training framework poses significant engineering challenges. These challenges can be summarized into three main categories:
+
+Flexibility to Support Various RL Algorithms.
+
+RL training process is inherently complex, not only due to the allocation of models and associated computations within the algorithm but also because of the diverse data communication among them. To date, a number of RL algorithms have been developed to finetune LLMs. PPO requires running a pipeline involving four models, i.e., actor, critic, reference policy and reward models, interacting in a sophisticated manner during training. Representative algorithms such as RAFT 
+(
+Dong et al.,, 2023
+)
+, ReMax 
+(
+Li et al.,, 2024
+)
+, RLOO 
+(
+Ahmadian et al.,, 2024
+)
+ and GRPO 
+(
+Shao et al.,, 2024
+)
+ have been developed without using the critic model. Multi-objective optimization frameworks such as CGPO 
+(
+Xu et al.,, 2024
+)
+ has been developed to leverage multiple reward models and judges at the same time. As the complexity of these algorithms grows, it is important to build a flexible training framework which can easily extend to different number of models and schedule the corresponding data and parameter flows.
+
+Scaling to Larger Models and More GPUs.
+
+Training larger models consistently yields enhanced performance across a wide range of tasks  
+(
+Brown et al.,, 2020
+; 
+Kaplan et al.,, 2020
+; 
+Hoffmann et al.,, 2022
+)
+. Accommodating these ever-larger models typically requires intricate parallelism to handle both memory and computational constraints, it becomes more challenging in RL as various actors (e.g. policy model, reward model etc.) with varying sizes run simultaneously on large GPU clusters. Taking the Llama 3.1 models 
+(
+Llama Team,, 2024
+)
+ as an example, training the 405B model via PPO requires: (1) A minimum of 512 NVIDIA’s H100 GPUs in total; (2) A model tensor parallelism (TP) size of 32 is used to reduce the memory footprint of model weights on each GPU; (3) A Fully Sharded Data Parallel (FSDP) optimization with a parallelism shard of 16 is used to further reduce the memory footprint 
+(
+Rajbhandari et al., 2019a, 
+; 
+Zhao et al.,, 2023
+)
+; (4) A smaller LLM model (e.g. 8B parameters) acts as a reward model. Therefore, a highly scalable RL framework is required. It must efficiently support diverse and large-scale model sizes, as well as flexible parallelism strategies, across different actors and GPU configurations to ensure efficient large-scale training.
+
+Insufficient GPU Usage due to Idle Bubbles.
+
+For LLMs, RL algorithms need to run response generation followed by loss computation and weight updates. Because different responses on different workers can have different lengths, taking different amount of time to process, such sequential execution often result in bubbles where some GPU workers are idle. The situation of insufficient GPU usage becomes even worse when the larger models introduce larger generation time differences causing larger bubbles. In some cases, slow data flow communication is another issue to waste the GPU resource. Implementing a RL training framework with high GPU utilization can not only shorten the fine-tuning wall-clock time, but also pave a way for the the bigger community to train a model with less GPU resources. Additionally, maintaining high GPU utilization while scaling both model size and GPU resources remains a significant challenge.
+
+1.2 
+Contributions
+
+To address these challenges, we introduce 
+LlamaRL
+, a fully-distributed, asynchronous RL training framework optimized for efficient, large-scale LLM training. Our key contributions are summarized below, following a brief background and related work discussion:
+
+•
+
+Simple and Modular Architecture:
+ 
+LlamaRL
+ employs a streamlined single-controller architecture built entirely on native PyTorch. This design can seamlessly scale across thousands of GPUs, facilitating efficient training of large-scale LLMs (e.g., a 405B-parameter policy model). Its modular structure and intuitive control logic enable users to easily adapt and extend the framework, supporting diverse RL algorithms. We detail such designs in Section 
+5
+.
+
+•
+
+High Efficiency with Scalable Best Practices:
+ 
+LlamaRL
+ introduces a set of best practices specifically tailored for RL training of large-scale and continuously scaling LLMs. Our experiments demonstrate a 10.7x efficiency improvement compared to state-of-the-art systems such as DeepSpeed-Chat on a 405B-parameter model, with this efficiency advantage growing further as model scale increases. The core best practices include the following, as we will detail in Section 
+4
+:
+
+–
+
+Co-located Model Offloading with Fine-grained Parallelism and Quantization:
+ We completely offload the generation process from the training cluster, recognizing that it is memory-bound and significantly contributes to execution time. Complete offloading enhances scalability and flexibility, enabling fine-grained parallelism and quantization optimizations, thus significantly reducing compute and memory requirements.
+
+–
+
+Asynchronous Off-policy RL:
+ To minimize computational bubbles, our training and generation processes run asynchronously in parallel. This approach significantly improves throughput and resource utilization, hence speeding up the overall training. Inevitably, this introduces off-policyness with 1 to 
+n
+ steps of delay, as illustrated in Figure 
+2
+. We introduce 
+AIPO
+ - Asynchronous Importance weighted Policy Optimization - an example of a principled off-policy learning algorithm which effectively mitigates training instability in large-scale training.
+
+–
+
+Fully Distributed Weight Synchronization via Direct GPU Memory Access:
+ We developed a fully distributed, GPU-native synchronization method to efficiently synchronize model weights between the offloaded generators and policy models. Leveraging direct GPU-to-GPU zero-copy transfers via NVLink, this method achieves linear scalability, enabling weight updates for terabyte-scale models across thousands of GPUs in approximately 2 seconds, as illustrated in Figure 
+4
+.
+
+Further, to better convey important intuitions to practitioners, as to the source of the empirical speed-up, we build theoretical guarantees on why asynchronous RL training strictly speeds up over the synchronous counterpart (Section 
+7
+). Finally, we finish with extensive experimental ablations along a few dimensions: the training time speed-up, the model quality as well the importance of off-policy corrections in asynchronous training (Section 
+8
+). Taken together, we showcase the promise of 
+LlamaRL
+ to massively scale up RL training.
+
+2 
+Background
+
+We provide background on a few important topics related to this work.
+
+Large language models (LLM).
+
+LLMs are a powerful class of generative models. Upon large-scale pre-training and relatively lightweight fine-tuning, these models are incredibly versatile, capable of performing tasks like summarization, coding and translation, among others 
+(
+Ziegler et al.,, 2019
+; 
+Stiennon et al.,, 2020
+)
+. As a result, LLMs can be very helpful human assistants 
+(
+Ouyang et al.,, 2022
+; 
+OpenAI,, 2023
+; 
+Team et al.,, 2023
+; 
+Anthropic,, 2023
+; 
+Llama Team,, 2024
+)
+, and sometimes with specialized capabilities that exceed human users or even experts 
+(
+Jaech et al.,, 2024
+; 
+DeepSeek-AI,, 2025
+)
+.
+
+Scaling laws.
+
+Pre-training research has shown that the performance of LLMs can be reasonably predicted by a power-law of model size, data size and compute 
+(
+Hestness et al.,, 2017
+; 
+Kaplan et al.,, 2020
+; 
+Hoffmann et al.,, 2022
+)
+, facilitating industry grade scaling of large models. Recently, it has been shown that scaling inference-time compute, elicited through RL on verifiable tasks, is an effective approach for empowering LLMs with profound reasoning capabilities 
+(
+Zhang et al.,, 2024
+; 
+Jaech et al.,, 2024
+; 
+DeepSeek-AI,, 2025
+)
+, improving their mathematical problem solving, code generation and safety alignment 
+(
+Jaech et al.,, 2024
+; 
+DeepSeek-AI,, 2025
+; 
+Kimi Team,, 2025
+; 
+Guan et al.,, 2024
+)
+.
+These recent advances underscore the potential of scaling up LLM compute, emphasizing the need to develop more efficient reinforcement learning systems.
+
+Reinforcement learning for LLMs.
+
+Reinforcement learning has emerged as a key component of fine-tuning state-of-the-art LLMs, such as GPT-4 
+(
+OpenAI,, 2023
+)
+, Claude 
+(
+Anthropic,, 2023
+)
+, Gemini 
+(
+Google,, 2023
+; 
+Team et al.,, 2023
+)
+, Llama 2-Chat 
+(
+Touvron et al.,, 2023
+)
+, and DeepSeek-R1 
+(
+DeepSeek-AI,, 2025
+)
+, among others. RL allows LLMs to go beyond modeling the distribution of their supervised training data and adapt the sampling distribution to be more highly rated by reward functions. For Reinforcement Learning from Human Feedback (RLHF), where the goal is to make the model more creative, safe and helpful, such rewards are often provided by human raters 
+(
+Christiano et al.,, 2017
+; 
+Ouyang et al.,, 2022
+; 
+Bai et al., 2022a, 
+; 
+Bai et al., 2022b, 
+)
+. More generally, the rewards can also come from rule-based scorers, such as unit test execution for code applications 
+(
+Li et al.,, 2022
+; 
+Gehring et al.,, 2024
+; 
+El-Kishky et al.,, 2025
+; 
+Wei et al.,, 2025
+)
+ or matching against ground truth for mathematical reasoning 
+(
+Uesato et al.,, 2022
+; 
+Lightman et al., 2023a, 
+)
+.
+
+Training algorithms and systems for RL.
+
+RL algorithms commonly used for training LLMs, such as Proximal Policy Optimization (PPO) 
+(
+Schulman et al.,, 2017
+)
+, usually consist of four models: a policy model, a critic model (or value model), a reference policy model, and a reward model. PPO proceeds in iterations, each with three stages: (1) response generation using the policy model with a batch of prompts; (2) preparation of training data by scoring the generated responses through a single forward pass of the critic, reference policy, and reward models; (3) updating the actor and critic models through forward and backward computation. A number of RL pipelines 
+(
+Christiano et al.,, 2017
+; 
+Ziegler et al.,, 2019
+; 
+Stiennon et al.,, 2020
+; 
+Ouyang et al.,, 2022
+; 
+Li et al.,, 2024
+; 
+Ahmadian et al.,, 2024
+; 
+Shao et al.,, 2024
+)
+ follow similar stages but involve different numbers of models and data dependencies among the models. For example, the critic models can be optional and depending on the application, the reward models can be replaced by rule-based scorers.
+
+Figure 1 depicts an example flow of online RL training only employing a policy model and several rule-based scorers for simplicity. We will use this RL training flow to explain our framework in the following sections.
+
+Figure 1: 
+An example flow of online RL training. A reference model for regularization is dropped in this flow for simplicity. The example flow also foregoes a learned critic model, and instead estimates the baseline from group scores to calculate the advantage functions for policy update. The example makes use of rule-based scorers, as is often the case for code and reasoning applications. The policy model has two instances, implementing based on the Fully Sharded Data Parallel (FSDP) and CUDA Graph for training and inference optimizations, respectively.
+
+3 
+Related Work
+
+Various frameworks have been proposed and implemented to support the RL training while enhancing the efficiency and scalability. We start with an overview of the existing framework design principles, see Table 
+1
+ for a summary and comparison to 
+LlamaRL
+.
+
+Framework
+
+Model
+
+Placement
+
+Weights
+
+Synchronization
+
+Parallelism
+
+(train/gen)
+
+Async
+
+Model
+
+Scale
+
+DeepSpeed-Chat
+
+Yao et al.,
+
+Co-located
+
+Communication
+
+ZeRO/TP
+
+No
+
+65B
+
+FlexRLHF
+
+Xiao et al.,
+
+Distributed
+
+In-place update
+
+(HybridEngine)
+
+ZeRO/TP
+
+No
+
+66B
+
+NeMo-Aligner
+
+Shen et al.,
+
+Actor/Ref co-located
+
+Critic/RM co-located
+
+In-place update
+
+(TensorRT Refitter)
+
+3D/3D
+
+No
+
+405B
+
+OpenRLHF
+
+Hu et al.,
+
+Distributed
+
+Communication
+
+ZeRO/3D
+
+No
+
+70B
+
+HybridFlow
+
+Sheng et al.,
+
+Distributed
+
+In-place update
+
+(3D-HybridEngine)
+
+(ZeRO, FSDP)
+
+/3D
+
+No
+
+70B
+
+AsyncRLHF
+
+Noukhovitch et al.,
+
+Distributed
+
+(single node)
+
+communication
+
+(ZeRO, FSDP)
+
+/3D
+
+Yes
+
+8B
+
+LlamaRL
+
+Distributed
+
+communication
+
+FSDP/3D
+
+Yes
+
+405B
+
+Table 1: 
+Comparison of RL training frameworks. Since all the frameworks in the table leverage different optimizations for training and inference, the column of weights synchronization refers to the method passing the weights from the training policy model to the inference policy model. The different parallelisms supported in the training and inference stages are listed in the table as well.
+
+Different Optimizations for Inference and Training.
+
+Usually, a RL algorithm includes an inference phase to roll out the generations from the policy model, and a training phase for the policy model to learn the experience from the generations. Due to the different characters and constrains of the two phases, distinct optimization techniques should be applied to the inference and training phases, respectively. Therefore, most of the training frameworks set up an inference engine and a training engine of the policy model to execute in the corresponding phases.
+
+Co-located Model Placement.
+
+Including the inference policy and training policy models, the models in the RL algorithms can be allocated by mainly two strategies. Some earlier works adopts the co-location strategy, which places all models on each device and applies data and model parallelism techniques like ZeRO to parallelize the training 
+(
+Rajbhandari et al.,, 2020
+)
+. An obvious drawback of this strategy is that, each model shares a limited memory to generate and process the data. Therefore, the training throughput becomes a bottleneck, especially for the generation phase. Nowadays, distributed strategy becomes a popular solution, which allocate each model to an individual processing group with an exclusive group of devices.
+
+There are optimization techniques to mitigate the memory limitation of the co-located strategy. 
+DeepSpeed-Chat
+ 
+(
+Yao et al.,, 2023
+)
+ implemented a Hybrid Engine to co-locate the inference policy and training policy. During the training phase, it utilizes ZeRO for efficient memory management, while switching the model weights to tensor parallelism for the generation phase. 
+HybridFlow
+ 
+(
+Sheng et al.,, 2024
+)
+ further developed a 3D-HybridEngine, allowing different 3D (data, tensor and pipeline) parallel configurations in the two stages and enabling zero memory redundancy and minimized communication overhead during the transition between two stages. 
+NeMo-Aligner
+ 
+(
+Shen et al.,, 2024
+)
+ co-located the models with the same architecture but different weights, for example policy model and reference model. Due to the sequential order of the execution, it first offloads the reference’s weights to CPU, and then swap them with the policy’s weights at the reference model inference step.
+
+Distributed Model Placement.
+
+The distributed strategy requires the communications between the processing groups. 
+FlexRLHF
+ 
+(
+Xiao et al.,, 2023
+)
+ designed a pipeline manner process to overlap the computation and communication stages and minimize the communication overhead of the generations. However, the weight communication between training policy and inference policy is inevitable. In 
+OpenRLHF
+ 
+(
+Hu et al.,, 2024
+)
+, the measured weight communication time demonstrates a faster-than-linear increases with the model size. A 70B model weights communication consumes 111 seconds. When the model size is scaled to the 405B, the weights communication time is estimated to be over 900 seconds based on the trends. The bottleneck is not on the GPU inter-node bandwidth, but on the expensive weights reloading operation. We will discuss more details on how to optimize the weights communication in the following sections.
+
+Asynchronous RL and Off-policyness
+
+The asynchronous communication strategy between learner and actor have been a long standing practice to improve throughputs in large-scale RL. Asynchronization allows distributed models to execute in parallel without blocking each other, which fundamentally improves the training speed. It can lead to big boost in training efficiency, in particular for value-based RL (e.g., AlphaZero 
+(
+Silver et al., 2017a, 
+)
+ versus AlphaGoZero 
+(
+Silver et al., 2017b, 
+)
+, OpenGo 
+(
+Tian et al.,, 2019
+)
+), in which the issues of off-policyness may not be an issue. However, for policy-based RL training, which is a popular approach for LLM post-training, the issue of off-policyness can be more severe, leading to a fundamental question to explore. The algorithmic component of 
+LlamaRL
+ draws on a long history of off-policy learning, where importance sampling corrections have been applied in various forms 
+(
+Precup et al.,, 2000
+; 
+Jie and Abbeel,, 2010
+; 
+Wang et al.,, 2016
+; 
+Munos et al.,, 2016
+; 
+Schulman et al.,, 2017
+; 
+Espeholt et al.,, 2018
+)
+. Most closely related to our approach is IMPALA 
+(
+Espeholt et al.,, 2018
+)
+ where they apply importance correction to policy and critic learning. In 
+LlamaRL
+, we have generalized this formulation more broadly for LLM fine-tuning, with combinations of different reward models, critics, etc.
+
+Scaling up.
+
+Notably, non-LLM RL training with simulated environment often deal with very small models (on the order of millions of parameters) 
+(
+Mnih et al.,, 2016
+; 
+Espeholt et al.,, 2018
+; 
+Kapturowski et al.,, 2018
+)
+, and as a result, at training time the inference models are usually placed on CPU hosts. There are larger sized RL training examples AlphaStar 
+(
+Vinyals et al.,, 2019
+)
+ and OpenAI Five 
+(
+Berner et al.,, 2019
+)
+, among others, but generally the model scales are still small by today’s LLM standard. Scaling such ideas efficiently to the LLM scenarios where the model size has grown 100-1000x, poses major engineering challenges. Recently, 
+(
+Noukhovitch et al.,, 2024
+)
+ proposed an asynchronous RL training for 2.8B and 8B LLMs on multiple GPUs of a single host. In the context of large-scale RL, 
+Kimi Team, (2025)
+ introduced the partial rollout method to enhance training efficiency during long-context generation. Their approach segments long responses into smaller portions across multiple iterations, while still maintaining a synchronous, sequential execution where the trainer and generator remain co-located.
+
+4 
+High Level Strategies
+
+We detail a number of key high level strategies that enable large-scale training with 
+LlamaRL
+. For simplicity, we do not consider the reference model, and discuss algorithmic settings akin to the one showed in Figure 
+2
+, where the critic model is removed and we apply rule-based scorers.
+
+4.1 
+Co-located model offloading
+
+As mentioned before, the co-located model placement strategy limits the available memory usage for each model, and forces the models to share the same parallelisms. Therefore, our initial attempt is offloading certain modules with expensive memory or computation overhead to dedicated groups, namely distributed model placement. We offload the generation phase since it is a memory-bound process with major execution time contribution. The inference policy and training policy models are thus in different processing groups, implemented by Meta internal inference library and open-sourced 
+FSDP
+, respectively. Rule-based scorers are allocated with the training policy model, and computed with lightweight Python programs.
+
+After offloading, the communications between processing groups are essential. There are mainly two types of communication. One is the communication of generations from the inference policy model, reward model or etc. Another is the communication of the model weights or logits. Instead of partial co-location of inference and training policy models such as Hybrid Engine which can save the weights communication overhead, we developed a distributed direct memory access (DDMA) method to achieve second-scale weights communications. The major reason of using the fully distributed model placement is because it provides a flexibility to adopt the asynchronous RL training.
+
+4.2 
+Asynchronous off-policy RL
+
+After switching to distributed groups to hold the models, the framework still suffers low GPU memory utilization and poor scalability due to the sequential execution order of the models in RL training. To overcome these issues, we apply an asynchronous off-policy learning algorithm for the 
+LlamaRL
+ framework, unblocking each component of the RL workflow. As comparison, Figure 2 demonstrates the process of (a) synchronous on-policy RL and (b) asynchronous off-policy RL.
+
+For asynchronous RL, each processing group runs in parallel and communicates at the end of each training step. This design enables the trainer and generator components to compute concurrently, reducing overall training time. In contrast, the synchronous on-policy RL alternates between trainer and generator steps, blocking one another while the other component is running, which slows down the oevrall training.
+
+To further mitigate straggler effects—both within data-parallel groups and between trainer and generator components—we adopt a strategy inspired by partial rollouts 
+(
+Kimi Team,, 2025
+)
+. Specifically, we break down long response generations, cache incomplete prompts, and resume them in subsequent iterations.
+
+However, asynchronous learning inevitably introduces off-policyness: the policy model is trained on samples generated by a previous iteration of itself. Despite the off-policyness, our results suggest that with the help of off-policy corrections, the impact of off-policy training is negligible compared to fully on-policy training. We will discuss the algorithmic etails further in Section 
+6
+.
+
+Figure 2: 
+Process demonstrations of (a) synchronous on-policy RL, and (b) asynchronous off-policy RL. For asynchronous RL, the generator and trainer run in parallel without blocking one another, in contrast to synchronous RL. This design accelerates the overall training process significantly, without compromising model quality.
+
+4.3 
+Fine-grained parallelisms and quantization
+
+From the example in Figure 2(b), GPU idle bubbles can be observed from the processing group 1 since the execution time is not perfectly matched among all the processing groups. To further optimize training efficiency, flexible and fine-grained parallelisms and quantization must be supported. In 
+LlamaRL
+, models in different processing groups can use different parallelisms and data precision. We provide a few examples.
+
+•
+
+Data Parallelism
+ Back to the co-located stragety, all the models are stacking together, which means the dp size of the models are required to be the same. In 
+LlamaRL
+, the dp size of the models are decoupled, which provides the flexibility to better align the throughput of different processing groups and improve the training efficiency.
+
+•
+
+Model Parallelism
+ Model parallelism is decouple among different processing groups. Based on the empirical knowledge, the smaller mp size (especially when mp ¿ 8) in the inference side can significantly reduce the inter-node communications and thus reduce the generation time.
+
+•
+
+Pipeline Parallelism
+ Pipeline parallelism distributes model computations across different pipeline stages. By decoupling the pp size among processing groups, it provides the flexible to fine tune the execution time of each processing group for better time-wise alignment.
+
+•
+
+Quantization
+ Quantization (
+fp8
+ or 
+fp4
+) on the inference side allows models to do generations with a smaller mp size, providing faster generation speed.
+
+The functionality is mainly implemented in the communication channels. More details can be found in the next Section.
+
+5 
+System Design
+
+In this section, we introduce the high level architecture and interfaces of 
+LlamaRL
+. Unlike prior works such as OpenRLHF and HybridFlow that rely on third-party orchestration systems (e.g., Ray 
+(
+Moritz et al.,, 2018
+)
+), 
+LlamaRL
+ is implemented purely on top of native PyTorch. This design choice reduces complexity, boosts reliability, and simplifies user workflows. Below, we explain the key architectural components, the interfaces that enable users to build RL algorithms, and an example of how a typical RL pipeline is assembled within 
+LlamaRL
+.
+
+5.1 
+High Level Architecture
+
+Figure 3: 
+An example of 
+LlamaRL
+ architecture with a communication channel between two executors, managed by a single controller.
+
+As shown in Figure 
+3
+, 
+LlamaRL
+ orchestrates several 
+executors
+, each responsible for one or more stages of the RL pipeline such as policy inference, reward calculation and policy training. These executors are attached with distributed processing groups with their own GPU size and parallelism configurations. Since the nature of the distribution, executors rely on 
+communication channels
+ to pass data (e.g., prompts, generated trajectories, rewards) and updated model weights among them. Rather than relying on a heavyweight external scheduler, a single 
+controller
+ is responsible to launch, coordinate, and synchronize executors and data flows as needed.
+
+5.1.1 
+Executor
+
+RL algorithms such as PPO utilize multiple models. For the allocation of the multiple models, a straightforward strategy is stacking all the models across all the GPUs with the same parallelisms, namely co-located strategy. Due to the drawbacks discussed in the Section 2, a distributed model placement strategy is more preferred.
+
+The 
+LlamaRL
+ uses the distributed strategy, and further encapsulates the distributed models in the executors. An executor is a self-contained unit that runs on a predefined number of GPUs with a specific parallelism configuration. A base class of an executor contains the following functions:
+
+1.
+
+Init
+: Load or construct a model, configure the parallel environment (e.g., FSDP, pipeline parallel, or tensor parallel groups), and prepare any needed data loaders or tokenizers.
+
+2.
+
+step
+: Executes one RL step (e.g., a forward/backward pass for policy training or a forward pass to generate samples).
+
+3.
+
+save_checkpoint
+: Periodically saves the model state, optimizer state, and other progress markers.
+
+4.
+
+get_output / get_model
+: Exposes outputs or internal states (e.g., recently generated sequences) so that other executors can receive them via a communication channel.
+
+Different executor classes are further implemented inheriting the base executor class. For example, figure 
+3
+ demonstrates two executors, generator and trainer for the RLOO algorithm, working for inference and training phases respectively. Rule-based reward models are included in the trainer. By isolating RL stages into different executors, 
+LlamaRL
+ makes it easier to scale up or swap out individual components—such as changing the model parallelism or switching from PPO to another RL variant—without monolithic code changes.
+
+5.1.2 
+Communication Channel
+
+A communication channel defines a directed link of communication paradigm between executors. It includes:
+
+•
+
+A 
+name
+, for referencing data or weights being transferred.
+
+•
+
+An 
+outbound_executor
+ (the sender) and an 
+inbound_executor
+ (the receiver).
+
+•
+
+A 
+communication_type
+, indicating how data is distributed:
+
+–
+
+BROADCAST
+: Outbound data is sent identically to each inbound process.
+
+–
+
+SCATTER
+: Outbound data is partitioned and delivered in chunks to different inbound processes.
+
+–
+
+GATHER
+: Data from multiple outbound processes is aggregated by a single inbound executor.
+
+The complicated interactions between executors can therefore be defined via a list of communication channels. Crucially, they also handle 
+model weight updates
+, which is a central challenge in large-scale RL.
+
+5.1.3 
+Controller
+
+Finally, a 
+Controller
+ ties executors and channels together into a single training process, as shown in the Algorithm 
+1
+. Under the hood, it initializes the distributed environment, launches each executor on the correct GPU ranks, and orchestrates each training “tick” by:
+
+1.
+
+Setting the iteration step
+ for each executor (so each knows which mini-batch or prompts to process).
+
+2.
+
+Executing communication channels
+ in the correct order. For example, the Generator executor’s outputs are passed to the Reward executor, then the Reward executor’s outputs flow to the Policy Trainer.
+
+3.
+
+Triggering each executor’s step
+. In a single iteration, multiple executors run asynchronously, each performing its own computations without waiting for others to finish.
+
+4.
+
+Saving checkpoints
+. Periodically, each executor writes out model or state data independently (or under user-defined triggers).
+
+Because each executor is an autonomous SPMD process, the Controller remains concise and easy to reason about—essentially just an event loop.
+
+Algorithm 1
+ 
+ExecutorController Training Loop Overview
+
+Input:
+ 
+
+executor_group
+: 
+List[Executor]
+,
+
+communication_channels
+: 
+List[CommunicationChannel]
+, 
+
+max_steps
+: 
+int
+,
+
+init_communication_channels
+: 
+Optional[List[CommunicationChannel]]
+
+Output:
+ 
+Control the training by coordinating executors
+
+1
+
+Class:
+ 
+ExecutorController
+ ;
+
+2
+
+executor_context
+: 
+ExecutorContext
+ 
+←
+\leftarrow
+ Init a context object which stores all the torch distributed groups across different different processes in different executors. These information will be used by communication channels ;
+
+3
+
+local_executor
+: 
+Executor
+ 
+←
+\leftarrow
+ The executor instance local to the current process. Each process runs the same controller logic independently (SPMD model). ;
+
+4
+
+Function:
+ 
+init()
+ ;
+
+5
+
+               Set 
+torch.distributed.group.WORLD
+ to local executor group;
+
+6
+
+               Call 
+local_executor.init()
+;
+
+7
+
+Function:
+ 
+run()
+ ;
+
+8
+
+while
+ 
+local_executor.curr_step
+ 
+<
+<
+ 
+max_steps
+ 
+do
+
+ 
+ 
+ 
+                
+9
+
+               Call 
+local_executor.set_step()
+;
+
+ 
+ 
+ 
+                
+10
+
+               Set 
+torch.distributed.group.WORLD
+ to global group;
+
+ 
+ 
+ 
+                
+11
+
+foreach
+ 
+channel in communication channels
+ 
+do
+
+ 
+ 
+  
+ 
+ 
+                
+12
+
+              Call 
+communicate(channel)
+;
+
+ 
+ 
+ 
+                
+13
+
+              end foreach
+
+ 
+ 
+ 
+                
+14
+
+              Set 
+torch.distributed.group.WORLD
+ to local group;
+
+ 
+ 
+ 
+                
+15
+
+               Call 
+local_executor.step()
+;
+
+ 
+ 
+ 
+                
+16
+
+               Call 
+local_executor.save_checkpoint()
+;
+
+17
+
+              end while
+
+18
+
+              Call 
+executor_context.post_training_step()
+ ;
+
+19
+
+               Call 
+executor_context.shutdown()
+;
+
+20
+
+Function:
+ 
+communicate(channel)
+ ;
+
+21
+
+if
+ 
+local_executor == channel.outbound_executor
+ 
+then
+
+ 
+ 
+ 
+                
+22
+
+              Call 
+SEND_OPS[channel.communication_type](local_executor, channel)
+;
+
+23
+
+              end if
+
+24
+
+if
+ 
+local_executor == channel.inbound_executor
+ 
+then
+
+ 
+ 
+ 
+                
+25
+
+              Call 
+RECV_OPS[channel.communication_type](local_executor, channel)
+;
+
+26
+
+              end if
+
+5.2 
+Distributed Direct Memory Access (DDMA) Weights Update
+
+Figure 4: 
+Model weights synchronization via distributed direct memory access (DDMA).
+
+One bottleneck for large-scale RL is the step-wise synchronization of model weights between executors, i.e., sending updated policy parameters from a training executor to an inference executor. Conventional methods are usually performed in a parameter server (PS) 
+(
+Li et al.,, 2014
+)
+, which functions as a key-value store for the current model parameters. However, the traditional parameter server architecture presents two major bottlenecks: (1) insufficient network bandwidth—especially when the PS is co-located with the worker nodes 
+(
+Chilimbi et al.,, 2014
+)
+ and (2) an inefficient software stack that cannot scale effectively 
+(
+Potluri and et al.,, 2013
+)
+. In particular, data copying, aggregation, and optimization overheads in the PS software stack hinder throughput, even on high-bandwidth networks.
+
+We propose a 
+Distributed Direct Memory Access (DDMA)
+ method, which is dedicated for efficient weights synchronization in large-scale RL training with language models. As illustrated in figure 
+4
+, DDMA introduces key optimizations that target the aforementioned bottlenecks:
+
+1.
+
+Fully Distributed:
+ Each GPU only stores or updates its assigned shards, leveraging the same tensor and parallel groups used during training. This eliminates memory bottlenecks on any single node and enables the linear scalability in both memory and network throughput up to thousands of GPU cards and several terabytes model weights with about 2 seconds weights update delay.
+
+2.
+
+Direct Memory Access for Weights Update:
+ By leveraging NVIDIA’s intra-node NVLink and inter-node Infiniband interconnects, DDMA supports zero-copy communication by allowing direct memory transfers between CUDA memory regions across devices—bypassing CPU memory altogether. This dramatically reduces latency in the weights update path and alleviates bottlenecks caused by data movement that can inflate step times by hundreds of seconds at large scales 
+(
+Hu et al.,, 2024
+)
+.
+
+5.3 
+Example: RL with Offloaded Reward and Generator
+
+Algorithm 2
+ 
+Main Entry Point for a RL algorithm with reward and generator offloaded
+
+Input:
+ 
+
+params
+: 
+PPOParams
+,
+
+num_generator_gpus
+: 
+int
+,
+
+num_reward_gpus
+: 
+int
+
+Output:
+ 
+Initialize distributed components and run training loop
+
+1
+
+Function:
+ 
+main(params, num_generator_gpus, num_reward_gpus)
+ ;
+
+2
+
+            Call 
+init_torch_distributed
+ ;
+
+3
+
+num_all_gpus
+ 
+←
+\leftarrow
+ 
+torch.distributed.get_world_size()
+;
+
+4
+
+num_trainer_gpus
+ 
+←
+\leftarrow
+ 
+num_all_gpus - num_generator_gpus - num_reward_gpus
+;
+
+5
+
+            Init 
+base_generator: BaseGenerator(params, num_generator_gpus)
+ 
+extends Executor
+ ;
+
+6
+
+            Init 
+ppo_trainer: PPOTrainer(params, num_trainer_gpus)
+ 
+extends Executor
+ ;
+
+7
+
+            Init 
+reward_calculator: RewardCalculator(params, num_reward_gpus)
+ 
+extends Executor
+ ;
+
+8
+
+            Init 
+executor_controller: ExecutorController( 
+
+9
+
+ executor_group=[base_generator, reward_calculator, ppo_trainer], 
+
+10
+
+ communication_channels=[ 
+
+11
+
+   WeightsCommunicationChannel(
+
+12
+
+   "policy_model", ppo_trainer 
+→
+\rightarrow
+ base_generator, DDMA_WEIGHTS_UPDATE), 
+
+13
+
+   CommunicationChannel(
+
+14
+
+   "completions", base_generator 
+→
+\rightarrow
+ reward_calculator, GATHER), 
+
+15
+
+   CommunicationChannel(
+
+16
+
+   "completions_with_reward", reward_calculator 
+→
+\rightarrow
+ ppo_trainer, SCATTER)
+], 
+
+17
+
+ max_steps=params.max_steps 
+
+18
+
+)
+;
+
+19
+
+            Call 
+executor_controller.run()
+;
+
+Algorithm 
+2
+ demonstrates how you might assemble a 
+policy trainer
+, a 
+reward calculator
+, and a 
+generator
+ into a single 
+LlamaRL
+ job. Key points include:
+
+•
+
+Executor Initialization.
+ Each executor is allocated a distinct group of GPU processes (lines 4–7 in the pseudocode).
+
+•
+
+Communication Channels.
+ We define channels for passing updated policy weights to the generator, generated sequences to the reward model, and reward-scored sequences back to the trainer (lines 10–16).
+
+•
+
+Offloading.
+ The reward model and the generator run on different sets of GPUs so that each can specialize its parallelism strategy.
+
+•
+
+Controller.
+ Once set up, the 
+ExecutorController.run()
+ method handles the asynchronous scheduling and repeated iteration (lines 18–19).
+
+This modular design allows you to swap in alternative reward models, add additional models (e.g., critics, reference policies), or implement a different RL optimization algorithm without altering the rest of the pipeline.
+
+By separating each component of the RL pipeline into its own 
+Executor
+ and using 
+CommunicationChannels
+ for data exchange, 
+LlamaRL
+ provides a highly scalable yet flexible framework. The distributed approach coupled with 
+DDMA
+ greatly alleviates GPU-memory pressure and reduces idle time in the RL pipeline. In the following sections, we evaluate how these design choices translate into real-world speedups and scaling performance.
+
+6 
+LlamaRL
+ Off-policy Learning
+
+In 
+LlamaRL
+, we adopt an importance sampling based off-policy learning framework to the large scale asynchronous training process. To set up notations, we let 
+x
+∈
+𝒳
+x\in\mathcal{X}
+ be the set of prompts for RL training and 
+y
+∈
+𝒴
+y\in\mathcal{Y}
+ be possible generations. The generation 
+y
+=
+y
+1
+:
+T
+y=y_{1:T}
+ is made up of individual tokens 
+(
+y
+t
+)
+t
+=
+1
+T
+(y_{t})_{t=1}^{T}
+ where 
+T
+T
+ denotes the generation length. Below, we elaborate on an example using the policy gradient algorithm.
+
+Let the learner model be 
+π
+\pi
+, which defines distributions over generations 
+y
+=
+y
+1
+:
+T
+y=y_{1:T}
+ in an auto-regressive manner 
+π
+(
+y
+|
+x
+)
+=
+Π
+t
+=
+1
+T
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\pi\left(y\;|\;x\right)=\Pi_{t=1}^{T}\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)
+. The generations are sampled by an actor model, defined through another network in an auto-regressive manner through inference 
+y
+t
+∼
+μ
+(
+⋅
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+y_{t}\sim\mu\left(\cdot\;|\;x,y_{1:t-1}\right)
+. Due to asynchronous training, 
+μ
+\mu
+ differs from 
+π
+\pi
+ (e.g., lagging by one update step) and hence the two networks produce different distributions. The importance sampling ratio
+
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)}
+ adjusts for the off-policy discrepancy between the two networks during learning.
+
+During training, generation 
+y
+t
+y_{t}
+ along with the probability 
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)
+ are communicated from the generator to the trainer. Our final update to the learner network is an importance sampling weighted policy gradient
+
+∑
+t
+=
+1
+T
+min
+(
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+,
+ρ
+)
+⋅
+A
+(
+x
+,
+y
+1
+:
+t
+)
+∇
+log
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+,
+\displaystyle\sum_{t=1}^{T}\min\left(\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)},\rho\right)\cdot A(x,y_{1:t})\nabla\log\pi\left(y_{t}\;|\;x,y_{1:t-1}\right),
+
+where 
+A
+(
+x
+,
+y
+1
+:
+t
+)
+=
+r
+(
+x
+,
+y
+1
+;
+t
+)
+−
+v
+(
+x
+,
+y
+1
+:
+t
+)
+A(x,y_{1:t})=r(x,y_{1;t})-v(x,y_{1:t})
+ is the per-token advantage estimate. Here, 
+r
+⁡
+(
+x
+,
+y
+1
+;
+t
+)
+r(x,y_{1;t})
+ is the per-token reward which can be computed from a reward model 
+(
+Christiano et al.,, 2017
+; 
+Ouyang et al.,, 2022
+)
+. For many applications, the reward can be computed with rule-based scorers 
+(
+Gehring et al.,, 2024
+; 
+Lightman et al., 2023a, 
+)
+, resulting in a single reward per generation 
+r
+⁡
+(
+x
+,
+y
+)
+r(x,y)
+. We will focus on this case in the ensuing sections. The reward is often added with the KL regularization 
+λ
+KL
+⋅
+D
+KL
+​
+(
+π
+⁡
+(
+y
+|
+x
+)
+,
+π
+base
+​
+(
+y
+|
+x
+)
+)
+\lambda_{\text{KL}}\cdot D_{\text{KL}}\left(\pi(y|x),\pi_{\text{base}}(y|x)\right)
+ adjusted by parameter 
+λ
+KL
+\lambda_{\text{KL}}
+, to penalize deviation from the reference policy 
+π
+base
+\pi_{\text{base}}
+.
+
+The baseline 
+v
+(
+x
+,
+y
+1
+:
+t
+)
+v(x,y_{1:t})
+ is designed for variance reduction, and there are a few ways to compute it. For example, it can be computed from a critic model 
+(
+Schulman et al.,, 2017
+)
+ or using branched rollout 
+(
+Schulman et al.,, 2015
+; 
+Kazemnejad et al.,, 2024
+)
+. Another simple yet effective approach, which we will focus on below and compatible with the workflow in Figure 
+2
+, is that from a single prompt 
+x
+x
+, we sample 
+n
+n
+ generations and compute the baseline as the mean rewards from these generations 
+y
+i
+,
+i
+∈
+[
+n
+]
+y_{i},i\in[n]
+ with reward 
+r
+⁡
+(
+x
+,
+y
+i
+)
+r(x,y_{i})
+. This produces
+a constant baseline for the whole sequence of tokens 
+v
+(
+x
+,
+y
+1
+:
+t
+)
+=
+1
+n
+∑
+i
+=
+1
+n
+r
+i
+(
+x
+,
+y
+)
+v(x,y_{1:t})=\frac{1}{n}\sum_{i=1}^{n}r_{i}(x,y)
+
+which has proved reasonably effective for a number of applications 
+(
+Ahmadian et al.,, 2024
+; 
+Shao et al.,, 2024
+)
+.
+
+Noticeably, we apply a fixed constant 
+ρ
+\rho
+ to clip the importance sampling ratio 
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)}
+ from above. This clipping strategy introduces a bias and variance trade-off in the gradient estimation: when 
+ρ
+\rho
+ is assigned a large value, the estimation has less bias but more variance due to the importance sampling weights. We call the overall algorithm 
+AIPO
+
+(Asynchronous Importance weighted Policy Optimization).
+
+Mitigating training instability.
+
+In practice, we find clipping constant of 
+ρ
+∈
+[
+2
+,
+10
+]
+\rho\in[2,10]
+ seem to work generally well and help relieve much of the training instability arising in large-scale experiments. Such training instability is usually manifested as sudden or slow drops in training performance, and tends to arise more often due to sophisticated interactions between asynchronous training and other factors such as model architecture, data mixtures, multiple modalities, additional training and inference optimization, etc.
+
+Comparison to PPO clipping.
+
+For readers familiar with the topic, it is clear that the above correction differs slightly from the double-sided clipping in PPO 
+(
+Schulman et al.,, 2017
+)
+ and more recently GRPO 
+(
+Shao et al.,, 2024
+)
+. We have early ablations showing that the single sided clipping works better in our setting. We also argue that there are good reasons for the different algorithmic designs: in a nutshell, the PPO clipping is based on the trust region policy optimization formulation, which differs subtly from the asynchronous training setting in 
+LlamaRL
+. We provide additional discussions in Appendix 
+A
+.
+
+7 
+Theoretical justification of 
+LlamaRL
+ Speedup
+
+In this section, we aim to explain the efficiency gains achieved by 
+LlamaRL
+ from a theoretical perspective. We hope this sheds light on where the speed-up comes from, and helps practitioners build a good mental models for such training systems in general.
+
+More precisely, we will prove the following theorem, stated informally below for ease of understanding:
+
+Theorem 7.1
+ 
+(
+Theoretical speed up of LlamaRL
+, informal version of Theorem 
+7.5
+)
+
+Given the same hardware budget and memory constraints, 
+LlamaRL
+ can be configured to perform reinforcement learning (RL) strictly faster than any possible configuration of a traditional synchronous RL framework.
+
+At its core, the proof of Theorem 
+7.1
+ frames the search for optimal efficiency as a constrained optimization problem governed by GPU memory. We shall mathematically formulate both the synchronous and asynchronous frameworks and derive closed-form solutions for each. The key insight is that 
+LlamaRL
+’s asynchronous design decomposes the shared memory constraint of the synchronous baseline into two independent constraints—one for the trainer and one for the generator. This removes the mutual dependency between the two components, allowing each to be optimized separately and hence yielding larger admissible region.
+
+We start by introducing a few fundamental quantities based on structure of a typical RL training framework. Then, under reasonable assumptions that generally hold with modern hardware, we present a formal proof that our asynchronous design yields strictly higher efficiency than its traditional synchronous counterpart. Below, we begin by introducing a set of universal constants and notations that will be used throughout our derivations.
+
+Definition 7.2
+.
+
+(
+Universal constants of GPU
+)
+Let 
+G
+0
+G_{0}
+ denote the total number of available GPUs, 
+B
+0
+B_{0}
+ the global batch size, 
+M
+0
+M_{0}
+ the maximum available memory per GPU, and 
+W
+0
+W_{0}
+ the memory footprint of a single model replica. Let 
+b
+t
+b_{t}
+ represent the microbatch sizes used during training and 
+b
+g
+b_{g}
+ represent the generator batch size which indicates the max decoding concurrency. Finally, let 
+m
+t
+m_{t}
+ and 
+m
+g
+m_{g}
+ denote the model parallel degrees (i.e., number of GPUs per model instance) for the trainer and generator.
+
+In Table 
+2
+, we list major model components (model weights, optimizer states, gradients, hidden activations, KV cache) that lead to primary consumption of per-GPU memory in both the trainer and generator. As an example, with model parallelism degree 
+m
+t
+m_{t}
+, the memory consumption of a single model with size 
+W
+0
+W_{0}
+ leads to a per-GPU memory consumption of 
+W
+0
+/
+m
+t
+W_{0}/m_{t}
+.
+
+Name
+
+Location
+
+Size per
+
+GPU
+
+Free-able
+
+Trainer
+
+model
+
+Trainer
+
+W
+0
+/
+m
+t
+W_{0}/m_{t}
+
+No
+
+Adam states
+
+Trainer
+
+2
+​
+W
+0
+/
+m
+t
+2W_{0}/m_{t}
+
+No
+
+Gradients
+
+Trainer
+
+W
+0
+/
+m
+t
+W_{0}/m_{t}
+
+Yes
+
+Activations
+
+Trainer
+
+A
+t
+⋅
+b
+t
+/
+m
+t
+A_{t}\cdot b_{t}/m_{t}
+
+Yes
+
+Generator
+
+model
+
+Generator
+
+W
+0
+/
+m
+g
+W_{0}/m_{g}
+
+No
+
+KV cache
+
+Generator
+
+K
+g
+⋅
+b
+g
+/
+m
+g
+K_{g}\cdot b_{g}/m_{g}
+
+No
+
+Table 2: 
+CUDA memory footprint of major components in a typical RL training iteration. Here, 
+A
+t
+A_{t}
+ and 
+K
+g
+K_{g}
+ are constants determined solely by model size and are independent of batch size or model parallel sizes.
+
+We introduce a few useful concepts that will simplify subsequent presentation and analysis.
+
+Definition 7.3
+ 
+(
+Processing time
+)
+.
+
+For a given setup, let 
+τ
+t
+​
+(
+b
+)
+\tau_{t}(b)
+ and 
+τ
+g
+​
+(
+b
+)
+\tau_{g}(b)
+ denote the training and generation time for a batch of size 
+b
+b
+, respectively. Further, let us define the per-sample processing times as:
+
+η
+t
+​
+(
+b
+)
+≔
+τ
+t
+​
+(
+b
+)
+b
+,
+η
+g
+​
+(
+b
+)
+≔
+τ
+g
+​
+(
+b
+)
+b
+.
+\displaystyle\begin{split}\eta_{t}(b)&\coloneqq\frac{\tau_{t}(b)}{b},\eta_{g}(b)&\coloneqq\frac{\tau_{g}(b)}{b}.\end{split}
+
+(1)
+
+Note that the processing time is inversely proportional to throughput, i.e., smaller processing time means larger throughput. We now introduce the following key assumption underlying the main result:
+
+Assumption 7.1
+ 
+(
+Batch size scaling
+)
+.
+
+Both 
+η
+t
+\eta_{t}
+ and 
+η
+g
+\eta_{g}
+ are monotonically decreasing functions of batch size 
+b
+b
+.
+
+This assumption is well-supported by empirical observations in large-scale deep learning on modern GPUs. As batch size increases, per-sample processing time tends to decrease due to improved hardware utilization—such as higher arithmetic intensity, more efficient memory access patterns, and better kernel scheduling. On architectures like NVIDIA’s A100 and H100, larger batches better amortize compute and memory overhead, particularly for GEMM operations, resulting in sub-linear growth in total compute time and thus a decreasing trend in per-sample cost.
+
+This phenomenon has been widely observed and reported in prior work on efficient training and inference, such as DeepSpeed 
+Rajbhandari et al., 2019b ()
+, where they leverage larger batch sizes to maximize GPU utilization and improve scalability. We empirically validated this assumption across a wide range of batch sizes in our setup, as shown in Figure 
+5
+.
+
+Figure 5: 
+Empirical verification for Assumption 
+7.1
+ on batch size scaling with the 70B model. 
+Left:
+ Training time per 128 samples decreases with increasing microbatch size. 
+Right:
+ Generation time per 64 completions decreases with increasing maximum decoding concurrency. Both results illustrate sub-linear growth in total processing time, supporting the assumption that per-sample time (
+η
+t
+\eta_{t}
+, 
+η
+g
+\eta_{g}
+) decreases with batch size.
+
+Now, we connect the above scaling discussion back to RL training speed-up,
+by formally defining the notion of the RL step time for a given RL training framework:
+
+Definition 7.4
+ 
+(
+RL step time
+)
+.
+
+Given RL framework 
+ℱ
+\mathscr{F}
+, we define the step time 
+T
+ℱ
+T_{\mathscr{F}}
+ as a function of the microbatch sizes 
+(
+b
+t
+,
+b
+g
+)
+(b_{t},b_{g})
+ and model parallel sizes 
+(
+m
+t
+,
+m
+g
+)
+(m_{t},m_{g})
+. In particular, we consider:
+
+•
+
+T
+LlamaRL
+​
+(
+b
+t
+,
+b
+g
+,
+m
+t
+,
+m
+g
+,
+θ
+)
+T_{\textsc{LlamaRL}}(b_{t},b_{g},m_{t},m_{g},\theta)
+, which allows independent 
+mp_size
+ trainer and generator as well as flexible GPU allocations. Here 
+θ
+∈
+(
+0
+,
+1
+)
+\theta\in(0,1)
+ denotes the fraction of GPUs allocated to the trainer, with the remaining 
+(
+1
+−
+θ
+)
+⋅
+G
+0
+(1-\theta)\cdot G_{0}
+ used by the generator.
+
+•
+
+T
+baseline
+​
+(
+b
+t
+,
+b
+g
+,
+m
+)
+T_{\text{baseline}}(b_{t},b_{g},m)
+, corresponding to the synchronous baseline, where the constraint 
+m
+t
+=
+m
+g
+≡
+m
+m_{t}=m_{g}\equiv m
+ holds.
+
+Under mild assumptions—specifically, that inter-device communication overhead is negligible (as supported by our empirical measurements), and that the components listed in Table 
+2
+ account for the dominant sources of CUDA memory consumption during RL training—we now establish a formal efficiency gain of 
+LlamaRL
+ over the synchronous baseline.
+
+Theorem 7.5
+ 
+(
+Theoretical speed-up of 
+LlamaRL
+)
+
+Under the setup in Definition 
+7.2
+ and Assumption 
+7.1
+, there exist 
+b
+t
+b_{t}
+, 
+b
+g
+b_{g}
+, 
+m
+t
+m_{t}
+, and 
+m
+g
+m_{g}
+ satisfying the GPU memory constraint such that 
+T
+LlamaRL
+​
+(
+b
+t
+,
+b
+g
+,
+m
+t
+,
+m
+g
+)
+T_{\textsc{LlamaRL}}(b_{t},b_{g},m_{t},m_{g})
+ is strictly smaller than the minimum possible 
+T
+baseline
+T_{\text{baseline}}
+.
+
+Remark 7.1
+.
+
+It is worth noting that the theorem is established under minimal assumptions. In particular, we do not assume any specific analytical form for the batch processing time 
+τ
+\tau
+ or the per-sample processing time 
+η
+\eta
+ (see Definition 
+7.3
+). The only requirement is that 
+η
+\eta
+ decreases monotonically in batch size—a behavior that is both widely reported by prior work in practice and empirically validated in our experiments, as we have discussed earlier.
+
+Proof.
+
+We begin by computing the step time for each framework. In the synchronous case, the total step time is the sum of the generator and trainer times. In contrast, for the asynchronous framework, the step time is determined by the slower of the two. Using this observation along with Definition 
+7.3
+, we can express both step times as follows:
+
+T
+baseline
+​
+(
+b
+t
+,
+b
+g
+,
+m
+)
+=
+B
+0
+​
+m
+G
+0
+​
+b
+t
+⋅
+τ
+t
+​
+(
+b
+t
+)
++
+B
+0
+​
+m
+G
+0
+​
+b
+g
+⋅
+τ
+g
+​
+(
+b
+g
+)
+=
+B
+0
+G
+0
+⋅
+m
+⋅
+(
+η
+t
++
+η
+g
+)
+,
+\displaystyle\begin{split}T_{\text{baseline}}(b_{t},b_{g},m)&=\frac{B_{0}m}{G_{0}b_{t}}\cdot\tau_{t}(b_{t})+\frac{B_{0}m}{G_{0}b_{g}}\cdot\tau_{g}(b_{g})\\
+&=\frac{B_{0}}{G_{0}}\cdot m\cdot{(}\eta_{t}+\eta_{g}{)},\end{split}
+
+(2)
+
+T
+LlamaRL
+​
+(
+b
+t
+,
+b
+g
+,
+m
+t
+,
+m
+g
+,
+θ
+)
+=
+max
+⁡
+(
+B
+0
+​
+m
+t
+θ
+​
+G
+0
+​
+b
+t
+⋅
+τ
+t
+,
+B
+0
+​
+m
+g
+(
+1
+−
+θ
+)
+​
+G
+0
+​
+b
+g
+⋅
+τ
+g
+)
+=
+B
+0
+G
+0
+⋅
+max
+⁡
+(
+η
+t
+​
+m
+t
+θ
+,
+η
+g
+​
+m
+g
+1
+−
+θ
+)
+.
+\displaystyle\begin{split}T_{\textsc{LlamaRL}}(b_{t},b_{g},m_{t},m_{g},\theta)&=\max\left(\frac{B_{0}m_{t}}{\theta G_{0}b_{t}}\cdot\tau_{t},\frac{B_{0}m_{g}}{(1-\theta)G_{0}b_{g}}\cdot\tau_{g}\right)\\
+&=\frac{B_{0}}{G_{0}}\cdot\max\left(\frac{\eta_{t}m_{t}}{\theta},\frac{\eta_{g}m_{g}}{1-\theta}\right).\end{split}
+
+(3)
+
+On the other hand, by Table 
+2
+, the memory footprint per GPU of the trainer is given by
+
+4
+​
+W
+0
+m
+t
++
+A
+t
+​
+b
+t
+m
+t
+.
+\displaystyle\frac{4W_{0}}{m_{t}}+\frac{A_{t}b_{t}}{m_{t}}.
+
+(4)
+
+Similarly, the generator consumes
+
+W
+0
+m
+g
++
+K
+g
+​
+b
+g
+m
+g
+.
+\displaystyle\frac{W_{0}}{m_{g}}+\frac{K_{g}b_{g}}{m_{g}}.
+
+(5)
+
+Now combining Eqn. (
+2
+), (
+3
+), (
+4
+) and (
+5
+), the admissible minimizer of 
+T
+baseline
+T_{\text{baseline}}
+ is a solution to the following constrained optimization problem:
+
+min
+b
+t
+,
+b
+g
+,
+m
+B
+0
+G
+0
+⋅
+m
+⋅
+(
+η
+t
+​
+(
+b
+t
+)
++
+η
+g
+​
+(
+b
+g
+)
+)
+subject to
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+)
++
+(
+W
+0
++
+K
+g
+​
+b
+g
+)
+m
+≤
+M
+0
+.
+\displaystyle\begin{split}&\min_{b_{t},b_{g},m}\quad\frac{B_{0}}{G_{0}}\cdot m\cdot{(}\eta_{t}(b_{t})+\eta_{g}(b_{g}){)}\\
+&\text{subject to}\quad\frac{(4W_{0}+A_{t}b_{t})+(W_{0}+K_{g}b_{g})}{m}\leq M_{0}.\end{split}
+
+(6)
+
+Likewise, using Eqn. (
+3
+), (
+4
+) and (
+5
+), the admissible minimizer of 
+T
+LlamaRL
+T_{\textsc{LlamaRL}}
+ solves 
+1
+1
+
+1
+
+                
+                
+                
+                
+                
+                
+                
+              To simplify our argument, we omit the constraint 
+m
+≤
+G
+0
+m\leq G_{0}
+. But note this condition is always satisfied by the optimal solutions to (
+6
+) and (
+7
+) under sufficient GPU budget 
+G
+0
+G_{0}
+, which holds in all practical settings we consider.
+
+min
+b
+t
+,
+b
+g
+,
+m
+t
+,
+m
+g
+B
+0
+G
+0
+⋅
+max
+⁡
+(
+η
+t
+​
+(
+b
+t
+)
+​
+m
+t
+θ
+,
+η
+g
+​
+(
+b
+g
+)
+​
+m
+g
+1
+−
+θ
+)
+subject to
+{
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+m
+t
+≤
+M
+0
+,
+W
+0
++
+K
+g
+​
+b
+g
+m
+g
+≤
+M
+0
+.
+\displaystyle\begin{split}&\min_{b_{t},b_{g},m_{t},m_{g}}\quad\frac{B_{0}}{G_{0}}\cdot\max\left(\frac{\eta_{t}(b_{t})m_{t}}{\theta},\frac{\eta_{g}(b_{g})m_{g}}{1-\theta}\right)\\
+&\text{subject to}\quad\left\{\begin{array}[]{l}\displaystyle\frac{4W_{0}+A_{t}b_{t}}{m_{t}}\leq M_{0},\\
+\\
+\displaystyle\frac{W_{0}+K_{g}b_{g}}{m_{g}}\leq M_{0}.\end{array}\right.\end{split}
+
+(7)
+
+Now, consider a minimizer to problem (
+6
+), again denoted by 
+(
+b
+t
+∗
+,
+b
+g
+∗
+,
+m
+∗
+)
+(b_{t}^{*},b_{g}^{*},m^{*})
+, achieving minimium admissible step time 
+T
+baseline
+∗
+T_{\text{baseline}}^{*}
+. By Lemma 
+B.1
+, 
+(
+b
+t
+∗
+,
+b
+g
+∗
+,
+m
+∗
+)
+(b_{t}^{*},b_{g}^{*},m^{*})
+ satisfies (
+12
+), thus the following strict inequalities hold
+
+{
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+m
+∗
+<
+M
+0
+,
+W
+0
++
+K
+g
+​
+b
+g
+∗
+m
+∗
+<
+M
+0
+.
+\displaystyle\begin{split}\left\{\begin{array}[]{l}\displaystyle\frac{4W_{0}+A_{t}b_{t}^{*}}{m^{*}}<M_{0},\\
+\\
+\displaystyle\frac{W_{0}+K_{g}b_{g}^{*}}{m^{*}}<M_{0}.\end{array}\right.\end{split}
+
+(8)
+
+Conversely, consider a solution to problem (
+7
+), denoted by 
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**})
+. By Lemma 
+B.2
+, it must satisfy the following constraints
+
+{
+m
+t
+∗
+⁣
+∗
+=
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+⁣
+∗
+)
+M
+0
+,
+m
+g
+∗
+⁣
+∗
+=
+(
+W
+0
++
+K
+g
+​
+b
+g
+∗
+⁣
+∗
+)
+M
+0
+.
+\displaystyle\begin{split}\left\{\begin{array}[]{l}\displaystyle m_{t}^{**}=\frac{(4W_{0}+A_{t}b_{t}^{**})}{M_{0}},\\
+\\
+\displaystyle m_{g}^{**}=\frac{(W_{0}+K_{g}b_{g}^{**})}{M_{0}}.\end{array}\right.\end{split}
+
+(9)
+
+Next, define the variables 
+T
+t
+∗
+⁣
+∗
+T_{t}^{**}
+ and 
+T
+g
+∗
+⁣
+∗
+T_{g}^{**}
+ for the optimal trainer and generator time
+
+{
+T
+t
+∗
+⁣
+∗
+≕
+min
+b
+t
+⁡
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+)
+​
+η
+t
+M
+0
+,
+T
+g
+∗
+⁣
+∗
+≕
+min
+b
+g
+⁡
+(
+W
+0
++
+K
+g
+​
+b
+g
+)
+​
+η
+g
+M
+0
+.
+\displaystyle\begin{split}\left\{\begin{array}[]{l}\displaystyle T^{**}_{t}\eqqcolon\min_{b_{t}}\frac{(4W_{0}+A_{t}b_{t})\eta_{t}}{M_{0}},\\
+\\
+\displaystyle T^{**}_{g}\eqqcolon\min_{b_{g}}\frac{(W_{0}+K_{g}b_{g})\eta_{g}}{M_{0}}.\end{array}\right.\end{split}
+
+(10)
+
+Then we obtain
+
+T
+baseline
+∗
+=
+B
+0
+G
+0
+⋅
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+)
++
+(
+W
+0
++
+K
+g
+​
+b
+g
+∗
+)
+M
+0
+⋅
+(
+η
+t
+∗
++
+η
+g
+∗
+)
+>
+(
+a
+)
+B
+0
+G
+0
+⋅
+(
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+)
+​
+η
+t
+∗
+M
+0
++
+(
+W
+0
++
+K
+g
+​
+b
+g
+∗
+)
+​
+η
+g
+∗
+M
+0
+)
+>
+(
+b
+)
+B
+0
+G
+0
+⋅
+(
+T
+∗
+⁣
+∗
+t
++
+T
+∗
+⁣
+∗
+g
+)
+=
+B
+0
+G
+0
+⋅
+(
+θ
+∗
+⁣
+∗
+⋅
+T
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
++
+(
+1
+−
+θ
+∗
+⁣
+∗
+)
+⋅
+T
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+)
+=
+(
+c
+)
+B
+0
+G
+0
+⋅
+max
+(
+T
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+,
+T
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+)
+=
+(
+d
+)
+B
+0
+G
+0
+⋅
+max
+(
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+,
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+)
+=
+T
+LlamaRL
+​
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+\displaystyle\begin{split}T_{\text{baseline}}^{*}&=\frac{B_{0}}{G_{0}}\cdot\frac{(4W_{0}+A_{t}b_{t}^{*})+(W_{0}+K_{g}b_{g}^{*})}{M_{0}}\cdot(\eta_{t}^{*}+\eta_{g}^{*})\\
+&>_{(a)}\frac{B_{0}}{G_{0}}\cdot\bigg(\frac{(4W_{0}+A_{t}b_{t}^{*})\eta_{t}^{*}}{M_{0}}+\frac{(W_{0}+K_{g}b_{g}^{*})\eta_{g}^{*}}{M_{0}}\bigg)\\
+&>_{(b)}\frac{B_{0}}{G_{0}}\cdot\bigg(T^{**}_{t}+T^{**}_{g}\bigg)\\
+&=\frac{B_{0}}{G_{0}}\cdot\bigg(\theta^{**}\cdot\frac{T^{**}_{t}}{\theta^{**}}+(1-\theta^{**})\cdot\frac{T^{**}_{g}}{1-\theta^{**}}\bigg)\\
+&=_{(c)}\frac{B_{0}}{G_{0}}\cdot\max\left(\frac{T^{**}_{t}}{\theta^{**}},\frac{T^{**}_{g}}{1-\theta^{**}}\right)\\
+&=_{(d)}\frac{B_{0}}{G_{0}}\cdot\max\left(\frac{\eta^{**}_{t}m^{**}_{t}}{\theta^{**}},\frac{\eta^{**}_{g}m_{g}^{**}}{1-\theta^{**}}\right)\\
+&=T_{\textsc{LlamaRL}}\left(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**}\right)\end{split}
+
+(11)
+
+where inequality (a) follows from a direct algebra manipulation, inequality (b) follows from definition (
+10
+), equality (c) is the consequence of the third identity in (
+16
+) of Lemma 
+B.3
+, equality (d) uses the first two identities in (
+16
+) of Lemma 
+B.3
+, and the last equality is yielded by definition (
+3
+). Combining both sides of (
+11
+), we conclude Theorem 
+7.5
+.
+∎
+
+Remark 7.2
+.
+
+The final derivation in  (
+11
+) helps identify two primary sources of efficiency gains. First, inequality (a) reflects how the freed-up GPU memory in the asynchronous setup allows for reduced model parallelism, which in turn lowers computation load on each GPU. Then, inequality (b) suggests that by decoupling trainer and generator memory constraints, the asynchronous framework can further optimize among 
+mp_size
+ and micro batch size within each component independently to maximize overall step efficiency.
+
+Remark 7.3
+.
+
+To simplify the proof of Theorem 
+7.5
+, we intentionally made several conservative assumptions. For example, we did not account for the potential use of quantization to reduce model size, which would further enable smaller 
+mp_size
+, nor did we argue for the additional communication savings associated with reduced 
+mp_size
+. Importantly, each of these omitted factors would only strengthen our conclusion by contributing to even greater efficiency gains.
+
+8 
+Experiments
+
+We showcase the efficiency of 
+LlamaRL
+ with a number of ablations.
+
+8.1 
+Experiment setup
+
+We empirically demonstrate the efficiency gains of 
+LlamaRL
+, and show that it achieves comparable performance to the synchronous on-policy baseline on public benchmarks. Unless stated otherwise, all models are trained on the MATH dataset 
+(
+Hendrycks et al.,, 2021
+)
+, a mathematical reasoning dataset that contains questions paired with short-form answers. Evaluations are conducted on the full test split of the MATH dataset 
+(
+Hendrycks et al.,, 2021
+)
+ as well as the GSM8K dataset 
+(
+Cobbe et al.,, 2021
+)
+. To further ensure fair evaluation and mitigate potential score inflation due to test set contamination in MATH, we follow 
+Lightman et al., 2023b ()
+ and additionally evaluate on a 500-problem held-out subset, commonly referred to as MATH-500.
+
+LlamaRL
+ vs. Baseline.
+
+To benchmark against 
+LlamaRL
+, we adopt the commonly recognized synchronous on-policy baseline (see, e.g., DeepSpeed-Chat 
+(
+Yao et al.,, 2023
+)
+). Both 
+LlamaRL
+ and the baseline share identical optimizations for inference and training. Specifically, the inference optimization includes efficient memory management for KV-cache, optimized CUDA kernels, CUDA graph utilization 
+(
+Nguyen et al.,, 2021
+)
+, and tensor parallelism 
+(
+Shoeybi et al.,, 2019
+)
+. The training side applies FSDP 
+(
+Zhao et al.,, 2023
+)
+ to optimize memory usage.
+
+To reiterate, the key distinction between the asynchronous 
+LlamaRL
+ and the synchronous baseline, lies in their execution architecture:
+
+•
+
+The baseline colocates inference and policy models within the same GPU cluster sharing the same model parallelism. In comparison, 
+LlamaRL
+ decouples these components to different GPU clusters with different parallelism and data precision. For example in Table 
+3
+, The 405B 
+LlamaRL
+ job can be incoorperated with generator with model parallelism size 8 to model parallelism size 32.
+
+•
+
+The baseline execute the training and inference sequentially. In comparison, 
+LlamaRL
+ enables asynchronous training and inference with DDMA weights update across different components.
+
+Experimental configurations.
+
+We conduct experiments on the 8B, 70B, and 405B variants of LLaMA 3.1 family of open sourced models 
+(
+Dubey et al.,, 2024
+)
+. For optimization, we use a fixed learning rate of 
+2
+×
+10
+−
+7
+2\times 10^{-7}
+ with the Adam optimizer 
+(
+Kingma and Ba,, 2014
+; 
+Loshchilov and Hutter,, 2017
+)
+. For a fair comparison, both frameworks use identical RL algorithms, datasets, training hyperparameters, evaluation protocols, and the same number of H100 GPUs. We will specify all training details, including number of generations, number of GPUs, model tensor parallelism, and batch sizes in experiments below.
+
+8.2 
+Efficiency comparison
+
+Model size (B)
+
+Total step
+
+time(s)
+
+Total
+
+# GPUs
+
+Generator
+
+# GPUs
+
+Trainer
+
+# GPUs
+
+Trainer
+
+mp size
+
+Generator
+
+mp size
+
+The global
+
+batch size
+
+Max decode
+
+concurrency
+
+Baseline
+
+8
+
+22.45
+
+256
+
+N/A
+
+N/A
+
+8
+
+8
+
+2048
+
+16 x 16 (dp size)
+
+70
+
+82.32
+
+256
+
+N/A
+
+N/A
+
+8
+
+8
+
+2048
+
+16 x 16
+
+405
+
+635.8
+
+1024
+
+N/A
+
+N/A
+
+64
+
+64
+
+2048
+
+32 x 16
+
+LlamaRL
+
+8
+
+12.22
+
+256
+
+128
+
+128
+
+8
+
+8
+
+2048
+
+64 x 16
+
+8
+
+8.90
+
+256
+
+128
+
+128
+
+8
+
+1
+
+2048
+
+32 x 128
+
+70
+
+26.19
+
+256
+
+128
+
+128
+
+8
+
+8
+
+2048
+
+64 x 16
+
+70
+
+20.67
+
+256
+
+120
+
+136
+
+8
+
+4 (
+fp8
+)
+
+2048
+
+16 x 34
+
+405
+
+240.8
+
+1024
+
+512
+
+512
+
+32
+
+32
+
+2048
+
+32 x 16
+
+405
+
+100.5
+
+1024
+
+512
+
+512
+
+16
+
+16
+
+2048
+
+48 x 32
+
+405
+
+59.5
+
+1024
+
+512
+
+512
+
+16
+
+8 (
+fp8
+)
+
+2048
+
+32 x 64
+
+Table 3: 
+RL speed comparison between 
+LlamaRL
+ and synchronized baseline. To ensure a fair comparison, all experiments use 
+n
+=
+4
+n=4
+ completions per training prompt and 
+512
+512
+ unique prompts per training batch, yielding a consistent global batch size of 2048. We use 256 GPUs for both the 8B model and 70B model, and 1024 GPUs for the 405B model. For the baseline, both the generator and trainer are colocated on all GPUs, so their individual # GPU is not listed. For the max decode concurrency, we calculate it by multiplying the max decode concurrency per data parallel group with data parallel group size. 
+
+Model Size (B)
+
+OpenRLHF
+
+LlamaRL
+
+7
+
+4.32
+
+0.04
+
+70
+
+111.65
+
+1.15
+
+405
+
+-
+
+2.31
+
+Table 4: 
+The time consumption (seconds) of the weights synchronization in OpenRLHF and 
+LlamaRL
+.
+
+Table 
+3
+ summarizes the efficiency results. Under equal GPU budgets, 
+LlamaRL
+ achieves 
+2.52
+×
+2.52\times
+, 
+3.98
+×
+3.98\times
+ and 
+10.7
+×
+10.7\times
+ speedups per RL step on the 8B, 70B and 405B models, respectively, demonstrating strong scalability with increasing model size.
+
+While the largest gain at 405B partly benefits from 
+fp8
+ quantization on the generator, we emphasize that the primary source of improvement lies in 
+LlamaRL
+’s parallelism flexibility. Specifically, it allows the generator and trainer to use different model parallel sizes. This enables us to set 
+mp_size
+ = 8 for the generator while keeping trainer as bf16 at 
+mp_size
+ = 16, effectively balancing generation and training time to maximize overall throughput. In contrast, the synchronous baseline (see Subsection 
+8.1
+) requires a single global 
+mp_size
+ for both generator and trainer. As a result, even if the baseline generator were quantized, it would still be constrained to 
+mp_size
+ = 64, limiting the potential speedup.
+
+We define the efficiency gain of 
+LlamaRL
+ as the ratio of RL step times between the synchronous baseline and 
+LlamaRL
+ under identical hardware and training settings. This gain—measured at 8B, 70B, and 405B model scales—is plotted against the logarithm of model size in Figure 
+8
+. The convex trend indicates that the relative speedup grows super-linearly in log-scale as models increase in size. Consequently, 
+LlamaRL
+ demonstrates strong scalability and offers promising efficiency for training even larger language models in the future.
+
+Figure 6: 
+Evaluation results comparing 
+LlamaRL
+ with the synchronous RL baseline on MATH-500, MATH test, and GSM8K for 8B models. 
+LlamaRL
+ achieves comparable performance to the baseline across all benchmarks, while benefiting from a more efficient asynchronous training framework.
+
+Figure 7: 
+Efficiency gains of 
+LlamaRL
+ over the synchronous baseline at different model scales. Speedup increases with model size, reaching over 10× at 405B. We use a log-scaled x-axis to better visualize the growth trend.
+
+Figure 8: 
+Ablation on the impact of off-policy corrections. We compare training stability with and without importance sampling corrections for asynchronous training in 
+LlamaRL
+. With more sophisticated data mixtures, 8B and 70B models’ training tend to be sporadically unstable. In contrast, applying off-policy corrections stabilizes training across model scales, demonstrating their necessity for ensuring robustness in asynchronous RL training framework.
+
+8.3 
+Quality comparison to on-policy learning
+
+To assess the training quality under different RL training frameworks, we evaluate on the MATH test set, MATH-500 (see Subsection 
+8.1
+), and GSM8K, using the 
+sympy score
+ as our primary metric. This score measures answer accuracy by parsing both predicted and reference expressions with the 
+sympy
+ symbolic algebra library and checking for symbolic equivalence 
+(
+Meurer et al.,, 2017
+)
+. We use the same score as reward for training applied to the training data.
+
+We train 8B models using the 
+LlamaRL
+ framework with the 
+AIPO
+ algorithm. As a strong and fair comparison, we use the synchronous RL baseline described earlier in Subsection 
+8.1
+. Algorithmically, the baseline can be understood as an on-policy version of 
+AIPO
+ - the same gradient estimator but without importance sampling corrections, since the baseline is already strictly on-policy. All hyper-parameters, including the global batch size and learning rate, are kept identical across both settings.
+
+Figure 
+6
+ presents the evaluation results on MATH-500, the full MATH test set, and GSM8K. On both the MATH test set and GSM8K, 
+LlamaRL
+ performs on par with the traditional synchronous RL framework, demonstrating that the asynchronous training does not compromise training quality. Interestingly, 
+LlamaRL
+ shows a consistent improvement on MATH-500 throughout training. While this gain may be partially attributed to statistical variation, it may also reflect potential benefits of off-policy learning over strictly on-policy approaches (see, e.g., 
+Lambert et al., (2024)
+ on this point). We leave a deeper investigation of this observation to future work.
+
+Remark.
+
+We focus on the 8B model for evaluation, as the 70B model does not obtain significant improvements by only training on the MATH training set. The 8B model evaluation allows us to observe clearer learning trends and more effectively compare training quality between RL frameworks.
+
+9 
+Conclusion
+
+In this paper, we introduced 
+LlamaRL
+, a fully distributed and asynchronous reinforcement learning framework for large-scale training of large language models (LLMs). By combining asynchronous training with diverse parallelization strategies and mixed-precision techniques across various RL components, 
+LlamaRL
+ dramatically improves computational and memory efficiency. Our proposed Distributed Direct Memory Access (DDMA) method further ensures efficient weight updates among actors. Consequently, 
+LlamaRL
+ exhibits robust scalability—from a small cluster of H100 GPUs to thousands or even more H100 GPUs—providing a practical path forward as model sizes and training demands continue to grow.
+
+We establish the efficiency gains of 
+LlamaRL
+ both theoretically and empirically. From a theoretical perspective, we provide a formal analysis and prove that 
+LlamaRL
+ achieves strictly lower step time than any synchronous RL framework under the same resource constraints. Our experiments indicate that off-policy corrections effectively address potential drawbacks of asynchronous learning, preserving both training stability and final performance. In particular, 
+LlamaRL
+ achieves a 10.7× increase in RL training throughput on extremely large (405B) models.
+
+Overall, 
+LlamaRL
+ marks the next step in RL-based fine-tuning for LLMs, simplifying the integration of complex algorithms involing potentially multiple models at scale. We anticipate that our approach will benefit both researchers and practitioners by delivering greater efficiency, enhanced reliability, and easier extensibility in RL pipelines for modern AI workloads. Future directions include exploring more advanced off-policy learning methods, integrating multi-task objectives, and extending asynchronous RL to broader modalities.
+
+Contributors and Acknowledgement
+
+Co-first authors
+
+Bo Wu, Sid Wang, Yunhao Tang, Jia Ding
+
+Core contributors
+
+Eryk Helenowski, Liang Tan, Tengyu Xu, Tushar Gowda, Zhengxing Chen (in alphabetical order of the first name)
+
+Other contributors
+
+Chen Zhu, Xiaocheng Tang, Yundi Qian (in alphabetical order of the first name)
+
+Project Leads
+
+Beibei Zhu, Rui Hou (in alphabetical order of the first name)
+
+Acknowledgement
+
+Thanks to the following members from the Llama team who continually work on top of our initial 
+LlamaRL
+ stack, contributing useful features and providing valuable feedback: Qian Sun, Jessica Zhong, Boduo Li, Jemma Fan, Ning Li, Zhitong Guo, Hongbo Zhang, Haiping Zhao, Naman Goyal, Dhruv Mahajan, Rohan Anil, Kushal Lakhotia, Ruan Silva, Sagar Jain, Licheng Yu, Yuanhao Xiong, Karthik Prasad, Di Jin, Congying Xia, Rohan Maheshwari, Jinxi Guo, Xiaopeng Li, Damien Allonsius, David Brandfonbrener, Xuewei Wang, Lovish Madaan, Anirudh Goyal, Andy Su, Arvind Neelakantan, Yuandong Tian. Thanks to the members from Meta FAIR for discussions: Rémi Munos, Taco Cohen, Kunhao Zheng. Thanks to the following members from the Meta infrastructure team to provide strong underlying infrastructure and seamless support: Weiwei Chu, Sheng Shen, Naman Goyal, Xiaodong Wang, Jianyu Huang, Jiecao Yu, Jenya Lee, Rohan Verma, Xinfeng Xie.
+
+References
+
+Ahmadian et al.,  (2024)
+
+Ahmadian, A., Cremer, C., Gallé, M., Fadaee, M., Kreutzer, J., Pietquin,
+O., Üstün, A., and Hooker, S. (2024).
+
+Back to basics: Revisiting reinforce style optimization for learning
+from human feedback in llms.
+
+arXiv preprint arXiv:2402.14740
+.
+
+Anthropic,  (2023)
+
+Anthropic (2023).
+
+Claude: Training helpful and harmless ai assistants.
+
+Anthropic AI Blog
+.
+
+URL: 
+https://www.anthropic.com/index/2023/Claude
+.
+
+(3)
+
+Bai, Y., Jones, A., Ndousse, K., and et al. (2022a).
+
+Training a helpful and harmless assistant with rlhf.
+
+arXiv preprint arXiv:2204.05862
+.
+
+(4)
+
+Bai, Y., Jones, A., Ndousse, K., and et al. (2022b).
+
+Training a helpful and harmless assistant with rlhf.
+
+arXiv preprint arXiv:2204.05862
+.
+
+Berner et al.,  (2019)
+
+Berner, C., Brockman, G., Chan, B., Cheung, V., Dębiak, P., Dennison, C.,
+Farhi, D., Fischer, Q., Hashme, S., Hesse, C., et al. (2019).
+
+Dota 2 with large scale deep reinforcement learning.
+
+arXiv preprint arXiv:1912.06680
+.
+
+Brown et al.,  (2020)
+
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D., Dhariwal, P.,
+Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al. (2020).
+
+Language models are few-shot learners.
+
+Advances in neural information processing systems
+,
+33:1877–1901.
+
+Chilimbi et al.,  (2014)
+
+Chilimbi, T., Suzue, Y., Apacible, J., and Kalyanaraman, K. (2014).
+
+Project Adam: Building an efficient and scalable deep learning
+training system.
+
+In 
+Proceedings of the 11th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI)
+, pages 571–582.
+
+Christiano et al.,  (2017)
+
+Christiano, P., Leike, J., Brown, T., and et al. (2017).
+
+Deep reinforcement learning from human preferences.
+
+In 
+Advances in Neural Information Processing Systems (NeurIPS)
+.
+
+Cobbe et al.,  (2021)
+
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert,
+M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., and Schulman, J. (2021).
+
+Training verifiers to solve math word problems.
+
+ArXiv
+, abs/2110.14168.
+
+DeepSeek-AI,  (2025)
+
+DeepSeek-AI (2025).
+
+Deepseek-r1: Incentivizing reasoning capability in llms via
+reinforcement learning.
+
+arXiv preprint arXiv:2501.12948
+.
+
+Dong et al.,  (2023)
+
+Dong, H., Xiong, W., Goyal, D., Zhang, Y., Chow, W., Pan, R., Diao, S., Zhang,
+J., Shum, K., and Zhang, T. (2023).
+
+Raft: Reward ranked finetuning for generative foundation model
+alignment.
+
+arXiv preprint arXiv:2304.06767
+.
+
+Dubey et al.,  (2024)
+
+Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A.,
+Mathur, A., Schelten, A., Yang, A., Fan, A., Goyal, A., Hartshorn, A. S.,
+Yang, A., Mitra, A., Sravankumar, A., Korenev, A., Hinsvark, A., Rao, A.,
+Zhang, A., Rodriguez, A., Gregerson, A., Spataru, A., tiste Rozière, B.,
+Biron, B., Tang, B., Chern, B., Caucheteux, C., Nayak, C., Bi, C., Marra, C.,
+McConnell, C., Keller, C., Touret, C., Wu, C., Wong, C., Ferrer, C. C.,
+Nikolaidis, C., Allonsius, D., Song, D., Pintz, D., Livshits, D., Esiobu, D.,
+Choudhary, D., Mahajan, D., Garcia-Olano, D., Perino, D., Hupkes, D.,
+Lakomkin, E., AlBadawy, E. A., Lobanova, E., Dinan, E., Smith, E. M.,
+Radenovic, F., Zhang, F., Synnaeve, G., Lee, G., Anderson, G. L., Nail, G.,
+Mialon, G., Pang, G., Cucurell, G., Nguyen, H., Korevaar, H., Xu, H.,
+Touvron, H., Zarov, I., Ibarra, I. A., Kloumann, I. M., Misra, I., Evtimov,
+I., Copet, J., Lee, J., Geffert, J., Vranes, J., Park, J., Mahadeokar, J.,
+Shah, J., van der Linde, J., Billock, J., Hong, J., Lee, J., Fu, J., Chi, J.,
+Huang, J., Liu, J., Wang, J., Yu, J., Bitton, J., Spisak, J., Park, J.,
+Rocca, J., Johnstun, J., Saxe, J., Jia, J.-Q., Alwala, K. V., Upasani, K.,
+Plawiak, K., Li, K., neth Heafield, K.-., Stone, K., El-Arini, K., Iyer, K.,
+Malik, K., ley Chiu, K., Bhalla, K., Rantala-Yeary, L., van der Maaten, L.,
+Chen, L., Tan, L., Jenkins, L., Martin, L., Madaan, L., Malo, L., Blecher,
+L., Landzaat, L., de Oliveira, L., Muzzi, M., Pasupuleti, M., Singh, M.,
+Paluri, M., Kardas, M., Oldham, M., Rita, M., Pavlova, M., Kambadur, M.
+H. M., Lewis, M., Si, M., Singh, M. K., Hassan, M., Goyal, N., Torabi, N.,
+Bashlykov, N., Bogoychev, N., Chatterji, N. S., Duchenne, O., cCelebi, O.,
+Alrassy, P., Zhang, P., Li, P., Vasić, P., Weng, P., Bhargava, P., Dubal,
+P., Krishnan, P., Koura, P. S., Xu, P., He, Q., Dong, Q., Srinivasan, R.,
+Ganapathy, R., Calderer, R., Cabral, R. S., Stojnic, R., Raileanu, R.,
+Girdhar, R., Patel, R., main Sauvestre, R., Polidoro, R., Sumbaly, R.,
+Taylor, R., Silva, R., Hou, R., Wang, R., Hosseini, S., Chennabasappa, S.,
+Singh, S., Bell, S., Kim, S. S., Edunov, S., Nie, S., Narang, S., Raparthy,
+S. C., Shen, S., Wan, S., Bhosale, S., Zhang, S., Vandenhende, S., Batra, S.,
+Whitman, S., Sootla, S., Collot, S., Gururangan, S., Borodinsky, S., Herman,
+T., Fowler, T., Sheasha, T., Georgiou, T., Scialom, T., Speckbacher, T.,
+Mihaylov, T., Xiao, T., Karn, U., Goswami, V., Gupta, V., Ramanathan, V.,
+Kerkez, V., Gonguet, V., Do, V., Vogeti, V., Petrovic, V., Chu, W., Xiong,
+W., Fu, W., ney Meers, W., Martinet, X., Wang, X., Tan, X. E., Xie, X., Jia,
+X., Wang, X., Goldschlag, Y., Gaur, Y., Babaei, Y., Wen, Y., Song, Y., Zhang,
+Y., Li, Y., Mao, Y., Coudert, Z. D., Yan, Z., Chen, Z., Papakipos, Z., Singh,
+A. K., Grattafiori, A., Jain, A., Kelsey, A., Shajnfeld, A., Gangidi, A.,
+Victoria, A., Goldstand, A., Menon, A., Sharma, A., Boesenberg, A., Vaughan,
+A., Baevski, A., Feinstein, A., Kallet, A., Sangani, A., Yunus, A., Lupu, A.,
+Alvarado, A., Caples, A., Gu, A., Ho, A., Poulton, A., Ryan, A., Ramchandani,
+A., Franco, A., Saraf, A., Chowdhury, A., Gabriel, A., Bharambe, A.,
+Eisenman, A., Yazdan, A., James, B., Maurer, B., Leonhardi, B., Huang,
+P.-Y. B., Loyd, B., Paola, B. D., Paranjape, B., Liu, B., Wu, B., Ni, B.,
+Hancock, B., Wasti, B., Spence, B., Stojkovic, B., Gamido, B., Montalvo, B.,
+Parker, C., Burton, C., Mejia, C., Wang, C., Kim, C., Zhou, C., Hu, C., Chu,
+C.-H., Cai, C., Tindal, C., Feichtenhofer, C., Civin, D., Beaty, D., Kreymer,
+D., Li, S.-W., Wyatt, D., Adkins, D., Xu, D., Testuggine, D., David, D.,
+Parikh, D., Liskovich, D., Foss, D., Wang, D., Le, D., Holland, D., Dowling,
+E., Jamil, E., Montgomery, E., Presani, E., Hahn, E., Wood, E., Brinkman, E.,
+Arcaute, E., Dunbar, E., Smothers, E., Sun, F., Kreuk, F., Tian, F., Ozgenel,
+F., Caggioni, F., Guzm’an, F., Kanayet, F. J., Seide, F., Florez, G. M.,
+Schwarz, G., Badeer, G., Swee, G., Halpern, G., Thattai, G., Herman, G.,
+Sizov, G. G., Zhang, G., Lakshminarayanan, G., Shojanazeri, H., Zou, H.,
+Wang, H., Zha, H., Habeeb, H., Rudolph, H., Suk, H., Aspegren, H., Goldman,
+H., Molybog, I., Tufanov, I., Veliche, I.-E., Gat, I., Weissman, J., Geboski,
+J., Kohli, J., Asher, J., Gaya, J.-B., Marcus, J., Tang, J., Chan, J., Zhen,
+J., Reizenstein, J., Teboul, J., Zhong, J., Jin, J., Yang, J., Cummings, J.,
+Carvill, J., Shepard, J., McPhie, J., Torres, J., Ginsburg, J., Wang, J., Wu,
+K., KamHou, U., Saxena, K., Prasad, K., Khandelwal, K., Zand, K., Matosich,
+K., Veeraraghavan, K., Michelena, K., Li, K., Huang, K., Chawla, K.,
+Lakhotia, K., Huang, K., Chen, L., Garg, L., Lavender, A., Silva, L., Bell,
+L., Zhang, L., Guo, L., Yu, L., Moshkovich, L., Wehrstedt, L., Khabsa, M.,
+Avalani, M., Bhatt, M., Tsimpoukelli, M., Mankus, M., Hasson, M., Lennie, M.,
+Reso, M., Groshev, M., Naumov, M., Lathi, M., Keneally, M., Seltzer, M. L.,
+Valko, M., Restrepo, M., Patel, M., Vyatskov, M., Samvelyan, M., Clark, M.,
+Macey, M., Wang, M., Hermoso, M. J., Metanat, M., Rastegari, M., Bansal, M.,
+Santhanam, N., Parks, N., White, N., Bawa, N., Singhal, N., Egebo, N.,
+Usunier, N., Laptev, N. P., Dong, N., Zhang, N., Cheng, N., Chernoguz, O.,
+Hart, O., Salpekar, O., Kalinli, O., Kent, P., Parekh, P., Saab, P., Balaji,
+P., Rittner, P., Bontrager, P., Roux, P., Dollár, P., Zvyagina, P.,
+Ratanchandani, P., Yuvraj, P., Liang, Q., Alao, R., Rodriguez, R., Ayub, R.,
+Murthy, R., Nayani, R., Mitra, R., Li, R., Hogan, R., Battey, R., Wang, R.,
+Maheswari, R., Howes, R., Rinott, R., Bondu, S. J., Datta, S., Chugh, S.,
+Hunt, S., Dhillon, S., Sidorov, S., Pan, S., Verma, S., Yamamoto, S.,
+Ramaswamy, S., Lindsay, S., Feng, S., Lin, S., Zha, S. C., Shankar, S.,
+Zhang, S., Wang, S., Agarwal, S., Sajuyigbe, S., Chintala, S., Max, S., Chen,
+S., Kehoe, S., Satterfield, S., Govindaprasad, S., Gupta, S., Cho, S.-B.,
+Virk, S., Subramanian, S., Choudhury, S., Goldman, S., Remez, T., Glaser, T.,
+Best, T., Kohler, T., Robinson, T., Li, T., Zhang, T., Matthews, T., Chou,
+T., Shaked, T., Vontimitta, V., Ajayi, V., Montanez, V., Mohan, V., Kumar,
+V. S., Mangla, V., Ionescu, V., Poenaru, V. A., Mihailescu, V. T., Ivanov,
+V., Li, W., Wang, W., Jiang, W., Bouaziz, W., Constable, W., Tang, X., Wang,
+X., Wu, X., Wang, X., Xia, X., Wu, X., Gao, X., Chen, Y., Hu, Y., Jia, Y.,
+Qi, Y., Li, Y., Zhang, Y., Zhang, Y., Adi, Y., Nam, Y., Wang, Y., Hao, Y.,
+Qian, Y., He, Y., Rait, Z., DeVito, Z., Rosnbrick, Z., Wen, Z., Yang, Z., and
+Zhao, Z. (2024).
+
+The llama 3 herd of models.
+
+ArXiv
+, abs/2407.21783.
+
+El-Kishky et al.,  (2025)
+
+El-Kishky, A., Wei, A., Saraiva, A., Minaev, B., Selsam, D., Dohan, D., Song,
+F., Lightman, H., Clavera, I., Pachocki, J., et al. (2025).
+
+Competitive programming with large reasoning models.
+
+arXiv preprint arXiv:2502.06807
+.
+
+Espeholt et al.,  (2018)
+
+Espeholt, L., Soyer, H., Munos, R., Simonyan, K., Mnih, V., Ward, T., Doron,
+Y., Firoiu, V., Harley, T., Dunning, I., et al. (2018).
+
+Impala: Scalable distributed deep-rl with importance weighted
+actor-learner architectures.
+
+In 
+International conference on machine learning
+, pages
+1407–1416. PMLR.
+
+Gehring et al.,  (2024)
+
+Gehring, J., Zheng, K., Copet, J., Mella, V., Cohen, T., and Synnaeve, G.
+(2024).
+
+Rlef: Grounding code llms in execution feedback with reinforcement
+learning.
+
+arXiv preprint arXiv:2410.02089
+.
+
+Google,  (2023)
+
+Google (2023).
+
+Bard: Conversational ai by google.
+
+Google AI Blog
+.
+
+URL: 
+https://blog.google/technology/ai/bard-google-ai/
+.
+
+Guan et al.,  (2024)
+
+Guan, M. Y., Joglekar, M., Wallace, E., Jain, S., Barak, B., Helyar, A., Dias,
+R., Vallone, A., Ren, H., Wei, J., et al. (2024).
+
+Deliberative alignment: Reasoning enables safer language models.
+
+arXiv preprint arXiv:2412.16339
+.
+
+Hendrycks et al.,  (2021)
+
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song,
+D. X., and Steinhardt, J. (2021).
+
+Measuring mathematical problem solving with the math dataset.
+
+ArXiv
+, abs/2103.03874.
+
+Hestness et al.,  (2017)
+
+Hestness, J., Narang, S., Ardalani, N., Diamos, G., Jun, H., Kianinejad, H.,
+Patwary, M. M. A., Yang, Y., and Zhou, Y. (2017).
+
+Deep learning scaling is predictable, empirically.
+
+arXiv preprint arXiv:1712.00409
+.
+
+Hoffmann et al.,  (2022)
+
+Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford,
+E., Casas, D. d. L., Hendricks, L. A., Welbl, J., Clark, A., et al. (2022).
+
+Training compute-optimal large language models.
+
+arXiv preprint arXiv:2203.15556
+.
+
+Hu et al.,  (2024)
+
+Hu, J., Wu, X., Wang, W., Xianyu, Zhang, D., and Cao, Y. (2024).
+
+Openrlhf: An easy-to-use, scalable and high-performance rlhf
+framework.
+
+Jaech et al.,  (2024)
+
+Jaech, A., Kalai, A., Lerer, A., Richardson, A., El-Kishky, A., Low, A.,
+Helyar, A., Madry, A., Beutel, A., Carney, A., et al. (2024).
+
+Openai o1 system card.
+
+arXiv preprint arXiv:2412.16720
+.
+
+Jie and Abbeel,  (2010)
+
+Jie, T. and Abbeel, P. (2010).
+
+On a connection between importance sampling and the likelihood ratio
+policy gradient.
+
+Advances in Neural Information Processing Systems
+, 23.
+
+Kakade and Langford,  (2002)
+
+Kakade, S. and Langford, J. (2002).
+
+Approximately optimal approximate reinforcement learning.
+
+In 
+Proceedings of the nineteenth international conference on
+machine learning
+, pages 267–274.
+
+Kaplan et al.,  (2020)
+
+Kaplan, J., McCandlish, S., Henighan, T., and et al. (2020).
+
+Scaling laws for neural language models.
+
+arXiv preprint arXiv:2001.08361
+.
+
+Kapturowski et al.,  (2018)
+
+Kapturowski, S., Ostrovski, G., Quan, J., Munos, R., and Dabney, W. (2018).
+
+Recurrent experience replay in distributed reinforcement learning.
+
+In 
+International conference on learning representations
+.
+
+Kazemnejad et al.,  (2024)
+
+Kazemnejad, A., Aghajohari, M., Portelance, E., Sordoni, A., Reddy, S.,
+Courville, A., and Roux, N. L. (2024).
+
+Vineppo: Unlocking rl potential for llm reasoning through refined
+credit assignment.
+
+arXiv preprint arXiv:2410.01679
+.
+
+Kimi Team,  (2025)
+
+Kimi Team (2025).
+
+Kimi k1.5: Scaling reinforcement learning with llms.
+
+arXiv preprint arXiv:2501.12599
+.
+
+Version 2, revised on March 5, 2025.
+
+Kingma and Ba,  (2014)
+
+Kingma, D. P. and Ba, J. (2014).
+
+Adam: A method for stochastic optimization.
+
+arXiv preprint arXiv:1412.6980
+.
+
+Lambert et al.,  (2024)
+
+Lambert, N., Morrison, J. D., Pyatkin, V., Huang, S., Ivison, H., Brahman, F.,
+Miranda, L. J. V., Liu, A., Dziri, N., Lyu, X., Gu, Y., Malik, S., Graf, V.,
+Hwang, J. D., Yang, J., Bras, R. L., Tafjord, O., Wilhelm, C., Soldaini, L.,
+Smith, N. A., Wang, Y., Dasigi, P., and Hajishirzi, H. (2024).
+
+Tülu 3: Pushing frontiers in open language model post-training.
+
+ArXiv
+, abs/2411.15124.
+
+Li et al.,  (2014)
+
+Li, M., Andersen, D. G., Park, J. W., Smola, A. J., Ahmed, A., Josifovski, V.,
+and Long, J. (2014).
+
+Scaling distributed machine learning with the parameter server.
+
+In 
+Proceedings of the 11th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI)
+, pages 583–598.
+
+Li et al.,  (2022)
+
+Li, Y., Choi, D., Chung, J., Kushman, N., Schrittwieser, J., Leblond, R.,
+Eccles, T., Keeling, J., Gimeno, F., Dal Lago, A., et al. (2022).
+
+Competition-level code generation with alphacode.
+
+Science
+, 378(6624):1092–1097.
+
+Li et al.,  (2024)
+
+Li, Z., Xu, T., Zhang, Y., Lin, Z., Yu, Y., Sun, R., and Luo, Z.-Q. (2024).
+
+Remax: A simple, effective, and efficient reinforcement learning
+method for aligning large language models.
+
+(34)
+
+Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike,
+J., Schulman, J., Sutskever, I., and Cobbe, K. (2023a).
+
+Let’s verify step by step.
+
+arXiv preprint arXiv:2305.20050
+.
+
+(35)
+
+Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike,
+J., Schulman, J., Sutskever, I., and Cobbe, K. (2023b).
+
+Let’s verify step by step.
+
+ArXiv
+, abs/2305.20050.
+
+Llama Team,  (2024)
+
+Llama Team (2024).
+
+The llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783
+.
+
+Loshchilov and Hutter,  (2017)
+
+Loshchilov, I. and Hutter, F. (2017).
+
+Decoupled weight decay regularization.
+
+arXiv preprint arXiv:1711.05101
+.
+
+Meurer et al.,  (2017)
+
+Meurer, A., Smith, C. P., Paprocki, M., Čertík, O., Kirpichev, S. B.,
+Rocklin, M., Kumar, A., Ivanov, S., Moore, J. K., Singh, S., Rathnayake, T.,
+Vig, S., Granger, B. E., Muller, R. P., Bonazzi, F., Gupta, H., Vats, S.,
+Johansson, F., Pedregosa, F., Curry, M. J., Terrel, A. R., Roučka, v.,
+Saboo, A., Fernando, I., Kulal, S., Cimrman, R., and Scopatz, A. (2017).
+
+Sympy: symbolic computing in python.
+
+PeerJ Computer Science
+, 3:e103.
+
+Mnih et al.,  (2016)
+
+Mnih, V., Badia, A. P., Mirza, M., Graves, A., Lillicrap, T., Harley, T.,
+Silver, D., and Kavukcuoglu, K. (2016).
+
+Asynchronous methods for deep reinforcement learning.
+
+In 
+International conference on machine learning
+, pages
+1928–1937. PmLR.
+
+Moritz et al.,  (2018)
+
+Moritz, P., Nishihara, R., Wang, S., Tumanov, A., Liaw, R., Liang, E., Elibol,
+M., Yang, Z., Paul, W., Jordan, M. I., and Stoica, I. (2018).
+
+Ray: A Distributed Framework for Emerging AI Applications.
+
+In 
+Proceedings of the 13th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI)
+, pages 561–577, Carlsbad, CA. USENIX
+Association.
+
+Munos et al.,  (2016)
+
+Munos, R., Stepleton, T., Harutyunyan, A., and Bellemare, M. (2016).
+
+Safe and efficient off-policy reinforcement learning.
+
+Advances in neural information processing systems
+, 29.
+
+Nguyen et al.,  (2021)
+
+Nguyen, V., Carilli, M., Eryilmaz, S. B., Singh, V., Lin, M., Gimelshein, N.,
+Desmaison, A., and Yang, E. (2021).
+
+Accelerating PyTorch with CUDA graphs.
+
+https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/
+.
+
+Noukhovitch et al.,
+ (2024)
+
+Noukhovitch, M., Huang, S., Xhonneux, S., Hosseini, A., Agarwal, R., and
+Courville, A. (2024).
+
+Asynchronous rlhf: Faster and more efficient off-policy rl for
+language models.
+
+OpenAI,  (2023)
+
+OpenAI (2023).
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774
+.
+
+Ouyang et al.,  (2022)
+
+Ouyang, L., Wu, J., Jiang, X., and et al. (2022).
+
+Training language models to follow instructions with human feedback.
+
+arXiv preprint arXiv:2203.02155
+.
+
+Potluri and et al.,  (2013)
+
+Potluri, S. and et al. (2013).
+
+GPU Direct RDMA for infiniband on NVIDIA GPUs: A case study.
+
+In 
+Proceedings of the 2013 IEEE International Symposium on
+Cluster, Cloud and Grid Computing (CCGrid)
+, pages 340–347.
+
+Precup et al.,  (2000)
+
+Precup, D., Sutton, R. S., and Singh, S. (2000).
+
+Eligibility traces for off-policy policy evaluation.
+
+In 
+ICML
+, volume 2000, pages 759–766. Citeseer.
+
+(48)
+
+Rajbhandari, S., Rasley, J., Ruwase, O., and He, Y. (2019a).
+
+Zero: Memory optimizations toward training trillion parameter models.
+
+(49)
+
+Rajbhandari, S., Rasley, J., Ruwase, O., and He, Y. (2019b).
+
+Zero: Memory optimizations toward training trillion parameter models.
+
+SC20: International Conference for High Performance Computing,
+Networking, Storage and Analysis
+, pages 1–16.
+
+Rajbhandari et al.,  (2020)
+
+Rajbhandari, S., Rasley, J., Ruwase, O., and He, Y. (2020).
+
+Zero: Memory optimization towards training trillion parameter models.
+
+Proceedings of Machine Learning and Systems
+.
+
+Schulman et al.,  (2015)
+
+Schulman, J., Levine, S., Abbeel, P., Jordan, M., and Moritz, P. (2015).
+
+Trust region policy optimization.
+
+In 
+International conference on machine learning
+, pages
+1889–1897. PMLR.
+
+Schulman et al.,  (2017)
+
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. (2017).
+
+Proximal policy optimization algorithms.
+
+arXiv preprint arXiv:1707.06347
+.
+
+Shao et al.,  (2024)
+
+Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M.,
+Li, Y., Wu, Y., et al. (2024).
+
+Deepseekmath: Pushing the limits of mathematical reasoning in open
+language models.
+
+arXiv preprint arXiv:2402.03300
+.
+
+Shen et al.,  (2024)
+
+Shen, G., Wang, Z., Delalleau, O., Zeng, J., Dong, Y., Egert, D., Sun, S.,
+Zhang, J., Jain, S., Taghibakhshi, A., Ausin, M. S., Aithal, A., and
+Kuchaiev, O. (2024).
+
+Nemo-aligner: Scalable toolkit for efficient model alignment.
+
+Sheng et al.,  (2024)
+
+Sheng, G., Zhang, C., Ye, Z., Wu, X., Zhang, W., Zhang, R., Peng, Y., Lin, H.,
+and Wu, C. (2024).
+
+Hybridflow: A flexible and efficient rlhf framework.
+
+arXiv preprint arXiv:2409.19256
+.
+
+Shoeybi et al.,  (2019)
+
+Shoeybi, M., Patwary, M. M. A., Puri, R., LeGresley, P., Casper, J., and
+Catanzaro, B. (2019).
+
+Megatron-lm: Training multi-billion parameter language models using
+model parallelism.
+
+arXiv preprint arXiv:1909.08053
+.
+
+(57)
+
+Silver, D., Hubert, T., Schrittwieser, J., Antonoglou, I., Lai, M., Guez, A.,
+Lanctot, M., Sifre, L., Kumaran, D., Graepel, T., et al. (2017a).
+
+Mastering chess and shogi by self-play with a general reinforcement
+learning algorithm.
+
+arXiv preprint arXiv:1712.01815
+.
+
+(58)
+
+Silver, D., Schrittwieser, J., Simonyan, K., Antonoglou, I., Huang, A., Guez,
+A., Hubert, T., Baker, L., Lai, M., Bolton, A., et al. (2017b).
+
+Mastering the game of go without human knowledge.
+
+nature
+, 550(7676):354–359.
+
+Stiennon et al.,  (2020)
+
+Stiennon, N., Ouyang, L., Wu, J., and et al. (2020).
+
+Learning to summarize with human feedback.
+
+Advances in Neural Information Processing Systems (NeurIPS)
+.
+
+Team et al.,  (2023)
+
+Team, G., Anil, R., Borgeaud, S., Alayrac, J.-B., Yu, J., Soricut, R.,
+Schalkwyk, J., Dai, A. M., Hauth, A., Millican, K., et al. (2023).
+
+Gemini: a family of highly capable multimodal models.
+
+arXiv preprint arXiv:2312.11805
+.
+
+Tian et al.,  (2019)
+
+Tian, Y., Ma, J., Gong, Q., Sengupta, S., Chen, Z., Pinkerton, J., and Zitnick,
+L. (2019).
+
+Elf opengo: An analysis and open reimplementation of alphazero.
+
+In 
+International conference on machine learning
+, pages
+6244–6253. PMLR.
+
+Touvron et al.,  (2023)
+
+Touvron, H., Martin, L., Stone, K., and et al. (2023).
+
+Llama 2: Open foundation and fine-tuned chat models.
+
+arXiv preprint arXiv:2307.09288
+.
+
+Uesato et al.,  (2022)
+
+Uesato, J., Kushman, N., Kumar, R., Song, F., Siegel, N., Wang, L., Creswell,
+A., Irving, G., and Higgins, I. (2022).
+
+Solving math word problems with process-and outcome-based feedback.
+
+arXiv preprint arXiv:2211.14275
+.
+
+Vinyals et al.,  (2019)
+
+Vinyals, O., Babuschkin, I., Chung, J., Mathieu, M., Jaderberg, M., Czarnecki,
+W. M., Dudzik, A., Huang, A., Georgiev, P., Powell, R., et al. (2019).
+
+Alphastar: Mastering the real-time strategy game starcraft ii.
+
+DeepMind blog
+, 2:20.
+
+Wang et al.,  (2016)
+
+Wang, Z., Bapst, V., Heess, N., Mnih, V., Munos, R., Kavukcuoglu, K., and
+De Freitas, N. (2016).
+
+Sample efficient actor-critic with experience replay.
+
+arXiv preprint arXiv:1611.01224
+.
+
+Wei et al.,  (2025)
+
+Wei, Y., Duchenne, O., Copet, J., Carbonneaux, Q., Zhang, L., Fried, D.,
+Synnaeve, G., Singh, R., and Wang, S. I. (2025).
+
+Swe-rl: Advancing llm reasoning via reinforcement learning on open
+software evolution.
+
+arXiv preprint arXiv:2502.18449
+.
+
+Xiao et al.,  (2023)
+
+Xiao, Y., Zhou, Z., Mao, F., Wu, W., Zhao, S., Ju, L., Liang, L., Zhang, X.,
+and Zhou, J. (2023).
+
+An adaptive placement and parallelism framework for accelerating rlhf
+training.
+
+arXiv preprint arXiv:2312.11819
+.
+
+Xu et al.,  (2024)
+
+Xu, T., Helenowski, E., Sankararaman, K. A., Jin, D., Peng, K., Han, E., Nie,
+S., Zhu, C., Zhang, H., Zhou, W., Zeng, Z., He, Y., Mandyam, K., Talabzadeh,
+A., Khabsa, M., Cohen, G., Tian, Y., Ma, H., Wang, S., and Fang, H. (2024).
+
+The perfect blend: Redefining rlhf with mixture of judges.
+
+Yao et al.,  (2023)
+
+Yao, Z., Aminabadi, R. Y., Ruwase, O., Rajbhandari, S., Wu, X., Awan, A. A.,
+Rasley, J., Zhang, M., Li, C., Holmes, C., Zhou, Z., Wyatt, M., Smith, M.,
+Kurilenko, L., Qin, H., Tanaka, M., Che, S., Song, S. L., and He, Y. (2023).
+
+Deepspeed-chat: Easy, fast and affordable rlhf training of
+chatgpt-like models at all scales.
+
+Zhang et al.,  (2024)
+
+Zhang, B., Liu, Z., Cherry, C., and Firat, O. (2024).
+
+When scaling meets llm finetuning: The effect of data, model and
+finetuning method.
+
+arXiv preprint arXiv:2402.17193
+.
+
+Zhao et al.,  (2023)
+
+Zhao, Y., Gu, A., Varma, R., Luo, L., Huang, C.-C., Xu, M., Wright, L.,
+Shojanazeri, H., Ott, M., Shleifer, S., Desmaison, A., Balioglu, C., Damania,
+P., Nguyen, B., Chauhan, G., Hao, Y., Mathews, A., and Li, S. (2023).
+
+Pytorch fsdp: Experiences on scaling fully sharded data parallel.
+
+Ziegler et al.,  (2019)
+
+Ziegler, D. M., Stiennon, N., Wu, J., Brown, T. B., Radford, A., Amodei, D.,
+Christiano, P., and Irving, G. (2019).
+
+Fine-tuning language models from human preferences.
+
+arXiv preprint arXiv:1909.08593
+.
+
+Appendix A 
+A Comparative Discussion with PPO and GRPO
+
+We provide a comparative discussion on the key difference between the off-policy correction applied in 
+LlamaRL
+, versus the off-policy correction implicit in PPO 
+(
+Schulman et al.,, 2017
+)
+ and more recently GRPO 
+(
+Shao et al.,, 2024
+)
+. This is of interest because though the forms of importance sampling corrections in both cases look rather similar, their designs are based on subtly different assumptions of the training processes, which we clarify below. We start by introducing the canonical 
+PPO clipping
+.
+
+PPO clipping.
+
+On a high level, PPO applies a double-sided clipping to the importance sampling ratio, conditional further on the sign of the advantage function. Its loss is implemented as
+
+min
+(
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+A
+t
+,
+clip
+(
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+⏟
+double-sided clipping
+A
+t
+)
+,
+\displaystyle\min\left(\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)}A_{t},\underbrace{\text{clip}\left(\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)},1-\epsilon,1+\epsilon\right)}_{\text{double-sided clipping}}A_{t}\right),
+
+where 
+ϵ
+>
+0
+\epsilon>0
+ is a hyper-parameter. The overall design has a few subtle technical properties besides double-sided clipping: (1) 
+Gradient clipping.
+ Most subtly, the losses are implemented such that the gradient is zero when, e.g., the ratio 
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+μ
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\mu\left(y_{t}\;|\;x,y_{1:t-1}\right)}
+ goes beyond the boundary 
+[
+1
+−
+ϵ
+,
+1
++
+ϵ
+]
+[1-\epsilon,1+\epsilon]
+ (2) 
+Advantage sign.
+ Besides the double-sided clipping, PPO also conditions the clipping direction on the sign of the estimated advantage function, as evidenced by taking a 
+min
+\min
+ over two loss terms. The main argument here is to construct a lower bound to the policy performance.
+
+We omit further details here and refer interested readers to 
+Schulman et al., (2017)
+ for more extensive discussion. GRPO applies the truncated clipping as PPO, while removing the need for learning critic functions.
+
+A deep root in trust region policy optimization for PPO clipping.
+
+PPO clipping is deeply rooted in the trust region policy optimization (TRPO) formulation to stabilize RL training 
+(
+Kakade and Langford,, 2002
+; 
+Schulman et al.,, 2015
+)
+, where the motivation is to ensure that the parameter updates are conservative enough to ensure policy improvement. In the context of PPO, the behavior policy 
+μ
+\mu
+ takes a particular form: it is the previous iterate of 
+π
+\pi
+, denoted as 
+π
+old
+\pi_{\text{old}}
+. As a result, the clipping ensures that there is only non-zero update to the policy 
+π
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+π
+old
+(
+y
+t
+|
+x
+,
+y
+1
+:
+t
+−
+1
+)
+\frac{\pi\left(y_{t}\;|\;x,y_{1:t-1}\right)}{\pi_{\text{old}}\left(y_{t}\;|\;x,y_{1:t-1}\right)}
+, when e.g., it is within the range 
+[
+1
+−
+ϵ
+,
+1
++
+ϵ
+]
+[1-\epsilon,1+\epsilon]
+, that is when 
+π
+\pi
+ does not deviate too much from its previous iterate 
+π
+old
+\pi_{\text{old}}
+. The TRPO technique has proved effective at stabilizing model updates for large-scale training in a early work 
+(
+Schulman et al.,, 2015
+; 
+Schulman et al.,, 2017
+)
+.
+
+Key difference from the 
+LlamaRL
+ case.
+
+Applying the TRPO formulation as-is, we end up with a more synchronous algorithm where we alternate between generating samples from 
+π
+old
+\pi_{\text{old}}
+ and update the policy to 
+π
+\pi
+. In 
+LlamaRL
+, due to the asynchronous nature of the training process, the behavior policy 
+μ
+\mu
+ is not necessarily the exact previous iterate of 
+π
+\pi
+. For example, 
+μ
+\mu
+ can be a few updates away from 
+π
+\pi
+, in addition to being quantized or configured with different sampling parameters than the learner network, among other things. As a result, 
+μ
+\mu
+ is not necessarily an ideal policy for trust region regularization. Instead, a perhaps more natural motivation is to correct for the off-policyness of samples generated under 
+μ
+\mu
+, to construct approximate on-policy update to 
+π
+\pi
+. This is enabled by clipped importance sampling ratio to balance the bias and variance trade-off 
+(
+Espeholt et al.,, 2018
+)
+.
+
+Our early ablation results also show that the one-sided clipping in 
+LlamaRL
+ works on par or slightly better than the PPO clipping. However, in principle, both clipping strategies can be combined to synergize the algorithmic strengths of TRPO and asynchronous off-policy learning.
+
+Appendix B 
+Lemmas for Theoretical Justification for LlamaRL Speed-up
+
+We present and prove several Lemmas needed for Theorem 
+7.5
+.
+
+Lemma B.1
+
+Let 
+(
+b
+t
+∗
+,
+b
+g
+∗
+,
+m
+∗
+)
+(b_{t}^{*},b_{g}^{*},m^{*})
+ be a minimizer to problem (
+6
+). Then it must satisfy
+
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+)
++
+(
+W
+0
++
+K
+g
+​
+b
+g
+∗
+)
+m
+∗
+=
+M
+0
+.
+\displaystyle\begin{split}\frac{(4W_{0}+A_{t}b_{t}^{*})+(W_{0}+K_{g}b_{g}^{*})}{m^{*}}=M_{0}.\end{split}
+
+(12)
+
+Proof of Lemma 
+B.1
+.
+
+Assume the strict inequality holds
+
+(
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+∗
+)
++
+(
+W
+0
++
+K
+g
+​
+b
+g
+∗
+)
+m
+∗
+<
+M
+0
+,
+\frac{(4W_{0}+A_{t}b_{t}^{*})+(W_{0}+K_{g}b_{g}^{*})}{m^{*}}<M_{0},
+
+meaning there is still room to increase 
+b
+t
+b_{t}
+ or 
+b
+g
+b_{g}
+. This allows us to further decrease the target
+
+B
+0
+G
+0
+⋅
+m
+⋅
+(
+η
+t
++
+η
+g
+)
+\frac{B_{0}}{G_{0}}\cdot m\cdot{(}\eta_{t}+\eta_{g}{)}
+
+due to the monotone decreasing property of 
+η
+t
+,
+η
+g
+\eta_{t},\eta_{g}
+ according to Assumption 
+7.1
+, which contradicts the minimizing property of 
+(
+b
+t
+∗
+,
+b
+g
+∗
+,
+m
+∗
+)
+(b_{t}^{*},b_{g}^{*},m^{*})
+. Thus concluded Lemma 
+B.1
+.
+∎
+
+Lemma B.2
+
+Let 
+(
+b
+t
+∗
+,
+b
+g
+∗
+,
+m
+t
+∗
+,
+m
+g
+∗
+)
+(b_{t}^{*},b_{g}^{*},m_{t}^{*},m_{g}^{*})
+ be a minimizer to problem (
+7
+). Then it must satisfy
+
+{
+4
+​
+W
+0
+m
+t
+∗
++
+A
+t
+​
+b
+t
+∗
+m
+t
+∗
+=
+M
+0
+,
+W
+0
+m
+g
+∗
++
+K
+g
+​
+b
+g
+∗
+m
+g
+∗
+=
+M
+0
+.
+\displaystyle\begin{split}\left\{\begin{array}[]{l}\displaystyle\frac{4W_{0}}{m_{t}^{*}}+\frac{A_{t}b_{t}^{*}}{m_{t}^{*}}=M_{0},\\
+\\
+\displaystyle\frac{W_{0}}{m_{g}^{*}}+\frac{K_{g}b_{g}^{*}}{m_{g}^{*}}=M_{0}.\end{array}\right.\end{split}
+
+(13)
+
+The proof of Lemma 
+B.2
+ follows a very similar argument as that of Lemma 
+B.1
+, hence omitted.
+
+Lemma B.3
+
+T
+t
+∗
+⁣
+∗
+T^{**}_{t}
+, 
+T
+g
+∗
+⁣
+∗
+T^{**}_{g}
+ (see (
+10
+)) are the minimal values corresponding to the following two optimization problems, respectively:
+
+min
+b
+t
+η
+t
+​
+(
+b
+t
+)
+​
+m
+t
+subject to
+4
+​
+W
+0
++
+A
+t
+​
+b
+t
+m
+t
+≤
+M
+0
+,
+\displaystyle\begin{split}&\min_{b_{t}}\quad\eta_{t}(b_{t})m_{t}\\
+&\text{subject to}\quad\frac{4W_{0}+A_{t}b_{t}}{m_{t}}\leq M_{0},\end{split}
+
+(14)
+
+min
+b
+g
+η
+g
+​
+(
+b
+g
+)
+​
+m
+g
+subject to
+W
+0
++
+K
+g
+​
+b
+g
+m
+g
+≤
+M
+0
+,
+\displaystyle\begin{split}&\min_{b_{g}}\quad\eta_{g}(b_{g})m_{g}\\
+&\text{subject to}\quad\frac{W_{0}+K_{g}b_{g}}{m_{g}}\leq M_{0},\end{split}
+
+(15)
+
+Furthermore, let 
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**})
+ be a solution to (
+7
+), then the following holds:
+
+{
+T
+t
+∗
+⁣
+∗
+=
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+,
+T
+g
+∗
+⁣
+∗
+=
+η
+t
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+,
+T
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+=
+T
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\left\{\begin{array}[]{l}\displaystyle T^{**}_{t}=\eta_{t}^{**}m^{**}_{t},\\
+\\
+\displaystyle T^{**}_{g}=\eta_{t}^{**}m^{**}_{g},\\
+\\
+\displaystyle\frac{T^{**}_{t}}{\theta^{**}}=\frac{T^{**}_{g}}{1-\theta^{**}}.\end{array}\right.\end{split}
+
+(16)
+
+Proof of Lemma 
+B.3
+.
+
+The first claim follows directly from a similar argument of Lemma 
+B.2
+’s proof. We omit the details. First, we claim that
+
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+=
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}}=\frac{\eta_{g}^{**}m_{g}^{**}}{1-\theta^{**}}.\end{split}
+
+(17)
+
+Suppose the equality fails, then without loss of generality we can assume
+
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+>
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}}>\frac{\eta_{g}^{**}m_{g}^{**}}{1-\theta^{**}}.\end{split}
+
+(18)
+
+It is clear that by slightly increasing 
+θ
+∗
+⁣
+∗
+⟶
+θ
+∗
+⁣
+∗
++
+ϵ
+\theta^{**}\longrightarrow\theta^{**}+\epsilon
+, the inequality (
+18
+) is preserved but the following holds:
+
+max
+⁡
+(
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+,
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+)
+=
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+>
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
++
+ϵ
+=
+max
+⁡
+(
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
++
+ϵ
+,
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+−
+ϵ
+)
+,
+\displaystyle\begin{split}\max(\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}},\frac{\eta_{g}^{**}m_{g}^{**}}{1-\theta^{**}})=\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}}>\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}+\epsilon}=\max(\frac{\eta_{t}^{**}m_{t}^{**}}{\theta^{**}+\epsilon},\frac{\eta_{g}^{**}m_{g}^{**}}{1-\theta^{**}-\epsilon}),\end{split}
+
+(19)
+
+which contradicts the minimization property of 
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**})
+. To prove the first two identities of (
+16
+), we need to show that 
+η
+t
+​
+m
+t
+\eta_{t}m_{t}
+ and 
+η
+g
+​
+m
+g
+\eta_{g}m_{g}
+ are both minimized at 
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**})
+. Again suppose the contrary holds. Note 
+η
+t
+​
+m
+t
+\eta_{t}m_{t}
+ and 
+η
+g
+​
+m
+g
+\eta_{g}m_{g}
+ are mutually independent of each other, in the sense one can let one of them vary without changing the other. Without loss of generality, let us assume 
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+\eta_{t}^{**}m_{t}^{**}
+ is not minimal. This implies that there exists 
+b
+t
+′
+,
+m
+t
+′
+b_{t}^{\prime},m_{t}^{\prime}
+, such that
+
+η
+t
+′
+​
+m
+t
+′
+<
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\eta^{\prime}_{t}m_{t}^{\prime}<\eta^{**}_{t}m_{t}^{**}.\end{split}
+
+(20)
+
+Choose 
+ϵ
+>
+0
+\epsilon>0
+ small enough such that
+
+η
+t
+′
+​
+m
+t
+′
+θ
+∗
+⁣
+∗
++
+ϵ
+<
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\frac{\eta^{\prime}_{t}m_{t}^{\prime}}{\theta^{**}+\epsilon}<\frac{\eta^{**}_{t}m_{t}^{**}}{\theta^{**}}.\end{split}
+
+(21)
+
+In addition, we have
+
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+−
+ϵ
+<
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+.
+\displaystyle\begin{split}\frac{\eta^{**}_{g}m_{g}^{**}}{1-\theta^{**}-\epsilon}<\frac{\eta^{**}_{g}m_{g}^{**}}{1-\theta^{**}}.\end{split}
+
+(22)
+
+Combining (
+21
+) and (
+22
+), it follows that
+
+max
+⁡
+(
+η
+t
+′
+​
+m
+t
+′
+θ
+∗
+⁣
+∗
++
+ϵ
+,
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+−
+ϵ
+)
+<
+max
+⁡
+(
+η
+t
+∗
+⁣
+∗
+​
+m
+t
+∗
+⁣
+∗
+θ
+∗
+⁣
+∗
+,
+η
+g
+∗
+⁣
+∗
+​
+m
+g
+∗
+⁣
+∗
+1
+−
+θ
+∗
+⁣
+∗
+)
+.
+\displaystyle\begin{split}\max(\frac{\eta^{\prime}_{t}m_{t}^{\prime}}{\theta^{**}+\epsilon},\frac{\eta^{**}_{g}m_{g}^{**}}{1-\theta^{**}-\epsilon})<\max(\frac{\eta^{**}_{t}m_{t}^{**}}{\theta^{**}},\frac{\eta^{**}_{g}m_{g}^{**}}{1-\theta^{**}}).\end{split}
+
+(23)
+
+That is, we found a new point 
+(
+b
+t
+′
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+′
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
++
+ϵ
+)
+(b_{t}^{\prime},b_{g}^{**},m_{t}^{\prime},m_{g}^{**},\theta^{**}+\epsilon)
+ that yields a smaller value to problem (
+7
+), contradicting the minimization property of
+
+(
+b
+t
+∗
+⁣
+∗
+,
+b
+g
+∗
+⁣
+∗
+,
+m
+t
+∗
+⁣
+∗
+,
+m
+g
+∗
+⁣
+∗
+,
+θ
+∗
+⁣
+∗
+)
+.
+(b_{t}^{**},b_{g}^{**},m_{t}^{**},m_{g}^{**},\theta^{**}).
+
+Thus we proved the first two identities of (
+16
+). The third identity of (
+16
+) now follows immediately from (
+17
+).
+∎
+
+    Experimental support, please
+    
+view the build logs
+
+    for errors. Generated by
+    
+
+        L
+        
+A
+
+        T
+        
+E
+
+xml
+
+.
+  
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+Click the "Report Issue" 
+(
+
+)
+ button, located in the page header.
+
+Tip:
+ You can select the relevant text first, to include it in your report.
+
+Our team has already identified 
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a 
+list of packages that need conversion
+, and welcome 
+developer contributions
+.
+
+        We gratefully acknowledge support from
+        our 
+major funders
+,
+        
+member institutions
+, 
+,
+        and all contributors.
+      
+
+About
+
+·
+
+Help
+
+·
+
+Contact
+
+·
+
+Subscribe
+
+·
+
+Copyright
+
+·
+
+Privacy
+
+·
+
+Accessibility
+
+·
+
+Operational Status
+ (opens in new tab)
+
+Major funding support from
+
+

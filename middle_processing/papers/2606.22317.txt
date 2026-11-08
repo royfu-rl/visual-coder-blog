@@ -1,0 +1,1927 @@
+SOURCE: https://arxiv.org/html/2606.22317
+Curriculum Reinforcement Learning Can Incentivize Reasoning Capacity in LLMs Beyond the Base Model 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related Work 
+ Limits of RLVR. 
+ Reasoning distillation and teacher guidance. 
+ Curriculum learning for reasoning. 
+ 3 Method 
+ Zero-advantage groups. 
+ 3.1 Stage I: Reasoning Capacity Boundary Exploration 
+ 3.2 Stage II: Targeted Teacher Guidance 
+ 3.3 Stage III: Curriculum Selection and RL Consolidation 
+ 4 Experiments 
+ 4.1 Experimental Setup 
+ 4.2 Experimental Results 
+ 5 Discussion and Conclusion 
+ From zero-advantage groups to reward-reachable examples. 
+ Scope and limitations. 
+ References 
+ A Supplementary Experimental Figures 
+ B Implementation Details 
+ B.1 Curriculum Choices 
+ C Mechanistic Analysis of Zero-Advantage Groups 
+ Setup. 
+ Proposition 1: all-equal reward groups have zero reward weights. 
+ Proof. 
+ Proposition 2: mixed-reward groups are the only binary groups with nonzero reward contrast. 
+ Proof. 
+ Proposition 3: probability of receiving reward contrast. 
+ Proof. 
+ Corollary 1: zero observed successes mark a low-success-probability regime. 
+ Proof. 
+ Corollary 2: making a boundary example reward-reachable is sufficient to create nonzero signal probability. 
+ Proof. 
+ Implication for boundary-aware curriculum RL. 
+ D Supplementary Experimental Tables 
+ D.1 Teacher-Guidance Seed Composition 
+ D.2 Per-Benchmark pass@256 Gain Summary 
+ D.3 Supplementary pass@k Curve Values 
+ D.4 Training-Example Signal Expansion Summary 
+ D.5 Training-Example Difficulty Transition Summary 
+ D.6 Training-Example Difficulty Summaries 
+ E Teacher-Guidance Details 
+ E.1 Boundary-Aware Sample Selection 
+ E.2 Prompt for Structured Teacher Traces 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2606.22317v1 [cs.LG] 21 Jun 2026
+ Curriculum Reinforcement Learning Can Incentivize Reasoning Capacity in LLMs Beyond the Base Model
+ Pengxiang Cai
+ Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+ Tianchen Fang
+ Affiliation: Nanyang Technological University
+ Xiaohan Li
+ Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+ Qingyuan Zeng
+ Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+ Guocong Li
+ Affiliation: Zhejiang University
+ Jintai Chen
+ Affiliation: Correspondence:
+ jintaiCHEN@hkust-gz.edu.cn 
+ Abstract
+ Reinforcement learning with verifiable rewards (RLVR) is widely viewed as a promising path toward continuously improving large language models. Recent works, however, suggest that mainstream RLVR often reallocates sampling probabilities among trajectories already present in the base model: it can improve sampling efficiency, reflected by higher pass@1 scores, but yields limited gains, and can even decrease pass@ k k scores when k k is large, and therefore may fail to expand the base model’s reasoning capacity boundary. In this paper, we present a boundary-aware Curriculum RL approach to move beyond the base model’s reasoning capacity boundary. Our approach first uses pass@ k k sampling to locate the current reasoning capacity boundary, then applies targeted teacher guidance to examples near or beyond that boundary, and finally uses RL to consolidate the newly introduced reasoning patterns. Across Qwen, Llama, and DeepSeek base models, boundary-aware Curriculum RL improves both pass@1 scores and pass@256 scores, with pass@1 reflecting one-attempt performance and pass@256 serving as an empirical proxy for the reasoning capacity boundary. In our experiments, average pass@256 improves by 9.8 percentage points over the base models and by 10.3 percentage points over Vanilla RLVR. These results suggest that boundary-aware Curriculum RL can provide a scalable route for LLMs to continuously improve beyond the base model’s empirical reasoning capacity boundary.
+ 1 Introduction
+ The notable success of reasoning models such as OpenAI o1, DeepSeek-R1, and Kimi k1.5 has focused attention on how reinforcement-learning post-training can produce LLMs with long-chain deep reasoning abilities [ 23 , 7 , 29 , 6 , 25 , 38 , 37 , 22 ] . A major reason for this shift is the rise of reinforcement learning with verifiable rewards (RLVR): in mathematics, programming, and other outcome-verifiable domains, RL can optimize against automatically checkable answers rather than expensive human preferences [ 5 , 3 , 11 , 8 , 9 , 28 , 20 ] . Algorithms and training recipes such as GRPO, DAPO, and GSPO further show that verifiable reward training can turn base or instruction-tuned models into substantially stronger mathematical reasoners [ 26 , 39 , 46 , 27 , 13 , 36 , 49 ] . These successes have encouraged an ambitious view of RLVR as a path toward continuously improving language models.
+ Most current RLVR pipelines are built around rollout-based policy optimization, with GRPO-style algorithms serving as a representative recipe. For each prompt, the model samples a group of candidate solutions; verifiable rewards identify correct and incorrect rollouts; and the policy update increases the likelihood of rewarded behavior while suppressing unrewarded behavior. This mechanism can improve answer accuracy without human preference labels, but it also raises a more precise question: does RLVR teach the model to solve problems that were previously unreachable, or does it mainly make the model more likely to sample correct trajectories that already existed in the base-model distribution? The Limit-of-RLVR study evaluates RLVR-trained models with large- k k pass@ k k and finds that standard RLVR often improves pass@1 while failing to expand, and sometimes narrowing, the base model’s large- k k reasoning capacity boundary [ 40 ] . Related analyses suggest that RL post-training can amplify behaviors already learned before RL [ 44 ] , and that group policy optimization can collapse into distribution sharpening unless rare correct trajectories receive sufficient learning pressure [ 10 ] . We therefore analyze full pass@ k k curves in this work, with particular emphasis on large- k k performance: if an RL-trained model improves pass@1 while its large- k k pass@ k k remains close to, or below, the base model, then RL has mainly reallocated sampling probabilities within the base model’s existing reasoning support; if previously unsolved problems become solvable under the same large sampling budget, then the reasoning capacity boundary has moved. This perspective explains why standard RLVR may oscillate inside the base model’s inherited reasoning capacity boundary: it learns from sampled rollouts, so problems with no correct rollout provide no successful reasoning trace to reinforce. Meanwhile, policy sharpening can reduce sampling diversity and make some rare base-model solutions disappear at large k k .
+ At the same time, we identify a group-level mechanism behind this limitation: extremely difficult examples can form zero-advantage groups after rollout. With binary outcome rewards, if every sampled solution receives reward 0, the group mean is also 0, so group-normalized advantages collapse to 0 for all rollouts. The example then contributes no reward-driven positive or negative preference signal to policy optimization.
+ This observation suggests that extremely difficult examples may receive little benefit from standard RLVR: if all sampled rollouts fail, the example provides no advantage signal for policy optimization. Yet these examples are precisely where the model’s reasoning capacity boundary lies. Standard RLVR therefore lacks an effective mechanism for pushing beyond this reasoning capacity boundary, because the examples that most need new reasoning patterns are also the examples that provide no reward-driven learning signal. To make such examples usable, we first need to locate them. We use pass@ k k sampling to distinguish problems that are already solvable, problems that are only barely reachable after many attempts, and problems that remain unsolved even after many attempts. This boundary-aware partition allows us to provide targeted guidance on examples for which standard RLVR would otherwise obtain no useful advantage signal.
+ After locating examples likely to form zero-advantage groups, the remaining challenge is to convert them into examples from which RL can learn. For problems outside the current reasoning capacity boundary, all-failed rollouts contain no successful trajectory, so RL alone has little basis for discovering the missing solution strategy. Some external structure is needed before reward learning can become informative. Full-scale teacher distillation provides such structure, and chain-of-thought distillation has long been used to transfer reasoning behavior from stronger teachers [ 12 , 7 , 4 , 18 , 32 , 34 ] . However, distillation is teacher-dependent, often requires large corpora of teacher-generated reasoning traces, can be difficult to control, and may induce catastrophic forgetting when the data mixture is not carefully controlled. These tradeoffs motivate a localized-guidance design: the teacher supplies a small amount of structure near the reasoning capacity boundary, enough to turn examples that would otherwise form zero-advantage groups into training signal that RL can use, while RL remains responsible for consolidating the newly introduced reasoning patterns.
+ We implement this idea as boundary-aware Curriculum RL. Each curriculum round consists of three steps: (1) large-sample pass@ k k sampling estimates the model’s current reasoning capacity boundary; (2) targeted teacher guidance provides a small number of structured reasoning traces for examples near or beyond the reasoning capacity boundary; and (3) RL consolidation reinforces the newly introduced reasoning patterns into stable model behavior. The next round then begins with a fresh pass@ k k exploration of the strengthened model, so the curriculum can target harder examples near the newly observed reasoning capacity boundary. In this way, the curriculum progressively turns examples near the reasoning capacity boundary that would otherwise form zero-advantage groups into trainable examples with useful reward signal, supporting reasoning capacity boundary expansion.
+ Our study leads to the following findings and contributions:
+ • 
+ We identify a key blind spot of rollout-based RLVR: problems that remain unsolved under large-sample decoding are likely to form zero-advantage groups after rollout, producing no group-normalized advantage and thus little reward-driven learning signal. This observation motivates using large- k k pass@ k k sampling to locate the model’s current reasoning capacity boundary.
+ • 
+ We develop a reasoning capacity boundary exploration procedure based on large- k k pass@ k k sampling. The procedure separates problems that are already solvable, barely reachable after many attempts, and still unreachable, and uses this reachability signal to construct model-specific curricula.
+ • 
+ We show how examples that typically form zero-advantage groups can be made trainable. By providing small, targeted teacher guidance near or beyond the reasoning capacity boundary, we supply sufficient structured signals to make previously failing examples reward-reachable, while RL consolidation stabilizes these newly acquired patterns into robust model behavior.
+ • 
+ We evaluate boundary-aware Curriculum RL on Qwen, Llama, and DeepSeek base models. Results show improvements from pass@1 to pass@256, indicating stronger one-attempt performance and expansion of the observed reasoning capacity boundary. This consistent pattern across model families supports the generality of our proposed boundary-aware Curriculum RL.
+ Figure 1: Overview of Boundary-Aware Curriculum RL. (A) Vanilla RLVR can sharpen reachable trajectories but receives little reward-driven signal from all-failed rollout groups: with binary rewards, all rollouts obtain reward 0 and group-normalized advantages collapse to zero. (B) Boundary-Aware Curriculum RL uses large- k k pass@ k k sampling to locate the empirical reasoning capacity boundary, applies small targeted teacher guidance to examples near or beyond that boundary, and then uses RL consolidation to make the introduced reasoning patterns stable. (C) The resulting curriculum shifts the empirical reasoning capacity boundary, as reflected by improved pass@1/pass@256 behavior and fewer problems remaining unsolved under the same sampling budget. 
+ 2 Related Work
+ Limits of RLVR.
+ Recent analyses examine whether RLVR can improve a model’s reasoning capacity beyond the base model, or whether it mainly changes the probability of sampling existing trajectories. Limit-of-RLVR uses large- k k pass rates, coverage, and perplexity to argue that current RLVR often remains bounded by the base model [ 40 ] . Related work suggests that RL post-training can amplify behaviors learned before RL [ 44 ] , and that GRPO-like optimization can degenerate into distribution sharpening when rare correct trajectories receive insufficient learning pressure [ 10 ] . Other studies give a more optimistic view: RLVR can incentivize correct reasoning when evaluated with trajectory-sensitive metrics [ 33 , 47 ] , and longer, carefully controlled RL can expand reasoning capacity boundaries [ 19 ] .
+ Reasoning distillation and teacher guidance.
+ Teacher distillation transfers reasoning behavior from stronger teachers to weaker students, often through chain-of-thought rationales or long reasoning traces [ 12 , 7 , 4 , 18 , 32 , 34 ] . Such guidance can introduce reasoning patterns that sparse outcome rewards may not reveal, but full-scale distillation makes the training outcome depend on teacher quality, the scale of teacher-generated reasoning traces, and data mixture design. More broadly, continual fine-tuning studies show that adding new specialized behavior can cause forgetting of earlier knowledge and reasoning skills when the data mixture is not controlled [ 21 , 14 , 15 , 16 , 31 , 30 , 48 ] .
+ Curriculum learning for reasoning.
+ Recent LLM reasoning work studies how training examples should be selected and ordered during RL. Reverse curriculum RL constructs easier subproblems by starting from later parts of a reasoning process [ 35 ] ; easy-to-hard curriculum RL improves reasoning by staging task difficulty [ 24 , 45 , 1 , 17 , 42 ] ; online difficulty filtering emphasizes that RL data should remain neither too easy nor too hard [ 2 ] ; and SimpleRL-Zoo shows that zero-RL behavior depends strongly on model identity and query difficulty [ 41 ] . These works highlight the importance of example selection, while our setting uses large- k k pass@ k k sampling to define difficulty through each model’s observed reasoning capacity boundary.
+ 3 Method
+ Boundary-Aware Curriculum RL turns examples near the empirical reasoning capacity boundary into trainable RL data. Each curriculum round has three steps: (1) large-sample pass@ k k sampling estimates the current reasoning capacity boundary; (2) targeted teacher guidance adds a small number of structured traces for examples near or just beyond that boundary; and (3) based on the pass@ k k exploration results, we choose a suitable-difficulty curriculum for RL, allowing the model to consolidate the newly learned reasoning patterns. The next round starts with a new pass@ k k exploration of the updated model and then targets the newly observed reasoning capacity boundary.
+ Zero-advantage groups.
+ The need for reasoning capacity boundary exploration follows from the Limit-of-RLVR observation that current RLVR often improves pass@1 by shifting sampling probabilities toward reasoning paths already available in the base model, while large- k k pass@ k k coverage remains close to, or below, the base model [ 40 ] . Based on this observation, we identify a concrete failure mode: problems that the current policy cannot solve in many rollouts provide no successful trajectory from which outcome-reward RL can learn.
+ This limitation has a simple group-level form. For a prompt x x , suppose a GRPO-style update samples G G rollouts { y i } i = 1 G \{y_{i}\}_{i=1}^{G} with binary rewards r i ∈ { 0 , 1 } r_{i}\in\{0,1\} , and uses the group-normalized advantage
+ | 
+ A ^ i = r i − r ¯ σ r + ϵ , r ¯ = 1 G ​ ∑ j = 1 G r j . \hat{A}_{i}=\frac{r_{i}-\bar{r}}{\sigma_{r}+\epsilon},\qquad\bar{r}=\frac{1}{G}\sum_{j=1}^{G}r_{j}. | 
+ | 
+ Here, σ r \sigma_{r} is the standard deviation of rewards within the group. If all sampled rollouts fail, then r i = 0 r_{i}=0 for every i i , so r ¯ = 0 \bar{r}=0 , σ r = 0 \sigma_{r}=0 , and A ^ i = 0 \hat{A}_{i}=0 for all rollouts. The reward-driven policy-gradient contribution for this prompt is therefore zero:
+ | 
+ ∑ i = 1 G A ^ i ​ ∇ θ ​ log ⁡ π θ ​ ( y i ∣ x ) = 0 . \sum_{i=1}^{G}\hat{A}_{i}\nabla_{\theta}\log\pi_{\theta}(y_{i}\mid x)=0. | 
+ | 
+ The example provides neither positive nor negative preference among sampled trajectories; for the reward-driven term, it becomes inert training data. Examples that form such zero-advantage groups are also candidates that define the current observed reasoning capacity boundary. Standard RLVR therefore faces an optimization dead zone: the examples most needed for reasoning capacity boundary expansion are precisely the examples least able to provide reward-driven learning signal after rollout. The first stage of Boundary-Aware Curriculum RL uses large-sample pass@ k k sampling to locate this region before applying targeted guidance.
+Appendix C provides a more general form of this zero-advantage argument and relates it to reward-reachable groups.
+ 3.1 Stage I: Reasoning Capacity Boundary Exploration
+ The first stage assigns each problem a model-specific difficulty label using a 256-sample decoding budget. For each model setting, we evaluate every problem with three decoding seeds, { 2027 , 2028 , 2029 } \{2027,2028,2029\} , and record the first sample index at which a correct answer appears. If no correct answer appears within 256 samples, the problem is treated as unsolved under the current model. We average the first-success index across seeds to estimate how far the problem lies from the current model under the same sampler. The resulting pass@ k k profile defines five difficulty levels:
+ The Beyond group contains problems not solved within 256 samples and is therefore the region most likely to form zero-advantage groups under outcome-reward RL; the Frontier group contains hard but reward-reachable problems, matching the edge-of-competence condition emphasized in recent controlled studies [ 43 ] . This distinction prevents the curriculum from only repeating easy examples: easy examples mainly increase the sampling probability of already reachable solutions, whereas Frontier and near-boundary Beyond examples directly target the reasoning capacity boundary and expose a training region that standard RLVR would otherwise leave unused.
+ 3.2 Stage II: Targeted Teacher Guidance
+ The second stage turns reasoning capacity boundary exploration into trainable signal. We first extract examples near the reasoning capacity boundary for customized teacher guidance. Concretely, we draw 10 Frontier problems whose first-success index is closest to the pass@32 cutoff and 10 Beyond problems closest to the pass@256 cutoff, while maintaining dataset coverage and avoiding repeated samples; the full selection procedure is given in Appendix E.1 . These examples are neither trivial nor arbitrarily impossible: Frontier supplies hard-but-reward-reachable practice, while near-boundary Beyond examples supply targets just outside the current reasoning capacity boundary.
+ We then construct structured teacher traces for the selected Frontier/Beyond examples and use them as a small SFT bridge before RL. The teacher prompt, shown in Appendix E.2 , asks for logical backbones, explicit self-reflection, multi-path exploration, and coherence checks. The small customized teacher guidance in Boundary-Aware Curriculum RL provides enough local structure near the reasoning capacity boundary to make previously unreachable reasoning patterns visible to the optimizer. After this bridge, examples that would have formed zero-advantage groups can become reward-reachable, allowing RL to reinforce and stabilize the newly introduced reasoning patterns. This design separates Boundary-Aware Curriculum RL from both standard outcome-reward RLVR and large-scale teacher distillation.
+ 3.3 Stage III: Curriculum Selection and RL Consolidation
+ The third stage chooses the next RL training range from the pass@ k k difficulty distribution and then applies standard GRPO to consolidate the reasoning patterns introduced in Stage II. We use five curriculum ranges defined over the Stage-I difficulty groups:
+ Easy-to-Beyond uses all five difficulty groups from Stage I; Medium-to-Beyond removes Easy examples; Hard-to-Beyond trains on Hard, Frontier, and Beyond; Frontier-to-Beyond trains on Frontier and Beyond; and Beyond-only trains only on Beyond examples.
+ Our curriculum selection follows a simple principle: retain enough reward-reachable examples while moving training toward the reasoning capacity boundary. For a candidate curriculum range 𝒞 \mathcal{C} , define
+ | 
+ M ⁡ ( 𝒞 ) = ∑ b ∈ 𝒞 ∩ R p b , H ⁡ ( 𝒞 ) = ∑ b ∈ 𝒞 ∩ B p b , M(\mathcal{C})=\sum_{b\in\mathcal{C}\cap R}p_{b},\qquad H(\mathcal{C})=\sum_{b\in\mathcal{C}\cap B}p_{b}, | 
+ | 
+ where p b = N b / N p_{b}=N_{b}/N is the pass@ k k difficulty share, R = { Medium , Hard , Frontier } R=\{\mathrm{Medium},\mathrm{Hard},\mathrm{Frontier}\} contains non-trivial reward-reachable groups, and B = { Frontier , Beyond } B=\{\mathrm{Frontier},\mathrm{Beyond}\} contains reasoning-capacity-boundary groups. We choose a curriculum that keeps M ⁡ ( 𝒞 ) M(\mathcal{C}) sufficiently large and, among such candidates, prefers larger H ⁡ ( 𝒞 ) H(\mathcal{C}) . If Medium or Hard examples dominate, many problems remain solvable after repeated attempts but are not yet reliably solved, so RL starts from Medium-to-Beyond or Hard-to-Beyond. If Beyond examples dominate, training only on Beyond would produce many all-failed rollout groups, so we use a wider range such as Easy-to-Beyond or Medium-to-Beyond to keep useful reward signal in RL batches. Once Easy/Medium examples have largely been consolidated and the remaining difficulty concentrates near Frontier/Beyond, the curriculum moves toward Frontier-to-Beyond or Beyond-only.
+ After the curriculum range is chosen, we run standard GRPO on that data range. The next curriculum round begins with a new pass@ k k exploration of the updated model, so the training range can move with the newly observed reasoning capacity boundary. In this work, we run three rounds of Stage I–II–III curriculum learning. Appendix B.1 reports the curriculum choices used in our experiments. We use this simple boundary-aware Curriculum RL procedure to evaluate whether RLVR can move beyond the base model’s reasoning capacity boundary; optimal curriculum selection is left outside the scope of this work.
+ Figure 2: Full pass@ k k curves across all model–benchmark pairs. Gray, purple dashed, and blue denote the base model, the Vanilla RLVR model, and the reported boundary-aware Curriculum RL model, respectively. Improvements near k = 256 k=256 indicate that more problems become solvable under a large sampling budget, rather than only being sampled more easily at small k k . 
+ 4 Experiments
+ 4.1 Experimental Setup
+ We evaluate Boundary-Aware Curriculum RL across five model settings: Qwen2.5-7B, Qwen2.5-7B-Instruct, Qwen3-8B, DeepSeek-R1-0528-Qwen3-8B, and Meta-Llama-3.1-8B-Instruct. For each setting, we compare three models: the base model, the Vanilla RLVR model, and the boundary-aware Curriculum RL model reported by our method. We train on a subset of DAPO-Math-17K and evaluate on AIME 2024, AIME 2025, and MATH500.
+ Following the large-sample evaluation protocol used in recent RLVR boundary analyses [ 40 ] , we report pass@ k k for k ∈ { 1 , 2 , 4 , 8 , 16 , 32 , 64 , 128 , 256 } k\in\{1,2,4,8,16,32,64,128,256\} . A pass@ k k score measures whether the model can produce at least one correct answer within k k sampled attempts. Thus, pass@1 measures one-attempt performance, while pass@256 measures whether a problem becomes solvable when the model is allowed a large sampling budget. We use pass@256 as an empirical proxy for the model’s observed reasoning capacity boundary.
+ 4.2 Experimental Results
+ We first inspect the full pass@ k k curves because they show where along the sampling budget training changes model behavior. Figure 2 compares the base model, the Vanilla RLVR model, and the boundary-aware Curriculum RL model on every model–benchmark pair. If training only made already available solutions easier to sample, most gains would appear near pass@1, with little change near pass@256. This is often what we observe for Vanilla RLVR: its large- k k gains are limited, and in some cases pass@256 decreases relative to the base model. In contrast, boundary-aware Curriculum RL often improves both the low- k k and high- k k parts of the curve. The right side of the curve is the key evidence for reasoning capacity boundary expansion: improvements near k = 256 k=256 mean that more problems become solvable under the same large sampling budget.
+ Figure 3 summarizes the averaged trends across AIME 2024, AIME 2025, and MATH500. Panel A shows that Curriculum RL improves pass@1 in every model setting, indicating better one-attempt performance. Panel B shows that the improvement also appears at pass@256, so the gain is not confined to low sampling budgets. Panel C uses the base model as a shared reference point: Vanilla RLVR changes mean pass@256 by − 0.5 -0.5 percentage points on average, whereas Curriculum RL improves mean pass@256 by + 9.8 +9.8 percentage points. Because pass@256 measures whether a problem becomes solvable within 256 sampled attempts, these results indicate that boundary-aware Curriculum RL makes more problems reachable under a large sampling budget.
+ Figure 3: Summary of the main evaluation results. A , average pass@1 scores over AIME 2024, AIME 2025, and MATH500. B , average pass@256 scores over the same benchmarks. C , pass@256 gains over the base model for the Vanilla RLVR model and the boundary-aware Curriculum RL model. D , number of evaluation problems that remain unsolved within 256 sampled attempts for the base model and the boundary-aware Curriculum RL model. 
+ Table 1: Benchmark-level pass@1 and pass@256 values for AIME 2024, AIME 2025, and MATH500. Figure 3 averages these values across benchmarks; this table keeps the per-benchmark results visible. Our method is highlighted in blue only when it is best or tied for best for a given benchmark and metric. 
+ Model 
+ | 
+ Benchmark 
+ | 
+ pass@1 | 
+ pass@256 | 
+ | 
+ | 
+ Base | 
+ Vanilla RLVR | 
+ Curriculum RL | 
+ Base | 
+ Vanilla RLVR | 
+ Curriculum RL | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ 3.3 | 
+ 10.0 | 
+ 10.0 | 
+ 46.7 | 
+ 50.0 | 
+ 60.0 | 
+ | 
+ AIME 2025 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 13.3 | 
+ 53.3 | 
+ 53.3 | 
+ 63.3 | 
+ | 
+ MATH500 
+ | 
+ 49.8 | 
+ 66.4 | 
+ 67.0 | 
+ 95.4 | 
+ 95.6 | 
+ 96.2 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2024 
+ | 
+ 1.1 | 
+ 0.0 | 
+ 10.0 | 
+ 40.0 | 
+ 26.7 | 
+ 52.2 | 
+ | 
+ AIME 2025 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 5.6 | 
+ 26.7 | 
+ 26.7 | 
+ 45.6 | 
+ | 
+ MATH500 
+ | 
+ 17.7 | 
+ 24.0 | 
+ 63.9 | 
+ 94.1 | 
+ 92.4 | 
+ 95.9 | 
+ Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 3.3 | 
+ 23.3 | 
+ 36.7 | 
+ 50.0 | 
+ | 
+ AIME 2025 
+ | 
+ 0.0 | 
+ 10.0 | 
+ 3.3 | 
+ 12.2 | 
+ 36.7 | 
+ 33.3 | 
+ | 
+ MATH500 
+ | 
+ 20.3 | 
+ 46.2 | 
+ 34.4 | 
+ 91.7 | 
+ 96.4 | 
+ 94.8 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 6.7 | 
+ 53.3 | 
+ 36.7 | 
+ 60.0 | 
+ | 
+ AIME 2025 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 20.0 | 
+ 10.0 | 
+ 20.0 | 
+ | 
+ MATH500 
+ | 
+ 9.2 | 
+ 12.4 | 
+ 15.4 | 
+ 73.6 | 
+ 55.4 | 
+ 88.0 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 16.7 | 
+ 13.3 | 
+ 20.0 | 
+ | 
+ AIME 2025 
+ | 
+ 3.3 | 
+ 0.0 | 
+ 3.3 | 
+ 10.0 | 
+ 13.3 | 
+ 16.7 | 
+ | 
+ MATH500 
+ | 
+ 15.2 | 
+ 13.4 | 
+ 26.2 | 
+ 78.2 | 
+ 84.2 | 
+ 85.6 | 
+ Table 1 reports the benchmark-level values behind these averaged trends. The table shows that the averaged gains are not driven by a single benchmark: Curriculum RL improves pass@256 over the base model on nearly all model–benchmark pairs, with especially clear gains on AIME 2024 and AIME 2025. The table also shows the instability of Vanilla RLVR: across model–benchmark pairs, it sometimes improves pass@256 but sometimes reduces pass@256 below the base model; on average, its pass@256 is slightly lower than that of the base model. This per-benchmark view supports the same conclusion as Figure 3 : boundary-aware Curriculum RL improves large- k k behavior more consistently than Vanilla RLVR.
+ We next ask whether the large- k k improvement corresponds to changes on individual problems. Table 2 counts evaluation problems that remain unsolved within 256 sampled attempts. Across all five model settings, this count decreases after Curriculum RL, falling from 538 to 350 in total. Among the 538 problems that were unsolved by the base models under the 256-sample budget, 226 become solvable after curriculum training. This problem-level analysis is stricter than pass@1 because it asks whether a problem that was outside the observed reasoning capacity boundary can be moved back inside that boundary.
+ Table 2: Problem-level reasoning capacity boundary migration. Counts are measured under the 256-sample budget. “Base-unsolved solved” counts original base-model unsolved problems that become solvable after Curriculum RL. 
+ Model 
+ | 
+ Base unsolved | 
+ Curriculum unsolved | 
+ Base-unsolved solved | 
+ Qwen2.5-7B-Instruct 
+ | 
+ 86 | 
+ 38 | 
+ 53/86 | 
+ Qwen2.5-7B 
+ | 
+ 50 | 
+ 39 | 
+ 15/50 | 
+ Qwen3-8B 
+ | 
+ 71 | 
+ 44 | 
+ 29/71 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ 170 | 
+ 101 | 
+ 90/170 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ 161 | 
+ 128 | 
+ 39/161 | 
+ Finally, Figure 4 examines how the curriculum changes the composition of training examples that can provide useful reward-driven signal for RL. We record the difficulty-group assignments produced by each pass@ k k exploration step in the curriculum and summarize how training examples are distributed across Easy, Medium, Hard, Frontier, and Beyond. This view shows which examples can provide useful reward-driven signal for the next RL stage. Non-Beyond examples are reward-reachable under the 256-sample budget, whereas Beyond examples are more likely to form all-failed rollout groups. Across the three curriculum rounds, the Beyond region shrinks and more examples move into reward-reachable groups, indicating that the curriculum expands the set of examples from which RL can learn. This provides a mechanism-level diagnostic that boundary-aware Curriculum RL converts part of the zero-advantage region into reward-reachable examples. The exact curriculum choices used in our experiments are reported in Appendix B.1 , and additional training-example diagnostics are collected in Appendix A .
+ Figure 4: Expansion of training-example regions that provide useful reward-driven signal across curriculum rounds. We record the difficulty-group assignments produced by each pass@ k k exploration step in the curriculum and summarize how training examples are distributed across Easy, Medium, Hard, Frontier, and Beyond from the base model to RL3. Fewer Beyond examples and more reward-reachable examples indicate that the curriculum expands the region from which RL can obtain useful reward-driven signal. 
+ 5 Discussion and Conclusion
+ From zero-advantage groups to reward-reachable examples.
+ The Limit-of-RLVR observation motivates our setting: standard RLVR often improves pass@1 by reallocating sampling probabilities among trajectories already reachable from the base model, while the large- k k reasoning capacity boundary often does not expand [ 40 ] . We focus on the group-level reason behind this failure mode. If all rollouts for a difficult example fail, group-normalized advantages become zero, leaving no useful reward-driven signal. Boundary-Aware Curriculum RL addresses this by using pass@ k k exploration to locate examples near the boundary, applying small targeted teacher guidance to make some of them reward-reachable, and then using RL to stabilize the new reasoning patterns. Figure 4 supports this mechanism: across curriculum rounds, fewer examples remain Beyond and more examples move into groups that can provide useful reward-driven signal.
+ Scope and limitations.
+ The main finding of this work is that a boundary-aware training process can expand the empirical reasoning capacity boundary by converting zero-advantage groups into reward-reachable examples. We view Boundary-Aware Curriculum RL as one instantiation of a broader boundary-aware training principle rather than a fixed recipe. This principle can be extended with different boundary estimators, guidance sources, curriculum rules, or RL optimizers, as long as the training process locates examples near the reasoning capacity boundary and makes otherwise zero-advantage groups trainable. We do not explore optimal curriculum selection in this work; instead, we focus on showing that this boundary-aware strategy can move the empirical reasoning capacity boundary.
+ References
+ [1] 
+ M. H. Amani, A. Lotfi, N. Baldwin, S. Bengio, M. Farajtabar, E. Abbe, and R. West (2025) 
+ RL for reasoning by adaptively revealing rationales .
+ In The Fourteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [2] 
+ S. Bae, J. Hong, M. Y. Lee, H. Kim, J. Nam, and D. Kwak (2026) 
+ Online difficulty filtering for reasoning oriented reinforcement learning .
+ In Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+ pp. 700–719 .
+ Cited by: §2 .
+ [3] 
+ M. Chen, J. Tworek, H. Jun, et al. (2021) 
+ Evaluating large language models trained on code .
+ Note: https://arxiv.org/abs/2107.03374v2 
+ Cited by: §1 .
+ [4] 
+ X. Chen, Z. Sun, G. Wenjin, et al. (2025) 
+ Unveiling the key factors for distilling chain-of-thought reasoning .
+ In Findings of the Association for Computational Linguistics: ACL 2025 ,
+ pp. 15094–15119 .
+ Cited by: §1 ,
+ §2 .
+ [5] 
+ K. Cobbe, V. Kosaraju, M. Bavarian, et al. (2021) 
+ Training verifiers to solve math word problems .
+ Note: https://arxiv.org/abs/2110.14168v2 
+ Cited by: §1 .
+ [6] 
+ G. Comanici, E. Bieber, M. Schaekermann, et al. (2025) 
+ Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities .
+ Note: https://arxiv.org/abs/2507.06261v6 
+ Cited by: §1 .
+ [7] 
+ DeepSeek-AI, D. Guo, D. Yang, et al. (2025) 
+ DeepSeek-r1: incentivizing reasoning capability in llms via reinforcement learning .
+ Nature 645 ( 8081 ), pp. 633–638 .
+ Cited by: §1 ,
+ §1 ,
+ §2 .
+ [8] 
+ B. Gao, F. Song, Z. Yang, et al. (2024) 
+ Omni-math: a universal olympiad level mathematic benchmark for large language models .
+ In The Thirteenth International Conference on Learning Representations ,
+ Cited by: §1 .
+ [9] 
+ E. Glazer, E. Erdil, T. Besiroglu, et al. (2024) 
+ FrontierMath: a benchmark for evaluating advanced mathematical reasoning in ai .
+ Note: https://arxiv.org/abs/2411.04872v7 
+ Cited by: §1 .
+ [10] 
+ A. W. He, D. Fried, and S. Welleck (2025) 
+ Rewarding the unlikely: lifting grpo beyond distribution sharpening .
+ In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing ,
+ pp. 25548–25560 .
+ Cited by: §1 ,
+ §2 .
+ [11] 
+ D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt (2021) 
+ Measuring mathematical problem solving with the math dataset .
+ In Thirty-Fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) ,
+ Cited by: §1 .
+ [12] 
+ C. Hsieh, C. Li, C. Yeh, et al. (2023) 
+ Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes .
+ In Findings of the Association for Computational Linguistics: ACL 2023 ,
+ pp. 8003–8017 .
+ Cited by: §1 ,
+ §2 .
+ [13] 
+ C. Huang, W. Yu, X. Wang, H. Zhang, Z. Li, R. Li, J. Huang, H. Mi, and D. Yu (2025) 
+ R-zero: self-evolving reasoning llm from zero data .
+ Note: https://arxiv.org/abs/2508.05004v4 
+ Cited by: §1 .
+ [14] 
+ J. Huang, L. Cui, A. Wang, C. Yang, X. Liao, L. Song, J. Yao, and J. Su (2024) 
+ Mitigating catastrophic forgetting in large language models with self-synthesized rehearsal .
+ Note: https://arxiv.org/abs/2403.01244v2 
+ Cited by: §2 .
+ [15] 
+ W. Huang, A. Cheng, and Y. Wang (2025) 
+ Mitigating catastrophic forgetting in large language models with forgetting-aware pruning .
+ Note: https://arxiv.org/abs/2509.08255v1 
+ Cited by: §2 .
+ [16] 
+ G. Jiang, C. Jiang, Z. Li, S. Xue, J. Zhou, L. Song, D. Lian, and Y. Wei (2024) 
+ Unlocking the power of function vectors for characterizing and mitigating catastrophic forgetting in continual instruction tuning .
+ In The Thirteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [17] 
+ H. Lai and M. Nissim (2026) 
+ TACLer: tailored curriculum reinforcement learning for efficient reasoning .
+ Note: https://arxiv.org/abs/2601.21711v1 
+ Cited by: §2 .
+ [18] 
+ D. Li, S. Cao, T. Griggs, et al. (2025) 
+ Language models can easily learn to reason from demonstrations .
+ In Findings of the Association for Computational Linguistics: EMNLP 2025 ,
+ pp. 15979–15997 .
+ Cited by: §1 ,
+ §2 .
+ [19] 
+ M. Liu, S. Diao, X. Lu, J. Hu, X. Dong, Y. Choi, J. Kautz, and Y. Dong (2025) 
+ ProRL: prolonged reinforcement learning expands reasoning boundaries in large language models .
+ In The Thirty-Ninth Annual Conference on Neural Information Processing Systems ,
+ Cited by: §2 .
+ [20] 
+ P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao (2023) 
+ MathVista: evaluating mathematical reasoning of foundation models in visual contexts .
+ In The Twelfth International Conference on Learning Representations ,
+ Cited by: §1 .
+ [21] 
+ Y. Luo, Z. Yang, F. Meng, Y. Li, J. Zhou, and Y. Zhang (2025) 
+ An empirical study of catastrophic forgetting in large language models during continual fine-tuning .
+ IEEE Transactions on Audio, Speech and Language Processing 33 , pp. 3776–3786 .
+ Cited by: §2 .
+ [22] 
+ N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. Hashimoto (2025) 
+ S1: simple test-time scaling .
+ Note: https://arxiv.org/abs/2501.19393v3 
+ Cited by: §1 .
+ [23] 
+ openai (2024) 
+ OpenAI o1 system card .
+ Cited by: §1 .
+ [24] 
+ S. Parashar, S. Gui, X. Li, et al. (2025) 
+ Curriculum reinforcement learning from easy to hard tasks improves llm reasoning .
+ In The Fourteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [25] 
+ B. Seed, J. Chen, T. Fan, et al. (2025) 
+ Seed1.5-thinking: advancing superb reasoning models with reinforcement learning .
+ Note: https://arxiv.org/abs/2504.13914v3 
+ Cited by: §1 .
+ [26] 
+ Z. Shao, P. Wang, Q. Zhu, et al. (2024) 
+ DeepSeekMath: pushing the limits of mathematical reasoning in open language models .
+ arXiv preprint arXiv:2402.03300 .
+ External Links: 2402.03300 
+ Cited by: §1 .
+ [27] 
+ X. Su, S. Xie, G. Liu, Y. Xia, R. Luo, P. Jin, Z. Ma, Y. Wang, Z. Wang, and Y. Liu (2025) 
+ Trust region preference approximation: a simple and stable reinforcement learning algorithm for llm reasoning .
+ Note: https://arxiv.org/abs/2504.04524v2 
+ Cited by: §1 .
+ [28] 
+ H. Sun, Y. Min, Z. Chen, W. X. Zhao, and J. Wen (2025) 
+ Challenging the boundaries of reasoning: an olympiad-level math benchmark for large language models .
+ Note: https://arxiv.org/abs/2503.21380v3 
+ Cited by: §1 .
+ [29] 
+ K. Team, A. Du, B. Gao, et al. (2025) 
+ Kimi k1.5: scaling reinforcement learning with llms .
+ arXiv preprint arXiv:2501.12599 .
+ External Links: 2501.12599 
+ Cited by: §1 .
+ [30] 
+ C. Wang, Y. Lyu, Z. Sun, and L. Jing (2025) 
+ Continual gradient low-rank projection fine-tuning for llms .
+ In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+ pp. 14815–14829 .
+ Cited by: §2 .
+ [31] 
+ Y. Wang, Y. Liu, C. Shi, H. Li, C. Chen, H. Lu, and Y. Yang (2024) 
+ InsCL: a data-efficient continual learning paradigm for fine-tuning large language models with instructions .
+ In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,
+ pp. 663–677 .
+ Cited by: §2 .
+ [32] 
+ X. Wen, J. Huang, Z. Li, M. Li, J. Zhong, Z. Xu, M. Yuan, Y. Huang, and Q. Xu (2025) 
+ Reasoning scaffolding: distilling the flow of thought from llms .
+ In The Fourteenth International Conference on Learning Representations ,
+ Cited by: §1 ,
+ §2 .
+ [33] 
+ X. Wen, Z. Liu, S. Zheng, et al. (2025) 
+ Reinforcement learning with verifiable rewards implicitly incentivizes correct reasoning in base llms .
+ In The Fourteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [34] 
+ Z. Wu, X. Li, Z. Liu, Y. Yan, Z. Liu, M. Yu, C. Yang, Y. Gu, G. Yu, and M. Sun (2025) 
+ Enhancing long-chain reasoning distillation through error-aware self-reflection .
+ Note: https://arxiv.org/abs/2505.22131v2 
+ Cited by: §1 ,
+ §2 .
+ [35] 
+ Z. Xi, W. Chen, B. Hong, et al. (2024) 
+ Training large language models for reasoning through reverse curriculum reinforcement learning .
+ In Forty-First International Conference on Machine Learning ,
+ Cited by: §2 .
+ [36] 
+ J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang (2025) 
+ Learning to reason under off-policy guidance .
+ Note: https://arxiv.org/abs/2504.14945v5 
+ Cited by: §1 .
+ [37] 
+ A. Yang, A. Li, B. Yang, et al. (2025) 
+ Qwen3 technical report .
+ Note: https://arxiv.org/abs/2505.09388v1 
+ Cited by: §1 .
+ [38] 
+ A. Yang, B. Zhang, B. Hui, et al. (2024) 
+ Qwen2.5-math technical report: toward mathematical expert model via self-improvement .
+ Note: https://arxiv.org/abs/2409.12122v1 
+ Cited by: §1 .
+ [39] 
+ Q. Yu, Z. Zhang, R. Zhu, et al. (2025) 
+ DAPO: an open-source llm reinforcement learning system at scale .
+ arXiv preprint arXiv:2503.14476 .
+ External Links: 2503.14476 
+ Cited by: §1 .
+ [40] 
+ Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, Y. Yue, S. Song, and G. Huang (2025) 
+ Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model? .
+ In The Thirty-Ninth Annual Conference on Neural Information Processing Systems ,
+ Cited by: §1 ,
+ §2 ,
+ §3 ,
+ §4.1 ,
+ §5 .
+ [41] 
+ W. Zeng, Y. Huang, Q. Liu, W. Liu, K. He, Z. Ma, and J. He (2025) 
+ SimpleRL-zoo: investigating and taming zero reinforcement learning for open base models in the wild .
+ In Second Conference on Language Modeling ,
+ Cited by: §2 .
+ [42] 
+ Y. Zeng, Z. Sun, B. Ji, E. Min, H. Cai, S. Wang, D. Yin, H. Zhang, X. Chen, and J. Wang (2025) 
+ CurES: from gradient analysis to efficient curriculum learning for reasoning llms .
+ In The Fourteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [43] 
+ C. Zhang, G. Neubig, and X. Yue (2025) 
+ On the interplay of pre-training, mid-training, and rl on reasoning language models .
+ Cited by: §3.1 .
+ [44] 
+ R. Zhao, A. Meterez, S. M. Kakade, C. Pehlevan, S. Jelassi, and E. Malach (2025) 
+ Echo chamber: rl post-training amplifies behaviors learned in pretraining .
+ In Second Conference on Language Modeling ,
+ Cited by: §1 ,
+ §2 .
+ [45] 
+ Z. Zhao, H. Dong, A. Saha, C. Xiong, and D. Sahoo (2024) 
+ Automatic curriculum expert iteration for reliable llm reasoning .
+ In The Thirteenth International Conference on Learning Representations ,
+ Cited by: §2 .
+ [46] 
+ C. Zheng, S. Liu, M. Li, et al. (2025) 
+ Group sequence policy optimization .
+ Cited by: §1 .
+ [47] 
+ C. Zheng, Z. Zhang, B. Zhang, R. Lin, K. Lu, B. Yu, D. Liu, J. Zhou, and J. Lin (2024) 
+ ProcessBench: identifying process errors in mathematical reasoning .
+ Note: https://arxiv.org/abs/2412.06559v4 
+ Cited by: §2 .
+ [48] 
+ J. Zheng, X. Cai, S. Qiu, and Q. Ma (2025) 
+ Spurious forgetting in continual learning of language models .
+ Note: https://arxiv.org/abs/2501.13453v1 
+ Cited by: §2 .
+ [49] 
+ Y. Zuo, K. Zhang, L. Sheng, et al. (2025) 
+ TTRL: test-time reinforcement learning .
+ Note: https://arxiv.org/abs/2504.16084v3 
+ Cited by: §1 .
+ Appendix A Supplementary Experimental Figures
+ This appendix provides additional visual evidence for the main empirical claims: boundary-aware Curriculum RL improves large- k k behavior more consistently than Vanilla RLVR, and the curriculum expands the part of the training pool that can provide useful reward-driven signal. The figures are organized around two questions. Figures 5 and 6 examine whether the reported gains appear at large sampling budgets. Figures 7 – 9 examine how the curriculum changes the difficulty distribution of training examples.
+ Figure 5: Representative pass@ k k curves for three challenging model–benchmark pairs. These panels give a compact view of the large- k k behavior shown more comprehensively in Figure 2 . 
+ Figure 5 gives a closer view of representative model–benchmark pairs where large- k k behavior is especially informative. The purpose is not to replace the full grid in Figure 2 , but to make the curve shape easier to inspect. The conclusion is consistent with the main text: Vanilla RLVR can improve early sampling behavior, but the large- k k endpoint is less stable; boundary-aware Curriculum RL more directly targets whether additional problems become solvable under the same sampling budget.
+ Figure 6: Per-benchmark pass@256 gain maps. Each cell reports the percentage-point change in pass@256 for one model–benchmark pair. Vanilla RLVR has mixed large- k k effects, including several decreases relative to the base model. Curriculum RL shows broader positive pass@256 gains, indicating that more problems become solvable within the same 256-sample budget. 
+ Figure 6 summarizes the same question at the benchmark level. It shows that the average pass@256 improvement is not driven by a single benchmark: positive Curriculum RL gains appear across model families and evaluation sets. It also makes the contrast with Vanilla RLVR explicit, since Vanilla RLVR has both positive and negative pass@256 changes depending on the model–benchmark pair.
+ Figure 7: Training-example difficulty shares across curriculum rounds. We record the difficulty groups produced by pass@ k k exploration during the curriculum and plot the normalized share of Easy, Medium, Hard, Frontier, and Beyond examples. Compared with the stacked counts in Figure 4 , this normalized view makes model settings with different starting distributions easier to compare. 
+ Figure 7 focuses on the training examples used by the curriculum process. The normalized view shows whether the curriculum is merely improving a fixed set of easy examples or changing the distribution of difficulty groups. Across the recorded curriculum rounds, the Beyond share decreases and more examples fall into reward-reachable groups, supporting the mechanism that curriculum training expands the part of the training pool from which RL can obtain useful reward-driven signal.
+ Figure 8: Absolute training-example difficulty counts across curriculum rounds. The top row separates Easy and Medium counts, the middle row separates Hard and Frontier counts, and the bottom row shows Beyond counts. This complements the normalized view by showing the scale of movement from Beyond into reward-reachable groups. 
+ Figure 8 reports the same training-example dynamics in absolute counts. This is useful because normalized shares can hide the scale of the movement. The figure shows that the reduction in Beyond examples corresponds to a real increase in examples solved at least once within the 256-sample exploration budget, rather than only a relative change caused by redistribution among already reachable groups.
+ Figure 9: Training-example difficulty transitions from the base model to the third curriculum round. Rows denote the difficulty assigned before curriculum training, and columns denote the difficulty assigned after RL3. Shading is normalized within each starting difficulty group, and cell labels show counts. Movement from the Beyond row into Easy, Medium, Hard, or Frontier indicates examples that were not solved within the 256-sample exploration budget before curriculum training but became reward-reachable afterwards. 
+ Figure 9 provides a per-example view of the same effect. The key evidence is movement from the Beyond row into Easy, Medium, Hard, or Frontier columns, which means that examples previously unsolved within the pass@ k k exploration budget become reward-reachable after curriculum training. This transition-level view supports the interpretation that boundary-aware Curriculum RL changes the status of concrete examples, not only aggregate pass@ k k averages.
+ Taken together, these supplementary figures support the same mechanism from two directions: the evaluation curves show that large- k k behavior improves, and the training-example diagnostics show that more examples become available for reward-driven RL updates.
+ Appendix B Implementation Details
+ This section records implementation choices needed to reproduce the reported curriculum runs. The key design choice is the curriculum range used in each RL round; the teacher-guidance selection rule and prompt are given in Section E .
+ B.1 Curriculum Choices
+ Table 3 reports the curriculum range used in each RL round. The choices follow the Stage-III principle: use the hardest range that still contains enough reward-reachable examples for RL, then move the lower end of the range as the observed reasoning capacity boundary changes. The table should be read as an implementation record of the reported runs. Its main role is to make the curriculum process reproducible and to show how the simple boundary-aware rule is instantiated across model settings.
+ Table 3: Curriculum ranges used in the three reported curriculum rounds. 
+ Model setting 
+ | 
+ RL1 
+ | 
+ RL2 
+ | 
+ RL3 
+ | 
+ Qwen2.5-7B-Instruct 
+ | 
+ Beyond-only 
+ | 
+ Frontier-to-Beyond 
+ | 
+ Easy-to-Beyond 
+ | 
+ Qwen2.5-7B 
+ | 
+ Medium-to-Beyond 
+ | 
+ Beyond-only 
+ | 
+ Frontier-to-Beyond 
+ | 
+ Qwen3-8B 
+ | 
+ Medium-to-Beyond 
+ | 
+ Medium-to-Beyond 
+ | 
+ Medium-to-Beyond 
+ | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ Medium-to-Beyond 
+ | 
+ Medium-to-Beyond 
+ | 
+ Beyond-only 
+ | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ Easy-to-Beyond 
+ | 
+ Frontier-to-Beyond 
+ | 
+ Frontier-to-Beyond 
+ | 
+ Appendix C Mechanistic Analysis of Zero-Advantage Groups
+ This section formalizes the mechanism used in the main text. The analysis is intentionally local: it concerns the reward-driven term of a GRPO-style update with binary outcome rewards. It does not claim that all optimizer terms vanish, nor does it characterize every possible source of representation change. Its purpose is to make precise why all-failed rollout groups provide no task-specific preference signal, and why moving a boundary example into a reward-reachable regime changes the optimization problem faced by RL.
+ Setup.
+ For a prompt x x , suppose the current policy samples a group of G G rollouts { y i } i = 1 G \{y_{i}\}_{i=1}^{G} with binary rewards r i ∈ { 0 , 1 } r_{i}\in\{0,1\} . The group-normalized advantage is
+ | 
+ A ^ i = r i − r ¯ σ r + ϵ , r ¯ = 1 G ​ ∑ j = 1 G r j , \hat{A}_{i}=\frac{r_{i}-\bar{r}}{\sigma_{r}+\epsilon},\qquad\bar{r}=\frac{1}{G}\sum_{j=1}^{G}r_{j}, | 
+ | 
+ where σ r \sigma_{r} is the standard deviation of rewards within the group and ϵ > 0 \epsilon>0 . The reward-weighted policy-gradient term for this prompt has the form
+ | 
+ g x ​ ( θ ) = ∑ i = 1 G A ^ i ​ ∇ θ ​ log ⁡ π θ ​ ( y i ∣ x ) . g_{x}(\theta)=\sum_{i=1}^{G}\hat{A}_{i}\nabla_{\theta}\log\pi_{\theta}(y_{i}\mid x). | 
+ | 
+ Proposition 1: all-equal reward groups have zero reward weights.
+ If all rollouts in the group receive the same reward, then A ^ i = 0 \hat{A}_{i}=0 for every rollout and g x ​ ( θ ) = 0 g_{x}(\theta)=0 .
+ Proof.
+ If all rewards are equal to a constant c ∈ { 0 , 1 } c\in\{0,1\} , then r ¯ = c \bar{r}=c and r i − r ¯ = 0 r_{i}-\bar{r}=0 for every i i . Therefore A ^ i = 0 \hat{A}_{i}=0 for all sampled rollouts, and the weighted sum g x ​ ( θ ) g_{x}(\theta) is zero. In particular, an all-failed group has c = 0 c=0 and contributes no positive or negative preference among its sampled trajectories. An all-success group also has zero within-group reward contrast; however, all-failed groups are the central boundary case because they arise when the current policy has not produced any successful trajectory from which outcome-reward RL can learn. □ \square 
+ Proposition 2: mixed-reward groups are the only binary groups with nonzero reward contrast.
+ Let m = ∑ i = 1 G r i m=\sum_{i=1}^{G}r_{i} be the number of successful rollouts. If 0 < m < G 0<m<G , then successful and failed rollouts receive advantage weights with opposite signs. If m = 0 m=0 or m = G m=G , all advantage weights are zero.
+ Proof.
+ For binary rewards, r ¯ = m / G \bar{r}=m/G and
+ | 
+ σ r = 1 G ​ ∑ i = 1 G ( r i − r ¯ ) 2 = m ⁡ ( G − m ) G . \sigma_{r}=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(r_{i}-\bar{r})^{2}}=\frac{\sqrt{m(G-m)}}{G}. | 
+ | 
+ When 0 < m < G 0<m<G , a successful rollout has
+ | 
+ A ^ + = 1 − m / G m ⁡ ( G − m ) / G + ϵ > 0 , \hat{A}^{+}=\frac{1-m/G}{\sqrt{m(G-m)}/G+\epsilon}>0, | 
+ | 
+ whereas a failed rollout has
+ | 
+ A ^ − = − m / G m ⁡ ( G − m ) / G + ϵ < 0 . \hat{A}^{-}=\frac{-m/G}{\sqrt{m(G-m)}/G+\epsilon}<0. | 
+ | 
+ Thus the group supplies an explicit reward contrast: successes are upweighted and failures are downweighted. When m = 0 m=0 or m = G m=G , Proposition 1 applies and all advantages are zero. Without the numerical stabilizer ϵ \epsilon , the two nonzero weights reduce to A ^ + = ( G − m ) / m \hat{A}^{+}=\sqrt{(G-m)/m} and A ^ − = − m / ( G − m ) \hat{A}^{-}=-\sqrt{m/(G-m)} . □ \square 
+ Proposition 3: probability of receiving reward contrast.
+ Let p θ ​ ( x ) p_{\theta}(x) be the probability that one rollout from the current policy solves x x under a fixed sampler. Under the idealized assumption that the G G rollouts in a group are independent, the probability that the group contains both at least one success and at least one failure is
+ | 
+ q G ​ ( p θ ) = 1 − ( 1 − p θ ) G − p θ G . q_{G}(p_{\theta})=1-(1-p_{\theta})^{G}-p_{\theta}^{G}. | 
+ | 
+ Moreover, q G ​ ( p θ ) = 0 q_{G}(p_{\theta})=0 at p θ = 0 p_{\theta}=0 and p θ = 1 p_{\theta}=1 , q G ​ ( p θ ) > 0 q_{G}(p_{\theta})>0 for 0 < p θ < 1 0<p_{\theta}<1 , and q G q_{G} is maximized at p θ = 1 / 2 p_{\theta}=1/2 .
+ Proof.
+ The group has no reward contrast in two cases: all rollouts fail, which occurs with probability ( 1 − p θ ) G (1-p_{\theta})^{G} , or all rollouts succeed, which occurs with probability p θ G p_{\theta}^{G} . The complement is the event that the group contains at least one success and at least one failure, giving the expression above. Its derivative is
+ | 
+ q G ′ ​ ( p θ ) = G ​ ( 1 − p θ ) G − 1 − G ​ p θ G − 1 . q^{\prime}_{G}(p_{\theta})=G(1-p_{\theta})^{G-1}-Gp_{\theta}^{G-1}. | 
+ | 
+ The derivative is positive when p θ < 1 / 2 p_{\theta}<1/2 , zero at p θ = 1 / 2 p_{\theta}=1/2 , and negative when p θ > 1 / 2 p_{\theta}>1/2 . Hence q G q_{G} is maximized at p θ = 1 / 2 p_{\theta}=1/2 . Near the zero-success regime, q G ​ ( p θ ) ≈ G ​ p θ q_{G}(p_{\theta})\approx Gp_{\theta} for small p θ p_{\theta} , so even a small increase in the probability of producing a correct trajectory can substantially increase the chance that an RL group contains usable reward contrast. □ \square 
+ Corollary 1: zero observed successes mark a low-success-probability regime.
+ The pass@ k k exploration stage provides an empirical way to locate prompts with very small observed success probability under the current sampler. Under the same idealized independent-rollout model, if K K samples produce no success, then a one-sided 1 − α 1-\alpha upper bound on p θ ​ ( x ) p_{\theta}(x) is
+ | 
+ p θ ​ ( x ) ≤ 1 − α 1 / K . p_{\theta}(x)\leq 1-\alpha^{1/K}. | 
+ | 
+ For K = 256 K=256 and α = 0.05 \alpha=0.05 , this gives
+ | 
+ p θ ​ ( x ) ≤ 1 − 0.05 1 / 256 ≈ 0.0116 . p_{\theta}(x)\leq 1-0.05^{1/256}\approx 0.0116. | 
+ | 
+ Proof.
+ The probability of seeing no success in K K independent samples is
+ | 
+ Pr ⁡ [ no success in ​ K ​ samples ] = ( 1 − p θ ​ ( x ) ) K . \Pr[\text{no success in }K\text{ samples}]=(1-p_{\theta}(x))^{K}. | 
+ | 
+ Solving ( 1 − p θ ​ ( x ) ) K = α (1-p_{\theta}(x))^{K}=\alpha for p θ ​ ( x ) p_{\theta}(x) gives the stated upper bound. We use this calculation only as an interpretation of the pass@ k k signal, not as a formal guarantee about dependent decoding samples. It clarifies why Beyond examples are likely to form zero-advantage groups during ordinary rollout training. □ \square 
+ Corollary 2: making a boundary example reward-reachable is sufficient to create nonzero signal probability.
+ If targeted guidance moves an example from p θ ​ ( x ) = 0 p_{\theta}(x)=0 to any p θ ​ ( x ) ∈ ( 0 , 1 ) p_{\theta}(x)\in(0,1) , then the probability of drawing a mixed-reward group becomes strictly positive under the independent-rollout model.
+ Proof.
+ By Proposition 3, q G ​ ( 0 ) = 0 q_{G}(0)=0 and q G ​ ( p θ ) > 0 q_{G}(p_{\theta})>0 for every p θ ∈ ( 0 , 1 ) p_{\theta}\in(0,1) . Therefore, once an example becomes reward-reachable but not trivially solved by every rollout, a group update can sample both successful and failed trajectories with positive probability. By Proposition 2, such a group has nonzero reward contrast. □ \square 
+ Implication for boundary-aware curriculum RL.
+ The mechanism can be summarized as
+ Large-sample pass@ k k exploration locates examples near the empirical reasoning capacity boundary. Targeted teacher guidance then moves a small number of selected examples away from the zero-success regime, making mixed-reward rollout groups possible. Once such reward contrast exists, RL can consolidate the newly introduced reasoning pattern rather than repeatedly sampling all-failed groups with zero reward-driven advantage.
+ Appendix D Supplementary Experimental Tables
+ The tables below provide the numerical details behind the appendix figures and the main pass@ k k results. They report only the base model, Vanilla RLVR model, and reported Curriculum RL model used in the paper, together with the training-example difficulty summaries recorded during the curriculum. Together, these tables support three conclusions: the teacher intervention is small and concentrated near the boundary; Curriculum RL improves pass@256 more consistently than Vanilla RLVR; and the training pool contains more reward-reachable examples after curriculum learning.
+ D.1 Teacher-Guidance Seed Composition
+ Table 4 documents the scale of the teacher-guidance bridge. Each round uses only a small number of Frontier and Beyond examples, rather than a large teacher-generated corpus. This supports the design goal of using teacher guidance locally near the reasoning capacity boundary while leaving RL responsible for consolidating the introduced reasoning patterns.
+ Table 4: Teacher-guidance seed composition. Each round uses a small set of Frontier and Beyond examples selected near the current reasoning capacity boundary. 
+ Model setting 
+ | 
+ Round | 
+ N | 
+ Frontier | 
+ Beyond | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL1 | 
+ 25 | 
+ 10 | 
+ 15 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL2 | 
+ 35 | 
+ 15 | 
+ 20 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL3 | 
+ 43 | 
+ 18 | 
+ 25 | 
+ Qwen2.5-7B 
+ | 
+ RL1 | 
+ 30 | 
+ 15 | 
+ 15 | 
+ Qwen2.5-7B 
+ | 
+ RL2 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ Qwen2.5-7B 
+ | 
+ RL3 | 
+ 30 | 
+ 15 | 
+ 15 | 
+ Qwen3-8B 
+ | 
+ RL1 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ Qwen3-8B 
+ | 
+ RL2 | 
+ 30 | 
+ 10 | 
+ 20 | 
+ Qwen3-8B 
+ | 
+ RL3 | 
+ 40 | 
+ 10 | 
+ 30 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ RL1 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ RL2 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ RL3 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ RL1 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ RL2 | 
+ 20 | 
+ 10 | 
+ 10 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ RL3 | 
+ 30 | 
+ 10 | 
+ 20 | 
+ D.2 Per-Benchmark pass@256 Gain Summary
+ Table 5 expands the pass@256 comparison behind Figure 6 . The table shows that Vanilla RLVR sometimes improves pass@256 but also produces several negative changes relative to the base model. Curriculum RL has broader positive gains, especially on AIME 2024 and AIME 2025, indicating that the large- k k improvement is not restricted to the averaged metric in the main text.
+ Table 5: Per-benchmark pass@256 gains for Vanilla RLVR and Curriculum RL. Values are percentage-point differences computed relative to the indicated reference model. 
+ Model 
+ | 
+ Benchmark | 
+ Vanilla RLVR 
+ − - Base 
+ | 
+ Curriculum RL 
+ − - Base 
+ | 
+ Curriculum RL 
+ − - Vanilla RLVR 
+ | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2024 | 
+ +3.3 | 
+ +13.3 | 
+ +10.0 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2025 | 
+ +0.0 | 
+ +10.0 | 
+ +10.0 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ MATH500 | 
+ +0.2 | 
+ +0.8 | 
+ +0.6 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2024 | 
+ -13.3 | 
+ +12.2 | 
+ +25.6 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2025 | 
+ +0.0 | 
+ +18.9 | 
+ +18.9 | 
+ Qwen2.5-7B 
+ | 
+ MATH500 | 
+ -1.7 | 
+ +1.7 | 
+ +3.5 | 
+ Qwen3-8B 
+ | 
+ AIME 2024 | 
+ +13.3 | 
+ +26.7 | 
+ +13.3 | 
+ Qwen3-8B 
+ | 
+ AIME 2025 | 
+ +24.4 | 
+ +21.1 | 
+ -3.3 | 
+ Qwen3-8B 
+ | 
+ MATH500 | 
+ +4.7 | 
+ +3.1 | 
+ -1.6 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2024 | 
+ -16.7 | 
+ +6.7 | 
+ +23.3 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2025 | 
+ -10.0 | 
+ +0.0 | 
+ +10.0 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ MATH500 | 
+ -18.2 | 
+ +14.4 | 
+ +32.6 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2024 | 
+ -3.3 | 
+ +3.3 | 
+ +6.7 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2025 | 
+ +3.3 | 
+ +6.7 | 
+ +3.3 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ MATH500 | 
+ +6.0 | 
+ +7.4 | 
+ +1.4 | 
+ D.3 Supplementary pass@k Curve Values
+ Table 6 provides the numerical values for the full pass@ k k curves. These values make it possible to inspect whether improvements appear only near pass@1 or persist as the sampling budget increases. The main pattern is that boundary-aware Curriculum RL often improves the curve at both small and large k k , whereas Vanilla RLVR is less stable at the pass@256 endpoint.
+ Table 6: Pass@ k k curve values for the base model, Vanilla RLVR model, and Curriculum RL curve shown in Figure 2 . Values are percentages. 
+ Model 
+ | 
+ Benchmark 
+ | 
+ Method 
+ | 
+ p@1 | 
+ p@2 | 
+ p@4 | 
+ p@8 | 
+ p@16 | 
+ p@32 | 
+ p@64 | 
+ p@128 | 
+ p@256 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Base 
+ | 
+ 3.3 | 
+ 3.3 | 
+ 10.0 | 
+ 16.7 | 
+ 20.0 | 
+ 20.0 | 
+ 33.3 | 
+ 36.7 | 
+ 46.7 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Vanilla RLVR 
+ | 
+ 10.0 | 
+ 13.3 | 
+ 13.3 | 
+ 16.7 | 
+ 16.7 | 
+ 23.3 | 
+ 33.3 | 
+ 40.0 | 
+ 50.0 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Curriculum RL 
+ | 
+ 6.7 | 
+ 13.3 | 
+ 13.3 | 
+ 13.3 | 
+ 16.7 | 
+ 30.0 | 
+ 33.3 | 
+ 46.7 | 
+ 60.0 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 16.7 | 
+ 23.3 | 
+ 30.0 | 
+ 30.0 | 
+ 36.7 | 
+ 53.3 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Vanilla RLVR 
+ | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 13.3 | 
+ 16.7 | 
+ 26.7 | 
+ 33.3 | 
+ 40.0 | 
+ 53.3 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Curriculum RL 
+ | 
+ 6.7 | 
+ 10.0 | 
+ 10.0 | 
+ 16.7 | 
+ 20.0 | 
+ 30.0 | 
+ 43.3 | 
+ 53.3 | 
+ 63.3 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ MATH500 
+ | 
+ Base 
+ | 
+ 49.8 | 
+ 65.4 | 
+ 78.2 | 
+ 84.6 | 
+ 90.0 | 
+ 92.8 | 
+ 93.8 | 
+ 95.0 | 
+ 95.4 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ MATH500 
+ | 
+ Vanilla RLVR 
+ | 
+ 66.4 | 
+ 79.2 | 
+ 85.6 | 
+ 88.4 | 
+ 91.0 | 
+ 91.8 | 
+ 93.6 | 
+ 95.0 | 
+ 95.6 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ MATH500 
+ | 
+ Curriculum RL 
+ | 
+ 60.4 | 
+ 74.2 | 
+ 80.6 | 
+ 86.6 | 
+ 89.8 | 
+ 92.6 | 
+ 94.2 | 
+ 95.2 | 
+ 96.2 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2024 
+ | 
+ Base 
+ | 
+ 1.1 | 
+ 2.2 | 
+ 5.6 | 
+ 5.6 | 
+ 11.1 | 
+ 13.3 | 
+ 21.1 | 
+ 30.0 | 
+ 40.0 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2024 
+ | 
+ Vanilla RLVR 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 6.7 | 
+ 6.7 | 
+ 10.0 | 
+ 13.3 | 
+ 16.7 | 
+ 20.0 | 
+ 26.7 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2024 
+ | 
+ Curriculum RL 
+ | 
+ 6.7 | 
+ 8.9 | 
+ 12.2 | 
+ 16.7 | 
+ 21.1 | 
+ 25.6 | 
+ 31.1 | 
+ 43.3 | 
+ 52.2 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2025 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 1.1 | 
+ 1.1 | 
+ 2.2 | 
+ 4.4 | 
+ 8.9 | 
+ 10.0 | 
+ 14.4 | 
+ 26.7 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2025 
+ | 
+ Vanilla RLVR 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 10.0 | 
+ 10.0 | 
+ 23.3 | 
+ 23.3 | 
+ 23.3 | 
+ 26.7 | 
+ Qwen2.5-7B 
+ | 
+ AIME 2025 
+ | 
+ Curriculum RL 
+ | 
+ 2.2 | 
+ 5.6 | 
+ 8.9 | 
+ 11.1 | 
+ 18.9 | 
+ 23.3 | 
+ 31.1 | 
+ 40.0 | 
+ 45.6 | 
+ Qwen2.5-7B 
+ | 
+ MATH500 
+ | 
+ Base 
+ | 
+ 17.7 | 
+ 30.3 | 
+ 46.8 | 
+ 63.1 | 
+ 76.1 | 
+ 83.9 | 
+ 88.1 | 
+ 91.5 | 
+ 94.1 | 
+ Qwen2.5-7B 
+ | 
+ MATH500 
+ | 
+ Vanilla RLVR 
+ | 
+ 24.0 | 
+ 38.6 | 
+ 57.6 | 
+ 75.0 | 
+ 81.8 | 
+ 87.0 | 
+ 89.0 | 
+ 90.8 | 
+ 92.4 | 
+ Qwen2.5-7B 
+ | 
+ MATH500 
+ | 
+ Curriculum RL 
+ | 
+ 46.1 | 
+ 63.9 | 
+ 74.8 | 
+ 82.5 | 
+ 87.5 | 
+ 90.9 | 
+ 92.4 | 
+ 94.3 | 
+ 95.9 | 
+ Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 4.4 | 
+ 4.4 | 
+ 6.7 | 
+ 10.0 | 
+ 10.0 | 
+ 14.4 | 
+ 21.1 | 
+ 23.3 | 
+ Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Vanilla RLVR 
+ | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 13.3 | 
+ 20.0 | 
+ 26.7 | 
+ 30.0 | 
+ 30.0 | 
+ 36.7 | 
+ Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Curriculum RL 
+ | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 13.3 | 
+ 20.0 | 
+ 23.3 | 
+ 30.0 | 
+ 36.7 | 
+ 50.0 | 
+ Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 1.1 | 
+ 2.2 | 
+ 4.4 | 
+ 7.8 | 
+ 8.9 | 
+ 10.0 | 
+ 10.0 | 
+ 12.2 | 
+ Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Vanilla RLVR 
+ | 
+ 10.0 | 
+ 10.0 | 
+ 10.0 | 
+ 10.0 | 
+ 20.0 | 
+ 20.0 | 
+ 23.3 | 
+ 30.0 | 
+ 36.7 | 
+ Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Curriculum RL 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 13.3 | 
+ 20.0 | 
+ 20.0 | 
+ 23.3 | 
+ 33.3 | 
+ Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Base 
+ | 
+ 20.3 | 
+ 34.3 | 
+ 50.3 | 
+ 64.0 | 
+ 74.7 | 
+ 82.3 | 
+ 86.5 | 
+ 88.9 | 
+ 91.7 | 
+ Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Vanilla RLVR 
+ | 
+ 46.2 | 
+ 66.0 | 
+ 80.6 | 
+ 88.0 | 
+ 90.6 | 
+ 92.2 | 
+ 94.4 | 
+ 95.6 | 
+ 96.4 | 
+ Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Curriculum RL 
+ | 
+ 28.4 | 
+ 43.8 | 
+ 59.6 | 
+ 72.6 | 
+ 83.0 | 
+ 88.6 | 
+ 90.4 | 
+ 92.6 | 
+ 94.8 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 6.7 | 
+ 13.3 | 
+ 20.0 | 
+ 33.3 | 
+ 36.7 | 
+ 53.3 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Vanilla RLVR 
+ | 
+ 3.3 | 
+ 6.7 | 
+ 6.7 | 
+ 10.0 | 
+ 10.0 | 
+ 16.7 | 
+ 20.0 | 
+ 23.3 | 
+ 36.7 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2024 
+ | 
+ Curriculum RL 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 10.0 | 
+ 13.3 | 
+ 20.0 | 
+ 23.3 | 
+ 26.7 | 
+ 46.7 | 
+ 60.0 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 6.7 | 
+ 6.7 | 
+ 6.7 | 
+ 13.3 | 
+ 20.0 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Vanilla RLVR 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 10.0 | 
+ 10.0 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ AIME 2025 
+ | 
+ Curriculum RL 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 13.3 | 
+ 13.3 | 
+ 13.3 | 
+ 16.7 | 
+ 20.0 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ MATH500 
+ | 
+ Base 
+ | 
+ 9.2 | 
+ 14.8 | 
+ 21.8 | 
+ 29.0 | 
+ 38.4 | 
+ 49.8 | 
+ 56.8 | 
+ 67.4 | 
+ 73.6 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ MATH500 
+ | 
+ Vanilla RLVR 
+ | 
+ 12.4 | 
+ 17.8 | 
+ 23.0 | 
+ 27.0 | 
+ 32.6 | 
+ 38.8 | 
+ 44.0 | 
+ 49.8 | 
+ 55.4 | 
+ LLaMA-3.1-8B-Instruct 
+ | 
+ MATH500 
+ | 
+ Curriculum RL 
+ | 
+ 14.8 | 
+ 23.8 | 
+ 33.8 | 
+ 45.4 | 
+ 59.8 | 
+ 70.0 | 
+ 77.6 | 
+ 82.6 | 
+ 88.0 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Base 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 6.7 | 
+ 6.7 | 
+ 10.0 | 
+ 13.3 | 
+ 16.7 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Vanilla RLVR 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 6.7 | 
+ 13.3 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2024 
+ | 
+ Curriculum RL 
+ | 
+ 0.0 | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 10.0 | 
+ 10.0 | 
+ 20.0 | 
+ 20.0 | 
+ 20.0 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Base 
+ | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 10.0 | 
+ 10.0 | 
+ 10.0 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Vanilla RLVR 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 10.0 | 
+ 13.3 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ AIME 2025 
+ | 
+ Curriculum RL 
+ | 
+ 0.0 | 
+ 0.0 | 
+ 3.3 | 
+ 3.3 | 
+ 6.7 | 
+ 6.7 | 
+ 10.0 | 
+ 13.3 | 
+ 16.7 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Base 
+ | 
+ 15.2 | 
+ 22.4 | 
+ 32.0 | 
+ 45.8 | 
+ 55.8 | 
+ 63.6 | 
+ 69.8 | 
+ 74.4 | 
+ 78.2 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Vanilla RLVR 
+ | 
+ 13.4 | 
+ 24.4 | 
+ 35.4 | 
+ 50.8 | 
+ 62.0 | 
+ 68.6 | 
+ 75.6 | 
+ 80.2 | 
+ 84.2 | 
+ DeepSeek-R1-0528-Qwen3-8B 
+ | 
+ MATH500 
+ | 
+ Curriculum RL 
+ | 
+ 22.2 | 
+ 39.2 | 
+ 49.6 | 
+ 59.2 | 
+ 66.6 | 
+ 74.4 | 
+ 79.6 | 
+ 83.2 | 
+ 85.6 | 
+ D.4 Training-Example Signal Expansion Summary
+ Table 7 summarizes the training-example difficulty changes that are visualized in Figure 4 . For the recorded Qwen settings, the number of Beyond examples decreases after curriculum training, while the number of examples solved at least once within the 256-sample budget increases. This supports the mechanism-level claim that the curriculum expands the region that can provide useful reward-driven signal to RL.
+ Table 7: Summary of the training-example difficulty changes shown in Figure 4 . Reachable denotes examples solved at least once within the 256-sample pass@ k k exploration budget. 
+ Model setting 
+ | 
+ Base 
+ Beyond 
+ | 
+ RL3 
+ Beyond 
+ | 
+ Δ \Delta 
+ Beyond 
+ | 
+ Base 
+ reachable 
+ | 
+ RL3 
+ reachable 
+ | 
+ Δ \Delta 
+ reachable 
+ | 
+ Qwen2.5-7B 
+ | 
+ 61 | 
+ 51 | 
+ -10 | 
+ 1887 | 
+ 1897 | 
+ +10 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ 113 | 
+ 45 | 
+ -68 | 
+ 1835 | 
+ 1903 | 
+ +68 | 
+ Qwen3-8B 
+ | 
+ 88 | 
+ 48 | 
+ -40 | 
+ 1860 | 
+ 1900 | 
+ +40 | 
+ D.5 Training-Example Difficulty Transition Summary
+ Table 8 gives a more detailed transition summary for Figure 9 . The most important column is Base-Beyond-to-reachable: it counts examples that were outside the observed reasoning capacity boundary before curriculum training but became reward-reachable by RL3. The positive counts in this column show that the observed boundary shift is caused by concrete example-level transitions.
+ Table 8: Summary of the per-example difficulty transitions shown in Figure 9 . Base-Beyond-to-reachable counts training examples that were Beyond before curriculum training but became Easy, Medium, Hard, or Frontier after RL3. New Beyond counts examples that were not Beyond before curriculum training but became Beyond after RL3. The capped difficulty index k ~ \tilde{k} equals the mean first-success index for solved examples and 257 for Beyond examples. 
+ Model setting 
+ | 
+ Base 
+ Beyond 
+ | 
+ Base-Beyond 
+ reachable 
+ | 
+ Base-Beyond 
+ remaining 
+ | 
+ New 
+ Beyond 
+ | 
+ Net 
+ Beyond 
+ | 
+ Mean k ~ \tilde{k} 
+ Base → \rightarrow RL3 
+ | 
+ Qwen2.5-7B-Instruct 
+ | 
+ 113 | 
+ 77 | 
+ 36 | 
+ 9 | 
+ -68 | 
+ 29.93 → \rightarrow 10.92 | 
+ Qwen2.5-7B 
+ | 
+ 61 | 
+ 21 | 
+ 40 | 
+ 11 | 
+ -10 | 
+ 20.08 → \rightarrow 12.49 | 
+ Qwen3-8B 
+ | 
+ 88 | 
+ 44 | 
+ 44 | 
+ 4 | 
+ -40 | 
+ 19.31 → \rightarrow 13.51 | 
+ D.6 Training-Example Difficulty Summaries
+ Table 9 reports the full difficulty counts for each recorded curriculum round. These values complement the transition summary by showing the round-by-round trajectory of Easy, Medium, Hard, Frontier, and Beyond examples. The consistent reduction in mean capped difficulty and the increase in reachable examples provide additional evidence that the curriculum changes the training distribution toward more usable RL signal.
+ Table 9: Training-example difficulty summaries recorded during the reported curriculum rounds. Reachable denotes examples solved at least once within the 256-sample pass@ k k exploration budget. 
+ Model setting 
+ | 
+ Round | 
+ Easy | 
+ Medium | 
+ Hard | 
+ Frontier | 
+ Beyond | 
+ Reachable | 
+ Mean k | 
+ Qwen2.5-7B 
+ | 
+ Base | 
+ 24 | 
+ 1343 | 
+ 354 | 
+ 166 | 
+ 61 | 
+ 1887 | 
+ 12.43 | 
+ Qwen2.5-7B 
+ | 
+ RL1 | 
+ 650 | 
+ 1108 | 
+ 72 | 
+ 69 | 
+ 49 | 
+ 1899 | 
+ 5.64 | 
+ Qwen2.5-7B 
+ | 
+ RL2 | 
+ 697 | 
+ 1057 | 
+ 66 | 
+ 82 | 
+ 46 | 
+ 1902 | 
+ 6.10 | 
+ Qwen2.5-7B 
+ | 
+ RL3 | 
+ 736 | 
+ 1027 | 
+ 59 | 
+ 75 | 
+ 51 | 
+ 1897 | 
+ 5.91 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ Base | 
+ 141 | 
+ 970 | 
+ 526 | 
+ 198 | 
+ 113 | 
+ 1835 | 
+ 15.94 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL1 | 
+ 1070 | 
+ 689 | 
+ 68 | 
+ 80 | 
+ 41 | 
+ 1907 | 
+ 5.84 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL2 | 
+ 1201 | 
+ 570 | 
+ 57 | 
+ 77 | 
+ 43 | 
+ 1905 | 
+ 5.40 | 
+ Qwen2.5-7B-Instruct 
+ | 
+ RL3 | 
+ 1248 | 
+ 535 | 
+ 49 | 
+ 71 | 
+ 45 | 
+ 1903 | 
+ 5.10 | 
+ Qwen3-8B 
+ | 
+ Base | 
+ 272 | 
+ 1361 | 
+ 127 | 
+ 100 | 
+ 88 | 
+ 1860 | 
+ 8.06 | 
+ Qwen3-8B 
+ | 
+ RL1 | 
+ 324 | 
+ 1380 | 
+ 90 | 
+ 83 | 
+ 71 | 
+ 1877 | 
+ 6.64 | 
+ Qwen3-8B 
+ | 
+ RL2 | 
+ 259 | 
+ 1449 | 
+ 101 | 
+ 81 | 
+ 58 | 
+ 1890 | 
+ 7.32 | 
+ Qwen3-8B 
+ | 
+ RL3 | 
+ 254 | 
+ 1488 | 
+ 74 | 
+ 84 | 
+ 48 | 
+ 1900 | 
+ 7.35 | 
+ Overall, the supplementary tables provide the numerical basis for the appendix figures. They show that the teacher-guidance stage remains small, that pass@256 gains are broader under Curriculum RL than under Vanilla RLVR, and that the recorded training examples shift toward reward-reachable difficulty groups over curriculum rounds.
+ Appendix E Teacher-Guidance Details
+ This section gives the sample-selection procedure and prompt template used to generate the small set of structured teacher traces.
+ E.1 Boundary-Aware Sample Selection
+ Algorithm 1 summarizes the sample-selection procedure. The input is the current pass@ k k exploration result for the training examples. The procedure focuses on examples near the observed reasoning capacity boundary: Frontier examples are hard but still reachable within 256 samples, while Beyond examples remain unsolved within the 256-sample exploration budget.
+ Algorithm 1 Boundary-aware teacher-guidance sample selection 
+ 1: 
+ pass@ k k exploration table D D , target counts n F n_{F} and n B n_{B} 
+ 2: 
+ teacher-guidance seed set S S 
+ 3: 
+ Keep examples with complete question, answer, problem-family tag, and pass@ k k statistics.
+ 4: 
+ Build Frontier candidate set C F C_{F} from examples labeled Frontier.
+ 5: 
+ Build Beyond candidate set C B C_{B} from examples labeled Beyond.
+ 6: 
+ Rank C F C_{F} by closeness to the Frontier threshold.
+ 7: 
+ Rank C B C_{B} by closeness to the Beyond threshold.
+ 8: 
+ Select n F n_{F} Frontier and n B n_{B} Beyond examples while keeping coverage across problem families balanced.
+ 9: 
+ Remove examples already used in previous teacher-guidance rounds.
+ 10: 
+ return the selected examples with their difficulty group and pass@ k k statistics.
+ E.2 Prompt for Structured Teacher Traces
+ The prompt asks the teacher model to provide a structured solution rather than only a final answer. It encourages a clear reasoning chain, a midpoint verification step, an alternative perspective, and a final consistency check.
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

@@ -1,0 +1,765 @@
+SOURCE: https://arxiv.org/html/2404.09204
+
+TextHawk: Exploring Efficient Fine-Grained Perception of Multimodal Large Language Models 
+ Report GitHub Issue
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract. 
+ 1 Introduction 
+ 2 Related Works 
+ 2.1 MLLM 
+ 2.2 Document-Oriented MLLM 
+ 3 Method 
+ 3.1 Architecture 
+ 3.1.1 Visual Encoder. 
+ 3.1.2 Resampler. 
+ 3.1.3 Large Language Model. 
+ 3.2 Efficient Fine-Grained Perception 
+ 3.2.1 Shape-Adaptive Cropping. 
+ 3.2.2 ReSampling and ReArrangement (ReSA). 
+ 3.2.3 Multi-Level Cross-Attention (MLCA). 
+ 3.2.4 Scalable Positional Embeddings (SPEs). 
+ 3.2.5 Query Proposal Network (QPN). 
+ 3.2.6 Detection Head. 
+ 3.2.7 Loss Function. 
+ 4 Experiments 
+ 4.1 Datasets 
+ 4.1.1 Data Concatenation. 
+ 4.1.2 Conceptual Captioning. 
+ 4.1.3 Grounding Captioning. 
+ 4.1.4 OCR. 
+ 4.1.5 Markdown. 
+ 4.1.6 Instruction. 
+ 4.1.7 DocGemini. 
+ 4.2 Training 
+ 4.2.1 Fixed Resolution Pre-Training. 
+ 4.2.2 Mixed Resolution Pre-Training. 
+ 4.2.3 Mixed Resolution Supervised Fine-Tuning. 
+ 4.3 Results on Standard Benchmarks 
+ 4.4 Ablation Study 
+ 4.4.1 ReSampling and ReArrangement (ReSA). 
+ 4.4.2 Multi-Level Cross-Attention (MLCA). 
+ 4.4.3 Query Proposal Network (QPN). 
+ 4.4.4 Scalable Positional Embeddings (SPEs). 
+ 4.4.5 Detection Head. 
+ 5 Limitations 
+ 6 Conclusion 
+ References 
+ License: arXiv.org perpetual non-exclusive license
+arXiv:2404.09204v1 [cs.CV] 14 Apr 2024
+ TextHawk: Exploring Efficient Fine-Grained Perception of Multimodal Large Language Models
+ Conference: ; 2024; ArXiv 
+ Ya-Qi Yu
+ Note: Both authors contributed equally to this research.
+ Affiliation: Huawei Inc. 
+ email: yuyaqi5@huawei.com 
+ , 
+ Minghui Liao
+ Affiliation: Huawei Inc. 
+ email: liaominghui1@huawei.com 
+ , 
+ Jihao Wu
+ Affiliation: Huawei Inc. 
+ email: wujihao@huawei.com 
+ , 
+ Yongxin Liao
+ Affiliation: Huawei Inc. 
+ email: liaoyongxin@huawei.com 
+ , 
+ Xiaoyu Zheng
+ Affiliation: Huawei Inc. 
+ email: zhengxiaoyu6@huawei.com 
+ and 
+ Wei Zeng
+ Affiliation: Huawei Inc. 
+ email: zengwei57@huawei.com 
+ Abstract. 
+ Multimodal Large Language Models (MLLMs) have shown impressive results on various multimodal tasks. However, most existing MLLMs are not well suited for document-oriented tasks, which require fine-grained image perception and information compression. In this paper, we present TextHawk, a MLLM that is specifically designed for document-oriented tasks, while preserving the general capabilities of MLLMs. TextHawk is aimed to explore efficient fine-grained perception by designing four dedicated components. Firstly, a ReSampling and ReArrangement (ReSA) module is proposed to reduce the redundancy in the document texts and lower the computational cost of the MLLM. We explore encoding the positions of each local feature by presenting Scalable Positional Embeddings (SPEs), which can preserve the scalability of various image sizes. A Query Proposal Network (QPN) is then adopted to initialize the queries dynamically among different sub-images. To further enhance the fine-grained visual perceptual ability of the MLLM, we design a Multi-Level Cross-Attention (MLCA) mechanism that captures the hierarchical structure and semantic relations of document images. Furthermore, we create a new instruction-tuning dataset for document-oriented tasks by enriching the multimodal document data with Gemini Pro. We conduct extensive experiments on both general and document-oriented MLLM benchmarks, and show that TextHawk outperforms the state-of-the-art methods, demonstrating its effectiveness and superiority in fine-grained document perception and general abilities. Project page: https://github.com/yuyq96/TextHawk .
+ Keywords: Multimodal Large Language Models, Document Understanding, Visual Question Answering
+ Figure 1 . The results of MLLMs on general and document-oriented benchmarks. Best viewed in colors. 
+ Figure 2 . The mean count of compressed visual tokens per image in MLLMs. Best viewed in colors. 
+ 1. Introduction
+ Multimodal Large Language Models (MLLMs) ( Li et al., 2023a ; Dai et al., 2023 ; Liu et al., 2023c ) have received a lot of attention and made great progress recently. They use Large Language Models (LLMs) as the core and extend the powerful capabilities of LLMs to other modalities, such as visual modalities. Thanks to the wide range of application scenarios of document image understanding, it has a pivotal position in the field of visual perception. Document image understanding ability as one of the core abilities of MLLMs, makes more cutting-edge applications easy to achieve, such as MLLM-based smartphone application agents, rich text-assisted reading, etc. However, document images pose unique challenges for MLLMs, as they differ from natural images in several aspects. Document images typically have higher resolution and higher information density than natural images, which means that MLLMs need to overcome two key difficulties when processing them. The first difficulty is to achieve strong fine-grained visual perception of the document content. The second difficulty is to compress document image information efficiently.
+ Previous works on document-oriented MLLMs have attempted to solve the difficulties mentioned above. To achieve stronger fine-grained visual perception abilities, Qwen-VL ( Bai et al., 2023 ) increased the input resolution of the vision encoder from 224\times 224 to 448\times 448 and UReader ( Ye et al., 2023b ) introduced a shape-adaptive cropping module. To compress the document information, mPLUG-DocOwl ( Ye et al., 2023a ) employed a visual abstractor and Qwen-VL utilized a vision-language adapter. These well-designed methods significantly advanced the development of document-oriented MLLMs. Nevertheless, there is still room for further exploration and improvement in fine-grained visual perception and document information compression. Besides, most of the current MLLMs find it difficult to balance both general and document capabilities. Specifically, general MLLMs usually do not focus on improving visual fine-grained perception and information compression, while document-oriented MLLMs may sacrifice general capabilities in their design.
+ In this paper, we propose TextHawk, a multimodal large model that excels at complex document tasks and demonstrates outstanding general capabilities across vision and language domains, as shown in Fig. 1 . Considering that simply enlarging the input size of the images can not fit the diverse resolutions of the document images, we follow Ureader ( Ye et al., 2023b ) to crop the images into sub-images adaptively according to the image shapes. Based on this, we devise a ReSampling and ReArrangement (ReSA) module that compresses and rearranges the visual information, which greatly reduces the number of visual tokens, as shown in Fig 2 . Due to the introduction of the sub-images, we propose Scalable Positional Embeddings (SPEs) to encode the positions of sub-images while maintaining the scalability across different image sizes. Considering the differences among the sub-images, a Query Proposal Network (QPN) is then adopted to initialize the queries dynamically among local features. Moreover, we introduce a Multi-Level Cross-Attention (MLCA) module that leverages the hierarchical structure and semantic relations of document images to enhance the fine-grained visual perceptual capability. This enables our vision encoder to extract detailed information from dense document images. In addition, we enrich the multimodal document data with Gemini Pro, a commercial MLLM engine, to mitigate the problem of insufficient instruction tuning data.
+ We address the challenges of fine-grained visual perception and visual information compression for document-oriented MLLMs and propose a new MLLM, named TextHawk, that can handle both document-oriented tasks and general vision-language tasks with high performance. The contributions of this paper are as follows:
+ (1) 
+ We design the ReSA to compress the visual information which significantly reduces the number of visual tokens.
+ (2) 
+ We propose the SPEs and the QPN to fit sub-image representations and enhance the model’s fine-grained perception.
+ (3) 
+ We introduce the MLCA that can improve the fine-grained visual perception ability by capturing the global and local information and leveraging the hierarchical structure.
+ (4) 
+ We enrich the multimodal instruction-tuning data of different document-oriented tasks with Gemini Pro. These data can facilitate the fine-tuning of TextHawk and benefit the research community.
+ (5) 
+ We demonstrate that TextHawk achieves state-of-the-art results on both document benchmarks and general benchmarks, showing its superior fine-grained visual perception and general vision-language abilities.
+ 2. Related Works
+ 2.1. MLLM
+ Multimodal Large Language Models (MLLMs) are a class of models that can process and generate multimodal information, mainly including natural language and visual information. They have been shown to achieve remarkable performance on various tasks, such as image captioning, visual question answering, and visual dialog. Current MLLMs usually consist of a vision encoder, a vision-language adapter, and a large language model.
+ BLIP-2 ( Li et al., 2023a ) proposed a querying transformer (Q-Former) to bridge the frozen image encoder and the frozen large language model. It first learned vision-language representation from a frozen image encoder and then applied vision-to-language generative learning from a frozen language model. InstructBLIP ( Dai et al., 2023 ) performed vision-language instruction tuning based on the pre-trained BLIP-2 by introducing an instruction-aware query transformer. LLaVA ( Liu et al., 2023c ) followed a similar architecture while employing a simple linear layer to connect vision and language. It converted image-text pairs into an instruct-following format with ChatGPT/GPT-4 for better fine-tuning results. MiniGPT-4 ( Zhu et al., 2024 ) adopted a frozen Q-former and a single linear projection layer to align the visual modal and the language modal. LLaVA1.5 ( Liu et al., 2023b ) is an improved version of LLaVA, which adopted a vision encoder with larger input images and a two-layer MLP to improve performance. mPLUG-Owl ( Ye et al., 2023c ) proposed a new training paradigm that enabled the vision encoder and visual abstractor training in the pre-training stage and enabled LoRA with LLM in the instruction tuning stage. mPLUG-Owl2 ( Ye et al., 2023d ) further designed a modality-adaptive module based on mPLUG-Owl and enabled all modules for training. Qwen-VL ( Bai et al., 2023 ) employed a three-stage training pipeline, including pre-training with image-text pairs, multi-task pre-training with multi-task and interleaved data, and supervised fine-tuning with chat interleaved VL data.
+ These methods can understand text images to some extent, but they have limited visual perception for dense documents, especially those with high-resolution images.
+ Figure 3 . The network architecture and dataflow of TextHawk. (a) Overview of TextHawk. The visual encoder is frozen throughout the whole training process. (b) Breakdown of TextHawk resampler. Image features from different stages are routed to different resampling layers. The text tokenizer, layer normalization, and skip connections are omitted for simplicity. 
+ 2.2. Document-Oriented MLLM
+ Document-oriented MLLMs are multimodal large language models that can understand text from various types of documents, such as charts, tables, web pages, and scientific papers. They usually incorporate some specific adaptations for document images based on general MLLMs.
+ mPLUG-DocOwl ( Ye et al., 2023a ) followed the mPLUG-Owl model and added some document instruction tuning data, including document, table, webpage, and chart. UReader ( Ye et al., 2023b ) proposed a shape-adaptive cropping module to obtain better fine-grained visual perceptual ability of document images, based on the pre-trained mPLUG-Owl model. UniDoc ( Feng et al., 2023 ) was equipped with text detection and text recognition tasks in its instruction tuning to enhance the ability of text understanding. Monkey ( Li et al., 2023c ) , a MLLM with special designs for document images, supported larger resolutions and introduced multi-level description data based on the pre-trained Qwen-VL model.
+ Current document-oriented MLLMs mainly focus on adaptation to higher image resolutions and leveraging more document-specific fine-tuning data. Our proposed TextHawk also concentrates on the fine-grained visual perception of high-resolution document images and the document data generation, with our novel designs. Moreover, we pay attention to the information compression and the preservation of the general capabilities.
+ 3. Method
+ Our model is designed with two objectives: to effectively process visual inputs of varying resolutions and to compress visual tokens.
+ 3.1. Architecture
+ The architecture of TextHawk is depicted in Fig. 3 (a). It consists of a frozen visual encoder, a resampler, and a large language model with a LoRA and a detection head.
+ 3.1.1. Visual Encoder.
+ To accelerate image encoding, we prefer a relatively lightweight visual encoder instead of a giant or enormous model. SigLIP ( Zhai et al., 2023 ) , a variant of CLIP ( Radford et al., 2021 ) which adopts Sigmoid loss for vision-language pre-training instead of contrastive learning with Softmax normalization, achieves better zero-shot accuracy in multiple tasks than its competitors. Hence, we employ the Vision Transformer (ViT) from the efficient SigLIP-SO model as our visual encoder for demonstration, which has different transformer layer configurations but a similar computational cost to the standard ViT-L model. However, all kinds of visual encoders should be feasible in our framework, including models pre-trained in different styles or built with different architectures.
+ 3.1.2. Resampler.
+ Similar to Q-Former ( Li et al., 2023a ) , our visual token resampler mostly consists of a non-causal transformer decoder which adopts a group of learnable weights as the initial queries and naturally reduces the length of visual features multiple times. For the sake of architecture flexibility, we randomly initialize the resampler instead of initializing it from a pre-trained BERT model or existing resamplers of other MLLMs. Intuitively, we keep the hidden dimension of the intermediate resampler layers equal to that of the visual encoder layers. The resampler has 8 layers and self-attention is removed in the first layer. In order to enhance the awareness of position information during cross-attention, we employ sinusoidal positional encodings and learned positional embeddings for the visual encoder output and the queries respectively at every cross-attention layer.
+ 3.1.3. Large Language Model.
+ To facilitate pre-training and take advantage of the interleaved vision-language training, we initialize our 7B LLM with the weights of InternLM-XComposer ( Zhang et al., 2023 ) . Similar to BLIP-2, InternLM-XComposer adopts a visual token resampler named perceive sampler to bridge the visual encoder and LLM, but it is anchored on another multi-lingual LLM named InternLM ( Team, 2023 ) . The architecture of InternLM is almost the same as LLaMA ( Touvron et al., 2023 ) except for keeping biases in the attention modules. Specifically, InternLM-XComposer is trained in a two-stage style: The first stage is vision-language pre-training, which incorporates image-text pairs as well as interleaved image-text data. Both the perceived sampler and the LLM are updated in this stage. The second stage is multi-task supervised fine-tuning, in which only the perceived sampler and the LoRA modules are updated. To avoid potential data leakage from the fine-tuning datasets of InternLM-XComposer, we only keep the weights of the LLM from the first pre-training stage and drop all the weights from the vision encoder, perceive sampler, and LoRA modules.
+ 3.2. Efficient Fine-Grained Perception
+ 3.2.1. Shape-Adaptive Cropping.
+ The pre-trained visual encoder standardizes image resolution to a fixed and lower size, disregarding the original aspect ratio.
+Such processing diminishes the ability to perceive fine-grained content in high-resolution images and introduces notable distortions in aspect ratio.
+Following ( Ye et al., 2023b ) , we augment the frozen ViT by incorporating a dynamic cropping strategy, enabling effective handling of images with arbitrary aspect ratios and resolutions.
+Specifically, an input image \boldsymbol{v} with shape (h\times w) will be cropped into multiple sub-images to align with one of the predefined grids \{\boldsymbol{g}=(r\times c)|r,c\in\{1,2,\dots,l\},r\cdot c\leq n\} , where r and c denotes the rows and columns of the grid \boldsymbol{g} , l denotes the maximum side-length (number of sub-images in one row or column), and n denotes the maximum area (number of sub-images in the whole image). The grid alignment is regulated by both regular and shape-oriented Intersection over Union (IoU) measures.
+Let us denote the image box as \text{box}(\boldsymbol{v})=(0,0,h,w) , the grid box as \text{box}(\boldsymbol{g})=(0,0,rH,cW) , and the shape-oriented box as \text{box}_{\text{s}}(\boldsymbol{v},\boldsymbol{g})=(0,0,\frac{wr}{h}H,cW) , where (H\times W) is the input shape of ViT. The IoU values are defined as:
+ (1) | 
+ | 
+ \displaystyle S_{\text{r}}(\boldsymbol{v},\boldsymbol{g}) | 
+ \displaystyle=\text{IoU}(\text{box}(\boldsymbol{v}),\text{box}(\boldsymbol{g})), | 
+ | 
+ | 
+ \displaystyle S_{\text{s}}(\boldsymbol{v},\boldsymbol{g}) | 
+ \displaystyle=\text{IoU}(\text{box}_{\text{s}}(\boldsymbol{v},\boldsymbol{g}),\text{box}(\boldsymbol{g})), | 
+ | 
+ | 
+ \displaystyle S(\boldsymbol{v},\boldsymbol{g}) | 
+ \displaystyle=S_{\text{r}}(\boldsymbol{v},\boldsymbol{g})+S_{\text{s}}(\boldsymbol{v},\boldsymbol{g}). | 
+ | 
+ We select the final grid with the highest summed IoU value S , from the top k grids with the highest regular IoU values S_{\text{r}} .
+ 3.2.2. ReSampling and ReArrangement (ReSA).
+ Upon enabling the visual encoder to accept variable resolution input, the number of image tokens can grow exponentially with the image resolution. Without token compression, the maximum number of tokens for a single image reaches nHW/p^{2} given patch size p .
+In specific terms, a standard document image aligned with a 5\times 4 grid will consume up to 5,120 tokens.
+Previous open-source MLLMs with fine-grained perception capability usually exhibit an image token compression ratio of 4. For instance, Qwen-VL and Monkey reduce the number of image tokens from 1,024 to 256 for each 448\times 448 sub-image, while UReader compresses it from 256 to 64 for each 224\times 224 sub-image. In this case, the consumption of image tokens is still significant. To further explore the possibility of a higher compression ratio, we propose a method combining the advantages of resampling and rearrangement, named ReSA. As shown in Fig. 3 (b), similar to previous MLLMs, ReSA first resamples the image features with a cross-attention mechanism. The hidden dimension of the cross-attention output mirrors that of the visual encoder output, typically being several times smaller than the hidden dimension of the LLMs. Capitalizing on this characteristic, we introduce an additional rearrangement step to further condense the number of image tokens. Following resampling, multiple resampled tokens are concatenated into a single token and then transformed into the latent space of LLMs through a linear projection.
+In our experiments, each step of ReSA possesses a compression ratio of 4, resulting in a notably higher compression ratio of 16.
+ 3.2.3. Multi-Level Cross-Attention (MLCA).
+ As mentioned in previous works ( Li et al., 2023a ; Liu et al., 2023c ) , visual encoders are pre-trained on specific tasks thus the features from their last layers may focus more on those tasks. It has been proven that the features from the second last layer yield better performance than the last layer ( Liu et al., 2023c ) . Moreover, it is possible to merge features from multiple layers. In the field of object detection, Feature Pyramid Network (FPN) ( Lin et al., 2017 ) is well known for merging multi-level features, which improves perception capability on fine-grained objects. As for MLLMs, COMM ( Jiang et al., 2023 ) has proved that merging deep and shallow features is beneficial for reducing hallucination and improving performance on fine-grained tasks, even when there is no pyramid structure. Drawing inspiration from FPN, we propose a multi-level feature merging strategy named MLCA. As shown in Fig. 3 (b), MLCA enables the resampler to absorb features from deep as well as shallow visual encoder layers with a predefined routing table. As long as the total number of resampler layers is not changed, MLCA has no extra computational cost compared to the standard cross-attention. Empirically, we adopt 4 visual encoder stages, extracting features from the 14th, 18th, 22nd, and 26th encoder layers respectively.
+ Figure 4 . Illustration of (a) scalable positional embeddings interpolation and (b) query proposal network. 
+ 3.2.4. Scalable Positional Embeddings (SPEs).
+ The relative positional relations among sub-images are ambiguous without the inclusion of additional positional embeddings.
+To handle a variable number of image patches, previous works ( Lee et al., 2023 ; Ye et al., 2023b ) proposed to learn 2-D or factorized absolute positional embeddings covering the maximum positional index presented in the training data. Not only do they lack effectiveness in extrapolation to out-of-domain shapes, but certainly learned embeddings also exhibit under-fitting due to the non-uniform distribution of training input shapes. To overcome the aforementioned obstacles, we propose a novel method named SPEs, extending factorized (where row and column are decomposed) positional embeddings to arbitrary shapes. To be clear, the row and column embeddings are handled in the same manner in SPEs, hence their specification is omitted in the following part.
+ Assume the learned positional embeddings are initialized from a normal distribution \mathcal{N}(0,1) . Each positional embedding \boldsymbol{e}\in\mathbb{R}^{d} is a vector with \ell_{2} -norm \sqrt{d} , indicating that the positional embeddings are distributed across the surface of a hypersphere. In practice, the \ell_{2} -norm of learned positional embeddings typically remains within a narrow range during the whole training process, preserving the hypersphere distribution characteristics. Spherical linear interpolation (Slerp), a commonly employed technique in computer graphics, interpolates any intermediate vector between two unit vectors, emerging as a potential alternative to conventional interpolation methods for positional embeddings.
+ To strictly meet the requirement of Slerp, we apply normalization and scaling before interpolation for each attention head , ensuring uniform \ell_{2} -norm across all positional embeddings:
+ (2) | 
+ | 
+ \displaystyle\boldsymbol{e}_{i} | 
+ \displaystyle=s\frac{\tilde{\boldsymbol{e}}_{i}}{\|\tilde{\boldsymbol{e}}_{i}\|}, | 
+ | 
+ where \tilde{\boldsymbol{e}}_{i} (i\in\{0,1\}) denotes two learnable endpoint positional embeddings, and s is a learnable scaling factor initialized as \sqrt{d} .
+ As shown in Fig 4 (a), we employ Slerp to generate arbitrary positional embeddings spanning between the endpoints:
+ (3) | 
+ | 
+ \displaystyle\theta | 
+ \displaystyle=\arccos\frac{\boldsymbol{e}_{0}\boldsymbol{e}_{1}}{\|\boldsymbol{e}_{0}\|\|\boldsymbol{e}_{1}\|}, | 
+ | 
+ | 
+ \displaystyle\boldsymbol{e}(t) | 
+ \displaystyle=\frac{\sin(\theta-t\theta)}{\sin\theta}\boldsymbol{e}_{0}+\frac{\sin(t\theta)}{\sin\theta}\boldsymbol{e}_{1}, | 
+ | 
+ where t\in[0,1] is the fractional position, which can be the relative position of a sub-image or an image patch.
+ 3.2.5. Query Proposal Network (QPN).
+ Despite the satisfactory performance of Q-Former observed on fixed resolution MLLMs, the way of initializing the resampler queries from a fixed number of learned parameters lacks flexibility under the variable resolution settings. Reusing the initial queries on different sub-images might lead to redundancy and undesired attention patterns, wherein resampled image tokens corresponding to distinct sub-images but identical resampler queries exhibit strong similarities and receive improperly higher attention scores. To eliminate the side-effect of shared initial queries, we propose a lightweight module called QPN for generating the queries dynamically. As shown in Fig 4 (b), the structure of QPN consists of a 2-layer MLP with GELU activation, a max pooling layer, and a linear projection layer. The output of the visual encoder is fed into QPN and the number of proposed queries is hereby controlled by the stride of the max pooling layer. For a fair comparison, our experiments adopt a stride of 2\times 2 so that the compression ratio remains 4. The output dimension of the MLP layers and the input dimension of the projection layer are set to 4 times the hidden dimension of the visual encoder.
+ 3.2.6. Detection Head.
+ Previous works ( Chen et al., 2023b ; Bai et al., 2023 ; Liu et al., 2023b ) on applying MLLMs for localizing target objects mostly adopt plain text for representing coordinates, which is intuitive since pre-trained LLMs work well on regular text strings. However, plain text-based coordinates are token-consuming, lowering both the training throughput and inference efficiency. We propose to expand the vocab of MLLMs with special tokens for normalized coordinates. Specifically, employing a regular text string to depict a bounding box utilizes a total of 2+4\times 5+3=25 tokens, encompassing 2 trigger marks, 4 floating-point numbers, and 3 commas. However, by substituting multiple digit tokens of each floating-point number with a unique coordinate token and remaining only 1 comma, we can lower the number of tokens to just 2+4+1=7 .
+ However, solely training the newly appended word embeddings with language modeling loss on a small amount of data is not effective. In our experiments, the model occasionally collapses, producing meaningless coordinates. To alleviate the problem of inefficient training of coordinate tokens, we aim to introduce an auxiliary training target. Taking inspiration from DETR ( Carion et al., 2020 ) , we incorporate a straightforward 2-layer MLP with ReLU activation function and a linear projection layer as the auxiliary detection head, which runs in parallel with the original output layer of the LLM. The output of the detection head is normalized by the Sigmoid activation function. We evaluate the error between the prediction and the ground truth by \ell_{1} loss:
+ (4) | 
+ | 
+ \displaystyle\mathcal{L}_{\text{box}} | 
+ \displaystyle=\frac{1}{|\mathcal{B}|}\sum_{i\in\mathcal{B}}\|b_{i}-b^{*}_{i}\|_{1}, | 
+ | 
+ where b_{i} and b^{*}_{i} are the predictions and the ground truth of normalized bounding box coordinates at position i respectively, and \mathcal{B} is the set of coordinate token positions in the output sequence.
+ 3.2.7. Loss Function.
+ All of the data is organized into multi-turn conversations, with each turn formatted as:
+ (5) | 
+ | 
+ \displaystyle\text{User: }\mathcal{I}^{t}\text{ Assistant: }\mathcal{R}^{t}\text{ } | 
+ | 
+ where <s> and </s> are special tokens denoting the beginning and end of conversation messages. \mathcal{I}^{t} and \mathcal{R}^{t} are the instruction tokens and response tokens at the t -th turn. Unlike language instruction tuning which only involves text tokens, \mathcal{I}^{t} might consist of text, image, or both modality tokens. The training of MLLMs is mainly based on the language modeling loss over the response tokens:
+ (6) | 
+ | 
+ \displaystyle\mathcal{L}_{\text{lm}}=-\frac{1}{\sum\alpha_{i}}\sum_{i\in\mathcal{M}}\alpha_{i}\log(p(x_{i}|\boldsymbol{x}_{ | 
+ where \mathcal{M} is the set of response positions, \alpha is a predefined weight for coordinate tokens, and \boldsymbol{x}_{ 
+ The final loss is the weighted sum of the language modeling loss and the aforementioned bounding box loss:
+ (7) | 
+ | 
+ \displaystyle\mathcal{L}=\mathcal{L}_{\text{lm}}+\lambda\mathcal{L}_{\text{box}}, | 
+ | 
+ where \lambda is a predefined weight for the bounding box loss.
+ 4. Experiments
+ Figure 5 . Examples of the results produced by TextHawk. 
+ 4.1. Datasets
+ 4.1.1. Data Concatenation.
+ Creating data batches with sequences of varying lengths requires padding, resulting in the waste of tokens. To mitigate this inefficiency and increase training throughput, we combine multiple native samples into a single training sample. Specifically, we select and concatenate samples from the dataset randomly until the combined sequence length reaches a predefined maximum value. It is worth noting that we carefully mask the native samples so that they are mutually invisible from each other.
+ 4.1.2. Conceptual Captioning.
+ To bridge basic perception capability as well as align concept between visual encoder and LLM, 96M image-text pairs are collected from image captioning datasets, including CC3M ( Sharma et al., 2018 ) , CC12M ( Changpinyo et al., 2021 ) , SBU ( Ordonez et al., 2011 ) and a subset of LAION-400M ( Schuhmann et al., 2021 ) . In this task, the model generates a short caption for the given image, as required by the prompt " Briefly describe the image ".
+ 4.1.3. Grounding Captioning.
+ To empower MLLM with basic grounding capability, a subset of GrIT ( Peng et al., 2023 ) including 16M image-text pairs is adopted. In this task, the model generates a short caption as well as the normalized bounding boxes of referring objects in the image, as required by the prompt " Briefly describe the image, highlighting the key objects with normalized bounding boxes ".
+ 4.1.4. OCR.
+ Except for natural images, we are particularly interested in document-oriented images. To enhance the perception capability of MLLM for optical characters, 1.28M images from IIT-CDIP ( Lewis et al., 2006 ) are collected. Three kinds of queries, " List the text content in the image ", " List the text bounding boxes in the image " and " List the text content along with their bounding boxes in the image ", are used to prompt the model to generate the text content, bounding boxes, or both of them for a given image, of which the coarse labels are collected with a commercial OCR system.
+ 4.1.5. Markdown.
+ Inspired by Nougat ( Blecher et al., 2023 ) , we collect 1.28M PDF pages and corresponding Markdown content of scientific papers from arXiv source files, which contain more layout information such as reading order than regular OCR data. We use a simple instruction, " Transcribe the content of the document image ", to ask the model to convert a PDF page of scientific paper into Markdown.
+ 4.1.6. Instruction.
+ Following LLaVA-1.5, we build our fine-tuning data based on existing datasets to enhance the instruction-following and chatting capability of MLLMs on nature and document-oriented tasks. Specifically, we adopt multiple datasets including VQAv2 ( Goyal et al., 2019 ) , OK-VQA ( Marino et al., 2019 ) , GQA ( Hudson and Manning, 2019 ) , A-OKVQA ( Schwenk et al., 2022 ) , TextCaps ( Sidorov et al., 2020 ) , OCR-VQA ( Mishra et al., 2019 ) , RefCOCO ( Kazemzadeh et al., 2014 ) , PointQA ( Mani et al., 2020 ) , Flickr ( Young et al., 2014 ) , DocVQA ( Mathew et al., 2021 ) , ChartQA ( Masry et al., 2022 ) , InfographicVQA (InfoVQA) ( Mathew et al., 2022 ) , TabFact ( Chen et al., 2020 ) , WikiTableQuestions (WTQ) ( Pasupat and Liang, 2015 ) , VG ( Krishna et al., 2017 ) , VisualMRC ( Tanaka et al., 2021 ) , and SlideVQA ( Tanaka et al., 2023 ) .
+The same prompts from LLaVA-1.5 are adopted to regularize the response style of MLLMs.
+For each dataset, we concatenate all of the QA pairs corresponding to the same training image to create multi-turn conversations and improve data efficiency. Except for the original tasks, we additionally introduce multiple tasks to help the MLLMs recognize text and understand document layout, including OCR task for DocVQA, InfoVQA, VisualMRC and SlideVQA, chart-to-table task for ChartQA, and image-to-markdown task for TabFact and WTQ. To develop a MLLM for general purpose, we make use of several dialogue datasets including ShareGPT, ShareGPT-4V ( Chen et al., 2023a ) , ALLaVA ( Chen et al., 2024 ) , LLaVA ( Liu et al., 2023c ) , SVIT ( Zhao et al., 2023 ) , and Shikra ( Chen et al., 2023b ) .
+ 4.1.7. DocGemini.
+ To address the scarcity of high-quality document-oriented dialogue datasets, we leverage the native visual capabilities of Gemini-Pro for data augmentation. For each training sample from DocVQA, ChartQA, and InfoVQA, we provide Gemini-Pro the image and original QA pairs along with a query for generating: (1) a brief summary of the document topics; (2) extra short QA pairs, up to 10; (3) insights behind each answer. In summary, the generated dataset DocGemini consists of 30K images and 195K QA pairs with insights.
+ Table 1 . Results on vision-language benchmarks. \textbf{TextHawk }^{\dagger} is fine-tuned without the DocGemini. The values in bold and underlined are the best and second-best results. 
+ Model | 
+ ViT (Params.) | 
+ General | 
+ Document | 
+ RefCOCO | 
+ \text{MME}^{\text{P}} | 
+ \text{MMB}^{\text{dev}} | 
+ \text{SEED}^{\text{I}} | 
+ GQA | 
+ DocVQA | 
+ ChartQA | 
+ InfoVQA | 
+ TabFact | 
+ WTQ | 
+ val | 
+ test-A | 
+ test-B | 
+ Specialist | 
+ Donut ( Abdallah et al., 2024 ) | 
+ Swin-B (0.1B) | 
+ - | 
+ - | 
+ - | 
+ - | 
+ 67.5 | 
+ 41.8 | 
+ 11.6 | 
+ 54.6 | 
+ 18.8 | 
+ - | 
+ - | 
+ - | 
+ Pix2Struct ( Lee et al., 2023 ) | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ 76.6 | 
+ 58.6 | 
+ 40.0 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ Generalist | 
+ InternLM-XC ( Zhang et al., 2023 ) | 
+ EVA-G (1B) | 
+ 1528.4 | 
+ 74.8 | 
+ 66.1 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ LLaVA-1.5-7B ( Liu et al., 2023b ) | 
+ CLIP-L (0.3B) | 
+ 1510.7 | 
+ 65.2 | 
+ - | 
+ 62.0 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ Shikra-7B ( Chen et al., 2023b ) | 
+ CLIP-L (0.3B) | 
+ - | 
+ 58.8 | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ - | 
+ 87.0 | 
+ 91.1 | 
+ 81.8 | 
+ Qwen-VL-Chat ( Bai et al., 2023 ) | 
+ CLIP-G (2B) | 
+ 1487.6 | 
+ 60.6 | 
+ 65.4 | 
+ 57.5 | 
+ 62.6 | 
+ 66.3 | 
+ - | 
+ - | 
+ - | 
+ 88.6 | 
+ 92.3 | 
+ 84.5 | 
+ Monkey ( Li et al., 2023c ) | 
+ CLIP-G (2B) | 
+ - | 
+ 59.3 | 
+ - | 
+ 60.7 | 
+ 66.5 | 
+ 65.1 | 
+ 36.1 | 
+ - | 
+ 25.3 | 
+ - | 
+ - | 
+ - | 
+ UReader ( Ye et al., 2023b ) | 
+ CLIP-L (0.3B) | 
+ - | 
+ - | 
+ - | 
+ - | 
+ 65.4 | 
+ 59.3 | 
+ 42.2 | 
+ 67.6 | 
+ 29.4 | 
+ - | 
+ - | 
+ - | 
+ TextMonkey ( Ye et al., 2023b ) | 
+ CLIP-G (2B) | 
+ - | 
+ - | 
+ - | 
+ - | 
+ 73.0 | 
+ 66.9 | 
+ - | 
+ - | 
+ 31.9 | 
+ - | 
+ - | 
+ - | 
+ \textbf{TextHawk }^{\dagger} | 
+ SigLIP-SO (0.4B) | 
+ 1520.9 | 
+ 73.0 | 
+ 69.2 | 
+ 64.7 | 
+ 73.6 | 
+ 64.0 | 
+ 47.3 | 
+ 70.7 | 
+ 33.5 | 
+ 87.3 | 
+ 90.9 | 
+ 83.3 | 
+ TextHawk | 
+ SigLIP-SO (0.4B) | 
+ 1500.0 | 
+ 74.6 | 
+ 69.2 | 
+ 64.6 | 
+ 76.4 | 
+ 66.6 | 
+ 50.6 | 
+ 71.1 | 
+ 34.7 | 
+ 87.2 | 
+ 90.8 | 
+ 82.5 | 
+ 4.2. Training
+ For all of the training stages, we adopt AdamW as the optimizer, with \beta_{1}=0.9 , \beta_{2}=0.95 , and a weight decay of 0.05.
+ 4.2.1. Fixed Resolution Pre-Training.
+ Inspired by BLIP-2, we adopt large-scale conceptual captioning datasets to align a pre-trained and frozen visual encoder with LLM. Specifically, 96M image-text pairs are used in this stage. Each conceptual caption is a brief description summarizing the overall information portrayed in an image, rarely related to the fine-grained details. To accelerate training, all images undergo resizing to 224\times 224 . The maximum sequence length is 4,096 and the batch size is 96, resulting in an effective batch size of nearly 8,000 after data concatenation. We pre-train the model for 12,000 steps, equivalent to almost 1 epoch across the entire dataset. During pre-training, we freeze the visual encoder and LLM and train the randomly initialized resampler and LoRA modules. The learning rate linearly warmup to 3e^{-4} in the first 3% steps, followed by cosine decay to 1e^{-5} in the remaining steps. It takes 1 day to finish training on 48 NVIDIA V100 GPUs.
+ 4.2.2. Mixed Resolution Pre-Training.
+ In this stage, we adapt the resampler to variable resolution input. Images with different native sizes and aspect ratios from the grounding captioning, OCR, and Markdown datasets are used. The size of each sub-image is 224\times 224 . The maximum area n is set to 36 and the maximum side-length l is set to 12 . To accelerate the grid matching for shape-adaptive cropping, k is set to 9. The effective batch size is nearly 1,500 and the number of training steps is 12,000, equivalent to almost 1 epoch across the entire dataset. Except for the resampler and LoRA, a detection head is randomly initialized and updated in this stage. The weight \alpha for coordinate tokens is set to 0.25 (4 tokens per bounding box) and the weight \lambda for \ell_{1} loss is set to 1. The visual encoder and LLM are kept frozen. The learning rate linearly warmup to 1.5e^{-4} in the first 3% steps, followed by cosine decay to 5e^{-6} . It takes 3 days to finish training on 40 NVIDIA V100 GPUs.
+ 4.2.3. Mixed Resolution Supervised Fine-Tuning.
+ During fine-tuning, we merge LoRA weights into LLM and seamlessly train the resampler, LLM, and detection head together, while keeping the visual encoder frozen. The hyper-parameters for the shape-adaptive cropping and the detection head are inherited from mixed resolution pre-training. The maximum sequence length is 2,048. We train the model on instruction-following data for 1 epoch with a batch size of 64. The learning rate linearly warmup to 2e^{-5} in the first 3% steps, followed by cosine decay to 0 . It takes 1 day to finish training on 32 NVIDIA V100 GPUs.
+ 4.3. Results on Standard Benchmarks
+ To demonstrate the effectiveness of our methods, we conduct a comparison among TextHawk, two specialist models for document-oriented tasks, and recent MLLMs on a wide range of benchmarks. Some qualitative results are shown in Fig. 5 . Each benchmark targets a group of general-purpose tasks or fined-grained tasks. Firstly, we evaluate the models on comprehensive benchmarks including MME ( Fu et al., 2023 ) , MMBench ( Liu et al., 2023a ) , SEED-Bench ( Li et al., 2023b ) , and GQA ( Hudson and Manning, 2019 ) . Since the image resolutions of these benchmarks are relatively low, we further evaluate the capability of fined-grained perception on document understanding and referring tasks, including DocVQA ( Mathew et al., 2021 ) , ChartQA ( Masry et al., 2022 ) , InfoVQA ( Mathew et al., 2022 ) , TabFact ( Chen et al., 2020 ) , WTQ ( Pasupat and Liang, 2015 ) , and RefCOCO ( Kazemzadeh et al., 2014 ) .
+ As depicted in Table 1 , TextHawk excels in both general and document-oriented benchmarks, securing the top spot in 6 out of 9 benchmarks. In all the general benchmarks, TextHawk not only surpasses LLaVA-1.5-7B ( Liu et al., 2023b ) , but also achieves comparable results with InternLM-XComposer ( Zhang et al., 2023 ) , despite the latter sharing the same foundational LLM but utilizing a larger visual encoder. When compared to previous document-oriented MLLMs, such as Ureader ( Ye et al., 2023b ) and TextMonkey ( Liu et al., 2024 ) , TextHawk demonstrates superior performance on document-oriented benchmarks. Specifically, TextHawk achieves performance gains of 11.0\% , 7.3\% , 8.4\% , 3.5\% , and 5.3\% on DocVQA, ChartQA, InfoVQA, TabFact, and WTQ, respectively, when compared to Ureader. Remarkably, TextHawk even surpasses TextMonkey, which employs a larger visual encoder, on DocVQA and WTQ benchmarks. It is worth mentioning that the introduction of our DocGemini data can further improve the performance on the document-oriented benchmarks.
+Besides, TextHawk achieves competing results on the RefCOCO dataset, showing its good capabilities on the referring task.
+ 4.4. Ablation Study
+ We adopt two faster training configurations for the ablation study. The fixed resolution pre-training is exactly the same as what is described in Sec 4.2 . Subsequently, fixed resolution models are fine-tuned only on the training data of LLaVA-1.5 for 1 epoch, while variable resolution models are fine-tuned on the training data of LLaVA-1.5, DocVQA, ChartQA, InfoVQA, TabFact, and WTQ.
+ Table 2 . Effect of combining resampling and rearrangement for compressing visual tokens progressively. 
+ Resample | 
+ Rearrange | 
+ \text{MMB}^{\text{dev}} | 
+ GQA | 
+ \text{RefCOCO}^{\text{val}} | 
+ 256\rightarrow 16 | 
+ - | 
+ 72.19 | 
+ 60.05 | 
+ 50.61 | 
+ 256\rightarrow 64 | 
+ 64\rightarrow 16 | 
+ 72.45 | 
+ 60.38 | 
+ 52.78 | 
+ 4.4.1. ReSampling and ReArrangement (ReSA).
+ To demonstrate the effectiveness of ReSA, we conduct fixed resolution experiments with different compression configurations, and the results are shown in Table 2 . Compared to the resampling-only strategy, incorporating ReSA which divides the compression procedure into two stages improves performance on all benchmarks, especially on RefCOCO as the referring comprehension task exhibits a great demand for preserving more fine-grained information.
+ Table 3 . Comparison of different routing tables for multi-level cross-attention. Numbers in brackets represent from which stage the features are extracted. 
+ # | 
+ MLCA | 
+ \text{MMB}^{\text{dev}} | 
+ GQA | 
+ \text{RefCOCO}^{\text{val}} | 
+ 1 | 
+ [3,3,3,3,3,3,3,3] | 
+ 72.45 | 
+ 60.38 | 
+ 52.78 | 
+ 2 | 
+ [3,2,1,0,0,1,2,3] | 
+ 71.94 | 
+ 60.56 | 
+ 55.24 | 
+ 3 | 
+ [3,2,1,0,3,2,1,0] | 
+ 71.94 | 
+ 60.37 | 
+ 56.14 | 
+ 4 | 
+ [3,3,2,2,1,1,0,0] | 
+ 72.19 | 
+ 59.83 | 
+ 56.43 | 
+ 5 | 
+ [3,3,3,2,2,2,1,0] | 
+ 72.53 | 
+ 60.10 | 
+ 56.75 | 
+ 4.4.2. Multi-Level Cross-Attention (MLCA).
+ Empirically, deep layers within visual encoders primarily capture global semantic information, while shallow layers tend to retain local, intricate details. To explore the effect of the routing strategy of MLCA, we conduct experiments with different routing tables, shown in Table 3 . For the sake of simplicity, we use R1 to R5 to denote different routing tables. R1 is a special case that only includes encoder stage 3, degrading to the vanilla cross-attention settings. Comparing R1 and R2, we can find the latter significantly improves the performance on fine-grained tasks, while slightly sacrificing the performance on the general benchmarks. Comparing R2 and R3/R4, we can find routing features from shallower encoder layers to deeper resampler layers demonstrate higher accuracy on RefCOCO, compared to routing them to intermediate resampler layers. Among all experimental settings, R5 achieves a good balance between general tasks and fine-grained tasks, hence we adopt it as the default routing table.
+ Table 4 . Effect of incorporating query proposal network. 
+ QPN | 
+ \text{MME}^{\text{P}} | 
+ \text{MMB}^{\text{dev}} | 
+ GQA | 
+ \text{RefCOCO}^{\text{val}} | 
+ | 
+ 1471.3 | 
+ 72.53 | 
+ 60.10 | 
+ 56.75 | 
+ ✓ | 
+ 1507.2 | 
+ 72.02 | 
+ 61.07 | 
+ 58.21 | 
+ 4.4.3. Query Proposal Network (QPN).
+ To validate the importance of high-quality resampler queries, we compare initializing queries from learned parameters and generating queries with QPN, as shown in Table 4 . For a fair comparison, the number of queries is 64 in both experiments. We can find incorporating QPN improves model performance on most benchmarks, especially on RefCOCO.
+ Table 5 . Effect of incorporating positional embeddings, where APEs denotes absolute positional embeddings, and SPEs denotes scalable positional embeddings. In the field of granularity, cell and patch mean applying different embeddings for each sub-image and patch respectively. 
+ PE | 
+ Granularity | 
+ \text{RefCOCO}^{\text{val}} | 
+ DocVQA | 
+ ChartQA | 
+ InfoVQA | 
+ - | 
+ - | 
+ 79.13 | 
+ 67.68 | 
+ 61.04 | 
+ 39.77 | 
+ APEs | 
+ cell | 
+ 82.03 | 
+ 68.55 | 
+ 61.02 | 
+ 43.28 | 
+ SPEs | 
+ cell | 
+ 82.65 | 
+ 69.63 | 
+ 61.32 | 
+ 43.03 | 
+ SPEs | 
+ patch | 
+ 83.74 | 
+ 69.65 | 
+ 61.96 | 
+ 43.85 | 
+ 4.4.4. Scalable Positional Embeddings (SPEs).
+ To explore the effect of additional positional embeddings, we conduct experiments with variable resolution settings. The results on fine-grained benchmarks are shown in Table 5 . Apparently, the absence of additional positional embeddings leads to performance degradation on most benchmarks. Compared with absolute positional embeddings used in previous works, SPEs further improve fine-grained performance. Meanwhile, the granularity of SPEs can be extended from cell to patch without increasing the number of parameters. It is confirmed that using finer and smoother positional embeddings at the image patch level further improves the overall performance.
+ Table 6 . Comparison of heads on decoding coordinates. 
+ Head | 
+ \text{RefCOCO}^{\text{val}} | 
+ \text{RefCOCO}^{\text{test-A}} | 
+ \text{RefCOCO}^{\text{test-B}} | 
+ Language | 
+ 85.6 | 
+ 90.2 | 
+ 80.6 | 
+ Detection | 
+ 87.3 | 
+ 90.9 | 
+ 83.3 | 
+ 4.4.5. Detection Head.
+ Both the original language modeling head and the additional detection head are capable of generating coordinates. Whenever the former produces a coordinate token, we can seamlessly substitute it with the output from the latter. In Table 6 , we compare the results of different heads on RefCOCO. It is obvious that the detection head demonstrates higher accuracy on all splits, proving its superiority on the grounding tasks.
+ 5. Limitations
+ The visual encoder in TextHawk is frozen during training, which means it does not learn from the training data. This could limit the model’s ability to adapt to new or unseen visual data that significantly differs from the data it was initially trained on. In the future, we will train the vision encoder to further improve the perception capabilities.
+ 6. Conclusion
+ In this paper, we have presented TextHawk, a novel Multimodal Large Language Model (MLLM) that is specifically designed to address the unique challenges posed by document-oriented tasks. TextHawk introduces several innovative components. These components work in synergy to enhance the model’s fine-grained visual perception and information compression capabilities, thereby enabling it to handle the high resolution and information density characteristic of document images. Our extensive experiments on both document-oriented and general MLLM benchmarks demonstrate that TextHawk outperforms state-of-the-art methods, showcasing its superior fine-grained document perception and general vision-language abilities.
+ References
+ Abdallah et al . (2024) 
+Abdelrahman Abdallah, Daniel Eberharter, Zoe Pfister, and Adam Jatowt. 2024.
+ Transformers and Language Models in Form Understanding: A Comprehensive Review of Scanned Document Analysis.
+ CoRR abs/2403.04080 (2024).
+ Bai et al . (2023) 
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou. 2023.
+ Qwen-VL: A Frontier Large Vision-Language Model with Versatile Abilities.
+ CoRR abs/2308.12966 (2023).
+ Blecher et al . (2023) 
+Lukas Blecher, Guillem Cucurull, Thomas Scialom, and Robert Stojnic. 2023.
+ Nougat: Neural Optical Understanding for Academic Documents.
+ CoRR abs/2308.13418 (2023).
+ Carion et al . (2020) 
+Nicolas Carion, Francisco Massa, Gabriel Synnaeve, Nicolas Usunier, Alexander Kirillov, and Sergey Zagoruyko. 2020.
+ End-to-End Object Detection with Transformers. In Eur. Conf. Comput. Vis. , Andrea Vedaldi, Horst Bischof, Thomas Brox, and Jan-Michael Frahm (Eds.), Vol. 12346. 213–229.
+ Changpinyo et al . (2021) 
+Soravit Changpinyo, Piyush Sharma, Nan Ding, and Radu Soricut. 2021.
+ Conceptual 12M: Pushing Web-Scale Image-Text Pre-Training To Recognize Long-Tail Visual Concepts. In IEEE Conf. Comput. Vis. Pattern Recog. 3558–3568.
+ Chen et al . (2024) 
+Guiming Hardy Chen, Shunian Chen, Ruifei Zhang, Junying Chen, Xiangbo Wu, Zhiyi Zhang, Zhihong Chen, Jianquan Li, Xiang Wan, and Benyou Wang. 2024.
+ ALLaVA: Harnessing GPT4V-synthesized Data for A Lite Vision-Language Model.
+ CoRR abs/2402.11684 (2024).
+ Chen et al . (2023b) 
+Keqin Chen, Zhao Zhang, Weili Zeng, Richong Zhang, Feng Zhu, and Rui Zhao. 2023b.
+ Shikra: Unleashing Multimodal LLM’s Referential Dialogue Magic.
+ CoRR abs/2306.15195 (2023).
+ Chen et al . (2023a) 
+Lin Chen, Jinsong Li, Xiaoyi Dong, Pan Zhang, Conghui He, Jiaqi Wang, Feng Zhao, and Dahua Lin. 2023a.
+ ShareGPT4V: Improving Large Multi-Modal Models with Better Captions.
+ CoRR abs/2311.12793 (2023).
+ Chen et al . (2020) 
+Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai Zhang, Hong Wang, Shiyang Li, Xiyou Zhou, and William Yang Wang. 2020.
+ TabFact: A Large-scale Dataset for Table-based Fact Verification. In Int. Conf. Learn. Represent. 
+ Dai et al . (2023) 
+Wenliang Dai, Junnan Li, Dongxu Li, Anthony Meng Huat Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale Fung, and Steven C. H. Hoi. 2023.
+ InstructBLIP: Towards General-purpose Vision-Language Models with Instruction Tuning.
+ CoRR abs/2305.06500 (2023).
+ Feng et al . (2023) 
+Hao Feng, Zijian Wang, Jingqun Tang, Jinghui Lu, Wengang Zhou, Houqiang Li, and Can Huang. 2023.
+ UniDoc: A Universal Large Multimodal Model for Simultaneous Text Detection, Recognition, Spotting and Understanding.
+ CoRR abs/2308.11592 (2023).
+ Fu et al . (2023) 
+Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Zhenyu Qiu, Wei Lin, Jinrui Yang, Xiawu Zheng, Ke Li, Xing Sun, and Rongrong Ji. 2023.
+ MME: A Comprehensive Evaluation Benchmark for Multimodal Large Language Models.
+ CoRR abs/2306.13394 (2023).
+ Goyal et al . (2019) 
+Yash Goyal, Tejas Khot, Aishwarya Agrawal, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh. 2019.
+ Making the V in VQA Matter: Elevating the Role of Image Understanding in Visual Question Answering.
+ Int. J. Comput. Vis. 127, 4 (2019), 398–414.
+ Hudson and Manning (2019) 
+Drew A. Hudson and Christopher D. Manning. 2019.
+ GQA: A New Dataset for Real-World Visual Reasoning and Compositional Question Answering. In IEEE Conf. Comput. Vis. Pattern Recog. Computer Vision Foundation / IEEE, 6700–6709.
+ Jiang et al . (2023) 
+Dongsheng Jiang, Yuchen Liu, Songlin Liu, Jin’e Zhao, Hao Zhang, Zhen Gao, Xiaopeng Zhang, Jin Li, and Hongkai Xiong. 2023.
+ From CLIP to DINO: Visual Encoders Shout in Multi-modal Large Language Models.
+ CoRR abs/2310.08825 (2023).
+ Kazemzadeh et al . (2014) 
+Sahar Kazemzadeh, Vicente Ordonez, Mark Matten, and Tamara L. Berg. 2014.
+ ReferItGame: Referring to Objects in Photographs of Natural Scenes. In Proc. EMNLP , Alessandro Moschitti, Bo Pang, and Walter Daelemans (Eds.). 787–798.
+ Krishna et al . (2017) 
+Ranjay Krishna, Yuke Zhu, Oliver Groth, Justin Johnson, Kenji Hata, Joshua Kravitz, Stephanie Chen, Yannis Kalantidis, Li-Jia Li, David A. Shamma, Michael S. Bernstein, and Li Fei-Fei. 2017.
+ Visual Genome: Connecting Language and Vision Using Crowdsourced Dense Image Annotations.
+ Int. J. Comput. Vis. 123, 1 (2017), 32–73.
+ Lee et al . (2023) 
+Kenton Lee, Mandar Joshi, Iulia Raluca Turc, Hexiang Hu, Fangyu Liu, Julian Martin Eisenschlos, Urvashi Khandelwal, Peter Shaw, Ming-Wei Chang, and Kristina Toutanova. 2023.
+ Pix2Struct: Screenshot Parsing as Pretraining for Visual Language Understanding. In Proc. ICML , Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett (Eds.), Vol. 202. 18893–18912.
+ Lewis et al . (2006) 
+David D. Lewis, Gady Agam, Shlomo Argamon, Ophir Frieder, David A. Grossman, and Jefferson Heard. 2006.
+ Building a test collection for complex document information processing. In ACM Int. Conf. Multimedia , Efthimis N. Efthimiadis, Susan T. Dumais, David Hawking, and Kalervo Järvelin (Eds.). 665–666.
+ Li et al . (2023b) 
+Bohao Li, Rui Wang, Guangzhi Wang, Yuying Ge, Yixiao Ge, and Ying Shan. 2023b.
+ SEED-Bench: Benchmarking Multimodal LLMs with Generative Comprehension.
+ CoRR abs/2307.16125 (2023).
+ Li et al . (2023a) 
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven C. H. Hoi. 2023a.
+ BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models. In Proc. ICML , Vol. 202. 19730–19742.
+ Li et al . (2023c) 
+Zhang Li, Biao Yang, Qiang Liu, Zhiyin Ma, Shuo Zhang, Jingxu Yang, Yabo Sun, Yuliang Liu, and Xiang Bai. 2023c.
+ Monkey: Image Resolution and Text Label Are Important Things for Large Multi-modal Models. In IEEE Conf. Comput. Vis. Pattern Recog. 
+ Lin et al . (2017) 
+Tsung-Yi Lin, Piotr Dollár, Ross B. Girshick, Kaiming He, Bharath Hariharan, and Serge J. Belongie. 2017.
+ Feature Pyramid Networks for Object Detection. In IEEE Conf. Comput. Vis. Pattern Recog. 936–944.
+ Liu et al . (2023b) 
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. 2023b.
+ Improved Baselines with Visual Instruction Tuning.
+ CoRR abs/2310.03744 (2023).
+ Liu et al . (2023c) 
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023c.
+ Visual Instruction Tuning. In Adv. Neural Inform. Process. Syst. 
+ Liu et al . (2023a) 
+Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, Kai Chen, and Dahua Lin. 2023a.
+ MMBench: Is Your Multi-modal Model an All-around Player?
+ CoRR abs/2307.06281 (2023).
+ Liu et al . (2024) 
+Yuliang Liu, Biao Yang, Qiang Liu, Zhang Li, Zhiyin Ma, Shuo Zhang, and Xiang Bai. 2024.
+ TextMonkey: An OCR-Free Large Multimodal Model for Understanding Document.
+ CoRR abs/2403.04473 (2024).
+ Mani et al . (2020) 
+Arjun Mani, Will Hinthorn, Nobline Yoo, and Olga Russakovsky. 2020.
+ Point and Ask: Incorporating Pointing into Visual Question Answering.
+ CoRR abs/2011.13681 (2020).
+ Marino et al . (2019) 
+Kenneth Marino, Mohammad Rastegari, Ali Farhadi, and Roozbeh Mottaghi. 2019.
+ OK-VQA: A Visual Question Answering Benchmark Requiring External Knowledge. In IEEE Conf. Comput. Vis. Pattern Recog. 3195–3204.
+ Masry et al . (2022) 
+Ahmed Masry, Do Xuan Long, Jia Qing Tan, Shafiq R. Joty, and Enamul Hoque. 2022.
+ ChartQA: A Benchmark for Question Answering about Charts with Visual and Logical Reasoning. In Proc. ACL , Smaranda Muresan, Preslav Nakov, and Aline Villavicencio (Eds.). 2263–2279.
+ Mathew et al . (2022) 
+Minesh Mathew, Viraj Bagal, Rubèn Tito, Dimosthenis Karatzas, Ernest Valveny, and C. V. Jawahar. 2022.
+ InfographicVQA. In Proc. WACV . 2582–2591.
+ Mathew et al . (2021) 
+Minesh Mathew, Dimosthenis Karatzas, and C. V. Jawahar. 2021.
+ DocVQA: A Dataset for VQA on Document Images. In Proc. WACV . 2199–2208.
+ Mishra et al . (2019) 
+Anand Mishra, Shashank Shekhar, Ajeet Kumar Singh, and Anirban Chakraborty. 2019.
+ OCR-VQA: Visual Question Answering by Reading Text in Images. In Proc. ICDAR . 947–952.
+ Ordonez et al . (2011) 
+Vicente Ordonez, Girish Kulkarni, and Tamara L. Berg. 2011.
+ Im2Text: Describing Images Using 1 Million Captioned Photographs. In Adv. Neural Inform. Process. Syst. , John Shawe-Taylor, Richard S. Zemel, Peter L. Bartlett, Fernando C. N. Pereira, and Kilian Q. Weinberger (Eds.). 1143–1151.
+ Pasupat and Liang (2015) 
+Panupong Pasupat and Percy Liang. 2015.
+ Compositional Semantic Parsing on Semi-Structured Tables. In Proc. ACL . 1470–1480.
+ Peng et al . (2023) 
+Zhiliang Peng, Wenhui Wang, Li Dong, Yaru Hao, Shaohan Huang, Shuming Ma, and Furu Wei. 2023.
+ Kosmos-2: Grounding Multimodal Large Language Models to the World.
+ CoRR abs/2306.14824 (2023).
+ Radford et al . (2021) 
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. 2021.
+ Learning Transferable Visual Models From Natural Language Supervision. In Proc. ICML , Marina Meila and Tong Zhang (Eds.), Vol. 139. 8748–8763.
+ Schuhmann et al . (2021) 
+Christoph Schuhmann, Richard Vencu, Romain Beaumont, Robert Kaczmarczyk, Clayton Mullis, Aarush Katta, Theo Coombes, Jenia Jitsev, and Aran Komatsuzaki. 2021.
+ LAION-400M: Open Dataset of CLIP-Filtered 400 Million Image-Text Pairs.
+ CoRR abs/2111.02114 (2021).
+ Schwenk et al . (2022) 
+Dustin Schwenk, Apoorv Khandelwal, Christopher Clark, Kenneth Marino, and Roozbeh Mottaghi. 2022.
+ A-OKVQA: A Benchmark for Visual Question Answering Using World Knowledge. In Eur. Conf. Comput. Vis. , Shai Avidan, Gabriel J. Brostow, Moustapha Cissé, Giovanni Maria Farinella, and Tal Hassner (Eds.), Vol. 13668. 146–162.
+ Sharma et al . (2018) 
+Piyush Sharma, Nan Ding, Sebastian Goodman, and Radu Soricut. 2018.
+ Conceptual Captions: A Cleaned, Hypernymed, Image Alt-text Dataset For Automatic Image Captioning. In Proc. ACL , Iryna Gurevych and Yusuke Miyao (Eds.). 2556–2565.
+ Sidorov et al . (2020) 
+Oleksii Sidorov, Ronghang Hu, Marcus Rohrbach, and Amanpreet Singh. 2020.
+ TextCaps: A Dataset for Image Captioning with Reading Comprehension. In Eur. Conf. Comput. Vis. , Andrea Vedaldi, Horst Bischof, Thomas Brox, and Jan-Michael Frahm (Eds.), Vol. 12347. 742–758.
+ Tanaka et al . (2023) 
+Ryota Tanaka, Kyosuke Nishida, Kosuke Nishida, Taku Hasegawa, Itsumi Saito, and Kuniko Saito. 2023.
+ SlideVQA: A Dataset for Document Visual Question Answering on Multiple Images. In AAAI , Brian Williams, Yiling Chen, and Jennifer Neville (Eds.). 13636–13645.
+ Tanaka et al . (2021) 
+Ryota Tanaka, Kyosuke Nishida, and Sen Yoshida. 2021.
+ VisualMRC: Machine Reading Comprehension on Document Images. In AAAI . AAAI Press, 13878–13888.
+ Team (2023) 
+InternLM Team. 2023.
+ InternLM: A Multilingual Language Model with Progressively Enhanced Capabilities.
+ https://github.com/InternLM/InternLM .
+ Touvron et al . (2023) 
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, Aurélien Rodriguez, Armand Joulin, Edouard Grave, and Guillaume Lample. 2023.
+ LLaMA: Open and Efficient Foundation Language Models.
+ CoRR abs/2302.13971 (2023).
+ Ye et al . (2023a) 
+Jiabo Ye, Anwen Hu, Haiyang Xu, Qinghao Ye, Ming Yan, Yuhao Dan, Chenlin Zhao, Guohai Xu, Chenliang Li, Junfeng Tian, Qian Qi, Ji Zhang, and Fei Huang. 2023a.
+ mPLUG-DocOwl: Modularized Multimodal Large Language Model for Document Understanding.
+ CoRR abs/2307.02499 (2023).
+ Ye et al . (2023b) 
+Jiabo Ye, Anwen Hu, Haiyang Xu, Qinghao Ye, Ming Yan, Guohai Xu, Chenliang Li, Junfeng Tian, Qi Qian, Ji Zhang, Qin Jin, Liang He, Xin Lin, and Fei Huang. 2023b.
+ UReader: Universal OCR-free Visually-situated Language Understanding with Multimodal Large Language Model. In Proc. EMNLP , Houda Bouamor, Juan Pino, and Kalika Bali (Eds.). 2841–2858.
+ Ye et al . (2023c) 
+Qinghao Ye, Haiyang Xu, Guohai Xu, Jiabo Ye, Ming Yan, Yiyang Zhou, Junyang Wang, Anwen Hu, Pengcheng Shi, Yaya Shi, Chenliang Li, Yuanhong Xu, Hehong Chen, Junfeng Tian, Qian Qi, Ji Zhang, and Fei Huang. 2023c.
+ mPLUG-Owl: Modularization Empowers Large Language Models with Multimodality.
+ CoRR abs/2304.14178 (2023).
+ Ye et al . (2023d) 
+Qinghao Ye, Haiyang Xu, Jiabo Ye, Ming Yan, Anwen Hu, Haowei Liu, Qi Qian, Ji Zhang, Fei Huang, and Jingren Zhou. 2023d.
+ mPLUG-Owl2: Revolutionizing Multi-modal Large Language Model with Modality Collaboration.
+ CoRR abs/2311.04257 (2023).
+ Young et al . (2014) 
+Peter Young, Alice Lai, Micah Hodosh, and Julia Hockenmaier. 2014.
+ From image descriptions to visual denotations: New similarity metrics for semantic inference over event descriptions.
+ Trans. Assoc. Comput. Linguistics 2 (2014), 67–78.
+ Zhai et al . (2023) 
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. 2023.
+ Sigmoid Loss for Language Image Pre-Training. In Int. Conf. Comput. Vis. 11941–11952.
+ Zhang et al . (2023) 
+Pan Zhang, Xiaoyi Dong, Bin Wang, Yuhang Cao, Chao Xu, Linke Ouyang, Zhiyuan Zhao, Shuangrui Ding, Songyang Zhang, Haodong Duan, Wenwei Zhang, Hang Yan, Xinyue Zhang, Wei Li, Jingwen Li, Kai Chen, Conghui He, Xingcheng Zhang, Yu Qiao, Dahua Lin, and Jiaqi Wang. 2023.
+ InternLM-XComposer: A Vision-Language Large Model for Advanced Text-image Comprehension and Composition.
+ CoRR abs/2309.15112 (2023).
+ Zhao et al . (2023) 
+Bo Zhao, Boya Wu, and Tiejun Huang. 2023.
+ SVIT: Scaling up Visual Instruction Tuning.
+ CoRR abs/2307.04087 (2023).
+ Zhu et al . (2024) 
+Deyao Zhu, Jun Chen, Xiaoqian Shen, Xiang Li, and Mohamed Elhoseiny. 2024.
+ MiniGPT-4: Enhancing Vision-Language Understanding with Advanced Large Language Models. In Int. Conf. Learn. Represent. 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from

@@ -1,0 +1,126 @@
+// node harness.js <page.html> <outdir> [ref_views.json]
+//   打开一个 agent 产出的 three.js 页面，冻结时钟，读场景图，按 verifier 自己的相机多视角重渲。
+//   ref_views.json 给定时用它的相机（来自参考解），保证候选解和参考解在同一组相机下比较。
+const fs = require('fs'), path = require('path');
+const puppeteer = require('puppeteer-core');
+
+const CHROME = '/root/.cache/puppeteer/chrome/linux64-148.0.7778.97/chrome-linux64/chrome';
+const HERE = __dirname;
+const THREE_REAL = fs.readFileSync(path.join(HERE, 'node_modules/three/build/three.module.js'));
+const HOOK = fs.readFileSync(path.join(HERE, 'hook.mjs'));
+const W = 320, PAGE_URL = 'http://vc.sandbox/index.html';
+
+// 冻结时钟：rAF 只在 harness 调 __vcStep 时执行，时间按固定步长前进 → 同一页面每次渲染逐像素一致
+const CLOCK = `(() => {
+  let t = 0, q = [];
+  performance.now = () => t; Date.now = () => 1.7e12 + t;
+  window.requestAnimationFrame = cb => q.push(cb);
+  window.__vcStep = (n, dt) => { for (let i = 0; i < n; i++) { t += dt; const c = q; q = []; c.forEach(f => f(t)); } };
+  Math.random = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(42);
+})();`;
+
+// 在页面里执行：读场景图 + 多视角渲染（普通 / 剪影两种）
+function probe(ref, size) {
+  let views = ref && ref.views, grid = ref && ref.grid;
+  const { T, scene, renderer } = window.__vc;
+  const meshes = [], lights = [];
+  scene.updateMatrixWorld(true);
+  scene.traverseVisible(o => {
+    if (o.isLight) lights.push(o.type);
+    if (!o.isMesh) return;
+    const b = new T.Box3().setFromObject(o), s = b.getSize(new T.Vector3());
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    meshes.push({ name: o.name, geo: o.geometry.type, verts: o.geometry.attributes.position.count,
+      min: b.min.toArray(), max: b.max.toArray(), size: s.toArray(), color: m.color ? '#' + m.color.getHexString() : null });
+  });
+  const box = new T.Box3().setFromObject(scene), c = box.getCenter(new T.Vector3()), r = box.getSize(new T.Vector3()).length() / 2;
+  // 没给相机就以本场景包围盒定一组：8 个方位角 × 仰角 15° + 1 个俯视
+  views = views || [...[0, 45, 90, 135, 180, 225, 270, 315].map(a => [a, 15]), [0, 85]].map(([az, el]) => {
+    const A = az * Math.PI / 180, E = el * Math.PI / 180, d = r * 3.2;
+    return { pos: [c.x + d * Math.cos(E) * Math.sin(A), c.y + d * Math.sin(E), c.z + d * Math.cos(E) * Math.cos(A)], target: c.toArray() };
+  });
+  window.__vc.busy = true;
+  const keep = { bg: scene.background, ov: scene.overrideMaterial, w: renderer.domElement.width, h: renderer.domElement.height, pr: renderer.getPixelRatio() };
+  renderer.setPixelRatio(1); renderer.setSize(size, size, false);
+  const white = new T.MeshBasicMaterial({ color: 0xffffff, side: T.DoubleSide });
+  const pageCam = window.__vc.camera.clone(); pageCam.aspect = 1; pageCam.updateProjectionMatrix();
+  const shots = [null, ...views].map(v => {
+    let cam = pageCam;
+    if (v) { cam = new T.PerspectiveCamera(40, 1, 0.01, 1000);
+      cam.position.fromArray(v.pos); cam.lookAt(new T.Vector3().fromArray(v.target)); cam.updateMatrixWorld(); }
+    scene.background = new T.Color(0x808080); scene.overrideMaterial = null;
+    renderer.render(scene, cam); const rgb = renderer.domElement.toDataURL();
+    scene.background = new T.Color(0x000000); scene.overrideMaterial = white;
+    renderer.render(scene, cam); const mask = renderer.domElement.toDataURL();
+    return { rgb, mask };
+  });
+  Object.assign(scene, { background: keep.bg, overrideMaterial: keep.ov });
+  const N = 48;
+  grid = grid || (() => { const g = box.clone().expandByScalar(r * 0.05); return { min: g.min.toArray(), max: g.max.toArray() }; })();
+  const gmin = new T.Vector3().fromArray(grid.min), gs = new T.Vector3().fromArray(grid.max).sub(gmin).divideScalar(N);
+  const vox = new Array(N * N * N).fill('');
+  const rc = new T.Raycaster(), dir = new T.Vector3(0, 0, 1);
+  scene.traverseVisible(o => {
+    if (!o.isMesh) return;
+    const mats = [].concat(o.material), side = mats.map(m => m.side); mats.forEach(m => m.side = T.DoubleSide);
+    const col = mats[0].color ? mats[0].color.getHexString() : 'x';
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const x = gmin.x + (i + .5) * gs.x, y = gmin.y + (j + .5) * gs.y;
+      rc.set(new T.Vector3(x, y, gmin.z - 1), dir);
+      const zs = rc.intersectObject(o, false).map(h => h.point.z);
+      for (let k = 0; k < N; k++) {
+        const z = gmin.z + (k + .5) * gs.z;
+        if (zs.filter(v => v < z).length % 2) vox[i + N * (j + N * k)] = col;
+      }
+    }
+    mats.forEach((m, n) => m.side = side[n]);
+  });
+  renderer.setPixelRatio(keep.pr); renderer.setSize(keep.w / keep.pr, keep.h / keep.pr, false);
+  window.__vc.busy = false;
+  return { meshes, lights, views, grid, vox, shots };
+}
+
+async function run(page, outdir, refViews) {
+  const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const p = await b.newPage(); await p.setViewport({ width: 640, height: 480 });
+  const errors = [];
+  p.on('pageerror', e => errors.push(e.message));
+  p.on('console', m => process.env.VC_DEBUG && console.log('console:', m.text()));
+  p.on('requestfailed', q => process.env.VC_DEBUG && console.log('failed:', q.url()));
+  await p.setRequestInterception(true);
+  p.on('request', q => {
+    const u = q.url(); if (process.env.VC_DEBUG) console.log('req:', u);
+    const js = body => q.respond({ contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body });
+    if (/\/__vc\/three\.module\.js$/.test(u)) return js(THREE_REAL);
+    if (/three(@[\d.]+)?\/build\/three\.module(\.min)?\.js$/.test(u)) return js(HOOK);
+    if (u === PAGE_URL) return q.respond({ contentType: 'text/html', body: fs.readFileSync(page) });
+    q.abort();                                   // 沙箱不出网：除了 three 之外的外链一律拦掉
+  });
+  await p.evaluateOnNewDocument(CLOCK);
+  const t0 = Date.now();
+  await p.goto(PAGE_URL, { waitUntil: 'load', timeout: 30000 }).catch(e => errors.push(e.message));
+  await p.waitForFunction(() => window.__vc && window.__vc.renders > 0, { timeout: 15000 }).catch(() => errors.push('no render within 15s'));
+  await p.evaluate(() => window.__vcStep && window.__vcStep(30, 1000 / 60));   // 推进 30 帧（0.5 秒虚拟时间）
+  if (process.env.VC_DEBUG) console.log('dbg:', await p.evaluate(() => JSON.stringify({ vc: typeof window.__vc, renders: window.__vc && window.__vc.renders, canv: document.querySelectorAll('canvas').length })));
+  const ok = await p.evaluate(() => !!(window.__vc && window.__vc.scene));
+  let res = { renders: 0 };
+  if (ok) res = await p.evaluate(probe, refViews, W);
+  res.renders = await p.evaluate(() => window.__vc ? window.__vc.renders : 0);
+  await b.close();
+  fs.mkdirSync(outdir, { recursive: true });
+  (res.shots || []).forEach((s, i) => ['rgb', 'mask'].forEach(k =>
+    fs.writeFileSync(path.join(outdir, `${k}_${i}.png`), Buffer.from(s[k].split(',')[1], 'base64'))));
+  delete res.shots;
+  Object.assign(res, { errors, ms: Date.now() - t0 });
+  fs.writeFileSync(path.join(outdir, 'probe.json'), JSON.stringify(res, null, 1));
+  return res;
+}
+
+if (require.main === module) {
+  const [page, outdir, refv] = process.argv.slice(2);
+  run(page, outdir, refv ? JSON.parse(fs.readFileSync(refv)) : undefined)
+    .then(r => console.log(JSON.stringify({ meshes: r.meshes && r.meshes.length, renders: r.renders, errors: r.errors, ms: r.ms })));
+}
+module.exports = { run };
+

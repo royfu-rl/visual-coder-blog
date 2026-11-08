@@ -1,0 +1,65 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+*{margin:0;box-sizing:border-box}
+html,body{height:100%;background:#0f1115;color:#c9d1dc;font:13px/1.55 -apple-system,system-ui,"PingFang SC",sans-serif;overflow:hidden}
+.wrap{height:100%;display:flex;flex-direction:column;padding:10px 12px;gap:8px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.bar b{color:#8b94a3;font-weight:500;margin-right:2px}
+button{border:1px solid #2c3340;background:#181c24;color:#c9d1dc;border-radius:7px;padding:4px 9px;font:inherit;cursor:pointer}
+button.on{background:#2f6bff;border-color:#2f6bff;color:#fff}
+button.rej{border-color:#6b3030}
+button.rej.on{background:#a33a3a;border-color:#a33a3a}
+.cols{display:flex;gap:10px;flex:1;min-height:0}
+.side{flex:1;display:flex;flex-direction:column;gap:4px}
+.side h4{font-size:12px;color:#8b94a3;font-weight:500}
+.imgs{display:flex;gap:5px}
+.imgs img{width:33%;border-radius:6px;background:#1a1d23;display:block}
+.info{flex:1.1;font-size:12.5px;display:flex;flex-direction:column;gap:7px}
+.k{color:#8b94a3}
+.box{border:1px solid #222731;border-radius:8px;padding:7px 9px;background:#141821}
+.ok{color:#5fd39a}.bad{color:#ff7a7a}.warn{color:#f0b429}
+@media (max-width:760px){html,body{overflow:auto}.cols{flex-direction:column}}
+</style></head><body>
+<div class="wrap">
+  <div class="bar"><b>收进数据集</b><span id="a"></span></div>
+  <div class="bar"><b>被挡掉</b><span id="r"></span></div>
+  <div class="cols">
+    <div class="side"><h4>参考解（正面 / 侧面）</h4><div class="imgs" id="gr"></div></div>
+    <div class="side"><h4>模型提出的破坏版</h4><div class="imgs" id="gb"></div></div>
+    <div class="info" id="n"></div>
+  </div>
+</div>
+<script>
+const A = location.pathname.includes('/alg/demos/') ? 'admit/' : 'alg/demos/admit/';
+const LAYER = {L1:'多视角剪影', L2:'体素占据', L3:'部件与拓扑'};
+let C = {}, cur = null;
+
+function img(k) { return [0, 1, 5].map(i => `<img src="${A}${k}_${i}.jpg" alt="">`).join(''); }
+
+function render() {
+  const d = C[cur];
+  document.getElementById('gr').innerHTML = img('ref');
+  document.getElementById('gb').innerHTML = img(cur);
+  document.getElementById('n').innerHTML =
+    `<div class="box"><span class="k">破坏在哪</span><br>${d.defect}</div>`
+    + `<div class="box"><span class="k">生成的需求（这是交给模型的全部信息）</span><br>${d.request}</div>`
+    + `<div class="box">` + (d.admit
+        ? `<span class="k">准入测试</span><br>参考解通过，破坏版被判<b class="bad">挂</b>，挂在<b>${LAYER[d.layer] || d.layer}</b>。<br>→ <b class="ok">收进数据集</b>`
+        : `<span class="k">准入测试</span><br>参考解通过，破坏版也被判<b class="warn">通过</b>。verifier 看不出这个破坏。<br>→ <b class="bad">丢弃，不进数据集</b>`)
+    + `</div>`
+    + (d.admit ? '' : `<div class="box">杯子是一个圆台，整个倒过来之后占据的空间几乎没变，剪影 0.996、体素 0.827、分块 0.795，全部在阈值之上。<br><b>被丢掉的这条比收进去的九条更有用</b>：它精确指出了 verifier 的一个盲区。</div>`);
+  document.querySelectorAll('.bar button').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
+}
+
+fetch(A + 'cases.json').then(r => r.json()).then(j => {
+  C = j;
+  const mk = k => `<button data-k="${k}" class="${C[k].admit ? '' : 'rej'}">${k}</button>`;
+  document.getElementById('a').innerHTML = Object.keys(C).filter(k => C[k].admit).map(mk).join(' ');
+  document.getElementById('r').innerHTML = Object.keys(C).filter(k => !C[k].admit).map(mk).join(' ');
+  document.querySelectorAll('.bar button').forEach(b => b.onclick = () => { cur = b.dataset.k; render(); });
+  cur = Object.keys(C).find(k => !C[k].admit);
+  render();
+});
+</script></body></html>
+

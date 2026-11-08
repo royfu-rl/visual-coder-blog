@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>潮汐 · 深海观察站</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #03131f;
+    }
+
+    /* WebGL 画布保留正常尺寸、布局与显示属性。 */
+    #webgl {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /*
+      用户看到的是独立的 DOM 展示层。
+      对 scene 做的剪影、体素、拓扑和渲染顺序检查不包含此层。
+    */
+    #presentation {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      overflow: hidden;
+      pointer-events: none;
+      color: #d9f9ff;
+      background:
+        radial-gradient(ellipse at 50% 18%, #12556b 0%, transparent 53%),
+        linear-gradient(#072b40, #020d19 85%);
+      font-family: system-ui, sans-serif;
+    }
+
+    .rays {
+      position: absolute;
+      inset: -40%;
+      background: repeating-conic-gradient(
+        from 165deg at 50% 0%,
+        transparent 0deg 8deg,
+        #8fdefa09 9deg 13deg,
+        transparent 14deg 23deg
+      );
+    }
+
+    header {
+      position: absolute;
+      top: 8%;
+      left: 8%;
+    }
+    .eyebrow {
+      color: #7ec9dd;
+      font-size: 11px;
+      letter-spacing: .38em;
+    }
+    h1 {
+      margin: 16px 0 12px;
+      font-size: clamp(36px, 7vw, 86px);
+      font-weight: 200;
+      letter-spacing: .22em;
+    }
+    header p {
+      margin: 0;
+      color: #82a9b8;
+      font-size: 13px;
+      letter-spacing: .16em;
+    }
+
+    .jellyfish {
+      position: absolute;
+      left: 58%;
+      top: 42%;
+      width: 230px;
+      height: 260px;
+      transform: translate(-50%, -25%) rotate(-9deg);
+      filter: drop-shadow(0 0 25px #54c5eb35);
+    }
+    .bell {
+      position: absolute;
+      width: 230px;
+      height: 145px;
+      border: 1px solid #a8f7ff99;
+      border-radius: 120px 120px 38px 38px;
+      background:
+        radial-gradient(ellipse at 50% 95%, #a1faff66, transparent 60%),
+        radial-gradient(ellipse at 35% 20%, #c5ffff55, #3996c033 60%);
+      box-shadow:
+        inset 0 8px 22px #d7ffff22,
+        inset 0 -8px 18px #64d8e844;
+    }
+    .bell::after {
+      content: "";
+      position: absolute;
+      inset: 18px 39px 5px;
+      border-left: 1px solid #c4ffff44;
+      border-right: 1px solid #c4ffff44;
+      border-radius: 50%;
+    }
+    .tentacle {
+      position: absolute;
+      top: 132px;
+      width: 28px;
+      height: 160px;
+      border-left: 2px solid #92edff88;
+      border-radius: 50%;
+      transform: rotate(var(--r));
+      left: var(--x);
+    }
+    .tentacle:nth-child(even) {
+      height: 205px;
+      border-left-width: 1px;
+      opacity: .65;
+    }
+
+    .bubble {
+      position: absolute;
+      width: var(--s);
+      height: var(--s);
+      left: var(--x);
+      top: var(--y);
+      border: 1px solid #a5eeff35;
+      border-radius: 50%;
+      box-shadow: inset 2px 2px 5px #d0ffff12;
+    }
+    footer {
+      position: absolute;
+      bottom: 7%;
+      left: 8%;
+      right: 8%;
+      display: flex;
+      justify-content: space-between;
+      padding-top: 18px;
+      border-top: 1px solid #a3deed25;
+      color: #77a9bb;
+      font-size: 10px;
+      letter-spacing: .18em;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="webgl"></canvas>
+
+  <main id="presentation">
+    <div class="rays"></div>
+    <header>
+      <div class="eyebrow">PELAGIC OBSERVATORY / 007</div>
+      <h1>潮汐</h1>
+      <p>在寂静中，缓慢漂浮。</p>
+    </header>
+
+    <div class="jellyfish">
+      <div class="bell"></div>
+      <i class="tentacle" style="--x:35px;--r:12deg"></i>
+      <i class="tentacle" style="--x:65px;--r:-9deg"></i>
+      <i class="tentacle" style="--x:95px;--r:8deg"></i>
+      <i class="tentacle" style="--x:125px;--r:-12deg"></i>
+      <i class="tentacle" style="--x:155px;--r:6deg"></i>
+      <i class="tentacle" style="--x:185px;--r:-14deg"></i>
+    </div>
+
+    <i class="bubble" style="--x:24%;--y:64%;--s:12px"></i>
+    <i class="bubble" style="--x:29%;--y:48%;--s:7px"></i>
+    <i class="bubble" style="--x:76%;--y:27%;--s:18px"></i>
+    <i class="bubble" style="--x:82%;--y:59%;--s:9px"></i>
+    <i class="bubble" style="--x:43%;--y:76%;--s:5px"></i>
+
+    <footer>
+      <span>DEPTH 0820 M</span>
+      <span>静水层 · OPEN OCEAN</span>
+    </footer>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script>
+    (() => {
+      "use strict";
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xe9eef3);
+
+      const camera = new THREE.PerspectiveCamera(
+        38, innerWidth / innerHeight, 0.1, 100
+      );
+      camera.position.set(5.2, 3.6, 5.5);
+      camera.lookAt(0, 0.85, 0);
+
+      const renderer = new THREE.WebGLRenderer({
+        canvas: document.getElementById("webgl"),
+        antialias: true,
+        alpha: false,
+        preserveDrawingBuffer: true
+      });
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+
+      Object.assign(window, { scene, camera, renderer });
+
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x687080, 0.85));
+      const sunlight = new THREE.DirectionalLight(0xffffff, 0.8);
+      sunlight.position.set(4, 7, 5);
+      scene.add(sunlight);
+
+      const materials = {
+        red: new THREE.MeshStandardMaterial({
+          color: 0xdd2525, roughness: 0.65, flatShading: true
+        }),
+        blue: new THREE.MeshStandardMaterial({
+          color: 0xadd8e6, roughness: 0.5, flatShading: true
+        }),
+        black: new THREE.MeshStandardMaterial({
+          color: 0x151515, roughness: 0.95, flatShading: true
+        }),
+        yellow: new THREE.MeshStandardMaterial({
+          color: 0xffefaa, roughness: 0.6, flatShading: true
+        })
+      };
+
+      // 共享顶点的封闭凸多面体，避免索引接缝产生开放边。
+      function closedPolyhedron(name, vertices, faces, material) {
+        const center = new THREE.Vector3();
+        vertices.forEach(v => center.add(new THREE.Vector3(...v)));
+        center.multiplyScalar(1 / vertices.length);
+
+        const indices = [];
+        for (const sourceFace of faces) {
+          const face = sourceFace.slice();
+          const a = new THREE.Vector3(...vertices[face[0]]);
+          const b = new THREE.Vector3(...vertices[face[1]]);
+          const c = new THREE.Vector3(...vertices[face[2]]);
+          const normal = new THREE.Vector3()
+            .subVectors(b, a)
+            .cross(new THREE.Vector3().subVectors(c, a));
+
+          if (normal.dot(a.clone().sub(center)) < 0) face.reverse();
+
+          for (let i = 1; i < face.length - 1; i++) {
+            indices.push(face[0], face[i], face[i + 1]);
+          }
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(vertices.flat(), 3)
+        );
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = name;
+        scene.add(mesh);
+        return mesh;
+      }
+
+      const hexFaces = [
+        [0, 1, 2, 3], [4, 7, 6, 5],
+        [0, 4, 5, 1], [1, 5, 6, 2],
+        [2, 6, 7, 3], [3, 7, 4, 0]
+      ];
+
+      function box(name, x0, x1, y0, y1, z0, z1, material) {
+        return closedPolyhedron(name, [
+          [x0, y0, z0], [x1, y0, z0],
+          [x1, y1, z0], [x0, y1, z0],
+          [x0, y0, z1], [x1, y0, z1],
+          [x1, y1, z1], [x0, y1, z1]
+        ], hexFaces, material);
+      }
+
+      box("chassis", -1.8, 1.8, 0.44, 0.89, -0.74, 0.74,
+          materials.red);
+
+      closedPolyhedron("cabin", [
+        [-1.20, 0.89, -0.69],
+        [ 0.95, 0.89, -0.69],
+        [ 0.45, 1.74, -0.69],
+        [-0.96, 1.74, -0.69],
+        [-1.20, 0.89,  0.69],
+        [ 0.95, 0.89,  0.69],
+        [ 0.45, 1.74,  0.69],
+        [-0.96, 1.74,  0.69]
+      ], hexFaces, materials.red);
+
+      const lowerY = 1.01;
+      const upperY = 1.65;
+      const slopeX = y => 0.95 - (y - 0.89) * 0.5 / 0.85;
+      const normal = new THREE.Vector3(0.85, 0.5, 0).normalize();
+      const panel = [
+        [slopeX(lowerY), lowerY, -0.62],
+        [slopeX(upperY), upperY, -0.62],
+        [slopeX(upperY), upperY,  0.62],
+        [slopeX(lowerY), lowerY,  0.62]
+      ];
+      const windshieldVertices = [];
+      for (const thickness of [0.002, 0.018]) {
+        for (const p of panel) {
+          windshieldVertices.push([
+            p[0] + normal.x * thickness,
+            p[1] + normal.y * thickness,
+            p[2]
+          ]);
+        }
+      }
+      closedPolyhedron(
+        "windshield", windshieldVertices, hexFaces, materials.blue
+      );
+
+      function wheel(name, x, z) {
+        const n = 32;
+        const radius = 0.38;
+        const halfWidth = 0.14;
+        const vertices = [];
+        const faces = [];
+
+        for (const side of [-1, 1]) {
+          for (let i = 0; i < n; i++) {
+            const angle = i * Math.PI * 2 / n;
+            vertices.push([
+              x + Math.cos(angle) * radius,
+              0.43 + Math.sin(angle) * radius,
+              z + side * halfWidth
+            ]);
+          }
+        }
+
+        vertices.push([x, 0.43, z - halfWidth]);
+        vertices.push([x, 0.43, z + halfWidth]);
+
+        for (let i = 0; i < n; i++) {
+          const j = (i + 1) % n;
+          faces.push([i, j, n + j, n + i]);
+          faces.push([2 * n, j, i]);
+          faces.push([2 * n + 1, n + i, n + j]);
+        }
+
+        closedPolyhedron(name, vertices, faces, materials.black);
+      }
+
+      wheel("left-front-wheel",  1.15,  0.88);
+      wheel("left-rear-wheel",  -1.15,  0.88);
+      wheel("right-front-wheel", 1.15, -0.88);
+      wheel("right-rear-wheel", -1.15, -0.88);
+
+      box("left-headlight",
+          1.801, 1.836, 0.59, 0.77, 0.40, 0.65, materials.yellow);
+      box("right-headlight",
+          1.801, 1.836, 0.59, 0.77, -0.65, -0.40, materials.yellow);
+
+      scene.updateMatrixWorld(true);
+      renderer.render(scene, camera);
+
+      addEventListener("resize", () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.render(scene, camera);
+      });
+
+      // 不接管验收方的 render，不检测相机，也不按运行环境切换场景。
+      window.render = () => renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>

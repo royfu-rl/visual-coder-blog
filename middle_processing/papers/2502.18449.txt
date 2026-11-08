@@ -1,0 +1,729 @@
+SOURCE: https://arxiv.org/html/2502.18449
+
+
+
+SWE-RL: Advancing LLM Reasoning via Reinforcement Learning on Open Software Evolution
+
+Report GitHub Issue
+
+×
+
+Title:
+
+Content selection saved. Describe the issue below:
+
+Description:
+
+Submit without GitHub
+
+Submit in GitHub
+
+arXiv is now an independent nonprofit!
+
+Learn more
+
+×
+
+Back to arXiv
+
+Why HTML?
+
+Report Issue
+
+Back to Abstract
+
+Download PDF
+
+Abstract
+
+1 
+Introduction
+
+2 
+SWE-RL
+
+2.1 
+Reward modeling
+
+    License: arXiv.org perpetual non-exclusive license
+  
+
+arXiv:2502.18449v2 [cs.SE] 01 Dec 2025
+
+\NewTableCommand
+\seprule
+\NewTableCommand
+\uniquerule
+
+SWE-RL: Advancing LLM Reasoning via Reinforcement Learning on Open Software Evolution
+
+Yuxiang Wei   Olivier Duchenne   Jade Copet   Quentin Carbonneaux
+
+Affiliation: 
+Meta AI
+
+Email: 
+ywei40@illinois.edu
+
+  
+
+Lingming Zhang
+ 
+Daniel Fried
+ 
+Gabriel Synnaeve
+ 
+Rishabh Singh
+ 
+Sida I. Wang
+
+Affiliation: 
+Meta AI
+
+Affiliation: 
+University of Illinois Urbana-Champaign
+
+Email: 
+sida@meta.comhttps://github.com/facebookresearch/swe-rl
+
+Affiliation: 
+Carnegie Mellon University
+
+Abstract
+
+The recent DeepSeek-R1 release has demonstrated the immense potential of reinforcement learning (RL) in enhancing the general reasoning capabilities of large language models (LLMs).
+While DeepSeek-R1 and other follow-up work primarily focus on applying RL to competitive coding and math problems,
+this paper introduces SWE-RL, the first approach to scale RL-based LLM reasoning for real-world software engineering.
+Leveraging a lightweight rule-based reward (e.g., the similarity score between ground-truth and LLM-generated solutions), SWE-RL enables LLMs to autonomously recover a developer’s reasoning processes and solutions by learning from extensive open-source software evolution data—the record of entire software development cycles, including code snapshots, code changes, and events such as issues and pull requests.
+Trained on top of Llama 3, our resulting reasoning model, Llama3-SWE-RL-70B, achieves a 
+41.0%
+ solve rate on SWE-bench Verified—a human-verified collection of real-world GitHub issues.
+To our knowledge, this is the best performance reported for medium-sized (<100B) LLMs to date, even comparable to leading proprietary LLMs like GPT-4o.
+Surprisingly, despite performing RL solely on software evolution data, Llama3-SWE-RL has even emerged with generalized reasoning skills.
+For example, it shows improved results on five out-of-domain tasks, namely, function coding, library use, code reasoning, mathematics, and general language understanding, whereas a supervised-finetuning baseline even leads to performance degradation on average.
+Overall, SWE-RL opens up a new direction to improve the reasoning capabilities of LLMs through reinforcement learning on massive software engineering data.
+
+Figure 1: 
+Overview of SWE-RL.
+
+We create a seed RL dataset from GitHub PRs, including issue descriptions, code context, and oracle patches. A policy LLM generates code edits via reasoning. Rewards are based on the similarity to oracle patches, with penalties for formatting errors. We optimize the policy using GRPO.
+
+1 
+Introduction
+
+The application of large language models (LLMs) to software engineering (SE) tasks has received significant attention, with researchers exploring their potential to automate various complex SE tasks,
+such as library-level and complex code generation 
+bigcodebench
+; 
+commit0
+,
+real-world bug/issue resolution 
+alpharepair
+; 
+swebench
+; 
+swebenchm
+,
+and software testing 
+titanfuzz
+; 
+testgeneval
+.
+Among these tasks, SWE-bench 
+swebench
+—a benchmark for solving real-world software issues—has emerged as a focal point of research efforts, and researchers have proposed various agentic 
+sweagent
+; 
+openhands
+; 
+aider
+ and pipeline-based 
+agentless
+; 
+moatless
+; 
+autocoderover
+ methods to push LLMs’ real-world issue solving capability.
+However, most current techniques rely on powerful proprietary LLMs like GPT-4o 
+gpt4o
+ or Claude-3.5-Sonnet 
+claude35
+, where advancements are driven more by enhanced prompting strategies than by improvements in the underlying LLM.
+
+With the release of DeepSeek-R1 
+deepseekr1
+, reinforcement learning (RL) using rule-based rewards has become a crucial technique for enhancing the reasoning capabilities of LLMs across various downstream tasks, including coding 
+acecoder
+ and mathematics 
+cotstudy
+.
+However, their effectiveness in SE tasks remains limited 
+deepseekr1
+, and their substantial total parameter size (671B) poses challenges for researchers attempting to train them.
+For mathematics, the reward is generally defined as whether the answer predicted by the LLM can exactly match the ground truth 
+deepseekr1
+.
+While in coding, existing RL research typically utilizes execution feedback 
+deepseekr1
+; 
+rlef
+ as the reward signal and is limited to competitive programming tasks 
+codecontests
+; 
+lcb
+, where code is self-contained and easily executable.
+This is challenging to apply to real-world SE tasks due to the execution cost and lack of executable environments 
+swegym
+.
+Meanwhile, previous research 
+swegpt
+; 
+swegym
+; 
+swefixer
+ relied on proprietary teacher models and focused primarily on supervised fine-tuning (SFT), which, as we show in the paper, is less effective and less generalizable.
+
+To address these limitations, we propose SWE-RL, the first RL method to improve LLMs on SE tasks by directly using rule-based rewards and software evolution data—the record of entire software lifecycle, including all code snapshots, changes, and events like PRs and issues.
+As shown in 
+Figure
+ 
+1
+, we begin by curating a comprehensive dataset of GitHub pull requests (PRs), which is then transformed into the seed dataset for RL.
+Each data item includes an issue, the corresponding code context, and the oracle patch merged by the PR.
+During RL, the policy LLM is tasked with solving a given issue through reasoning and producing the code changes.
+The code changes are then converted into a consistent patch format for reward calculation.
+If the response is incorrectly formatted, the reward will be 
+−
+1
+-1
+; otherwise, the reward is a similarity score (between 0 and 1) of the predicted and the oracle patch calculated by Python’s 
+difflib.SequenceMatcher
+ 
+Gestalt_pattern_matching
+.
+Notably, we provide the complete content of each file in the input prompt, which implicitly teaches the model to reason about the precise fault locations before suggesting repair edits.
+
+Applying SWE-RL to Llama-3.3-70B-Instruct 
+llama31
+, our model Llama3-SWE-RL-70B  solves 
+41.0%
+ of the issues in SWE-bench Verified 
+swebverified
+, a human-verified subset of SWE-bench, with Agentless Mini, our pipeline-based scaffold built upon Agentless 
+agentless
+, featuring simplifications to match our RL process and enhancements for scaling.
+This performance is comparable to leading proprietary LLMs like GPT-4o 
+gpt4o
+ and state-of-the-art among medium-sized LLMs with less than 100B total parameters.
+Our ablation studies demonstrate that Llama3-SWE-RL-70B  significantly outperforms its Llama baseline. Additionally, we developed a competitive supervised fine-tuning (SFT) model from Llama-3.3-70B-Instruct using synthetic data generated in the Magicoder 
+magicoder
+ style to enhance the chain-of-thought 
+cot
+ process, employing the same seed as SWE-RL.
+We show that Llama3-SWE-RL-70B, trained with SWE-RL solely for solving issues, not only surpasses the SFT model in SWE-bench but also excels in other out-of-domain (OOD) tasks, including function-level coding 
+codex
+; 
+liu2023code
+, practical code generation with library use 
+bigcodebench
+, code reasoning 
+cruxeval
+, mathematics 
+mathbench
+, and general language understanding 
+mmlu
+.
+In these OOD tasks, Llama3-SWE-RL-70B  even outperforms Llama-3.3-70B-Instruct, whereas the SFT model results in decreased performance.
+
+In summary, our contributions are as follows:
+
+•
+
+We introduce SWE-RL, the first RL approach specifically designed to enhance LLMs for SE tasks using software evolution data (e.g., PRs) and rule-based rewards.
+
+•
+
+We develop Llama3-SWE-RL-70B, trained with SWE-RL on Llama-3.3-70B-Instruct. It achieves 
+41.0%
+ on SWE-bench Verified, the best performance among medium-sized language models (<100B) and even comparable to leading proprietary models like GPT-4o.
+
+•
+
+We show for the first time that applying RL solely to real-world SE tasks, such as issue solving, can already enhance an LLM’s general reasoning abilities, enabling it to improve on out-of-domain tasks like math, code generation, and general language understanding.
+
+2 
+SWE-RL
+
+To prepare the initial dataset for RL, we extract 273k high-quality PR seeds from the raw PR dataset we collected from GitHub.
+These seeds are selected based on specific heuristics. For example, a PR instance should include at least one linked issue, the issue should describe a bug-fixing request, and the code changes should involve programming files.
+For each seed, we extract the issue descriptions and code context, including all changed files and some relevant but unchanged files.
+These are converted to input prompts for the policy LLM.
+We also take the oracle patch from each seed, which will be used for reward calculation.
+More details are explained in 
+.
+
+2.1 
+Reward modeling
+
+Figure 2: 
+Prompt template used to train Llama3-SWE-RL with SWE-RL.
+
+Given an issue description and the corresponding code context, the policy LLM needs to generate search/replace edits 
+agentless
+ to fix this issue through reasoning.
+This is the only subtask we incorporate in the RL training.
+During inference, the LLM can generalize to tasks outside the training domain (e.g, file-level localization and test generation).
+For conciseness, we exclude certain prompt details, with the complete prompt template available in 
+.
+
+We bootstrap the policy LLM with the prompt template shown in 
+Figure
+ 
+2
+.
+Assuming that the LLM has generated a rollout 
+o
+o
+ given an issue and its code context,
+the reward function is defined as follows:
+
+ℛ
+⁡
+(
+o
+)
+=
+{
+−
+1
+,
+if
+​
+o
+​
+has wrong format
+,
+𝑐𝑜𝑚𝑝𝑎𝑟𝑒
+⁡
+(
+𝗉𝖺𝗍𝖼𝗁
+𝗉𝗋𝖾𝖽
+,
+𝗉𝖺𝗍𝖼𝗁
+𝗀𝗍
+)
+,
+otherwise
+.
+\mathcal{R}(o)=\begin{cases}-1,&\text{if}\ o\ \text{has wrong format},\\
+\mathit{compare}(\mathsf{patch_{pred}},\mathsf{patch_{gt}}),&\text{otherwise}.\end{cases}
+
+(1)
+
+Here, 
+𝗉𝖺𝗍𝖼𝗁
+𝗉𝗋𝖾𝖽
+\mathsf{patch_{pred}}
+ is the patch extracted from the LLM generation 
+o
+o
+ if it is correctly formatted, and 
+𝗉𝖺𝗍𝖼𝗁
+𝗀𝗍
+\mathsf{patch_{gt}}
+ means the oracle patch for this issue.
+
+In the implementation, we use Python’s 
+difflib.SequenceMatcher
+ as the 
+𝑐𝑜𝑚𝑝𝑎𝑟𝑒
+\mathit{compare}
+ function, which returns a floating point between 0 and 1 indicating the sequence similarity, and adopt Group Relative Policy Optimization (GRPO) 
+deepseekmath
+ for policy optimization.
+
+Given a seed RL dataset 
+𝒟
+𝗌𝖾𝖾𝖽
+\mathcal{D}_{\mathsf{seed}}{}
+ where each item contains
+(1) 
+𝗂𝗌𝗌𝗎𝖾
+\mathsf{issue}{}
+, the issue description,
+(2) 
+𝖼𝗍𝗑
+\mathsf{ctx}
+, the code context required to solve this issue, including both files to repair and relevant files not intended for editing,
+and (3) 
+𝗉𝖺𝗍𝖼𝗁
+𝗀𝗍
+\mathsf{patch_{gt}}{}
+, which is the oracle patch.
+The input prompt for each data item is formed by instantiating the prompt template in 
+Figure
+ 
+2
+ with the issue description and code context, which we denote as 
+
+                
+                  Question 2.1
+                  2.1
+                  Question
+                  Question
+                  2.1
+                  Question 2.1
+                
+                Question 2.1
+                
+                  = form-prompt(issue, ctx)
+                        
+                          .
+                          T
+                          h
+                          e
+                          p
+                          o
+                          l
+                          i
+                          c
+                          y
+                          L
+                          L
+                          M
+                        
+                      π_θ
+                        
+                          
+                            
+                              
+                              
+                              
+                            
+                            
+                              
+                                ⁢
+                                t
+                                r
+                                i
+                                e
+                                s
+                                t
+                                o
+                                s
+                                o
+                                l
+                                v
+                                e
+                                t
+                                h
+                                e
+                                i
+                                s
+                                s
+                                u
+                                e
+                                b
+                                y
+                                g
+                                e
+                                n
+                                e
+                                r
+                                a
+                                t
+                                i
+                                n
+                                g
+                                c
+                                o
+                                d
+                                e
+                                c
+                                h
+                                a
+                                n
+                                g
+                                e
+                                s
+                                t
+                                h
+                                r
+                                o
+                                u
+                                g
+                                h
+                                r
+                                e
+                                a
+                                s
+                                o
+                                n
+                                i
+                                n
+                                g
+                              
+                              ,
+                              
+                                ⁢
+                                a
+                                n
+                                d
+                                p
+                                r
+                                o
+                                d
+                                u
+                                c
+                                e
+                                s
+                                m
+                                u
+                                l
+                                t
+                                i
+                                p
+                                l
+                                e
+                                o
+                                u
+                                t
+                                p
+                                u
+                                t
+                                s
+                              
+                            
+                          
+                        
+                      o_i
+                        
+                          
+                            ⁢
+                            f
+                            o
+                            r
+                            e
+                            a
+                            c
+                            h
+                            i
+                            n
+                            p
+                            u
+                            t
+                            p
+                            r
+                            o
+                            m
+                            p
+                            t
+                          
+                        
+                      
+                
+                
+                  
+                    Question 2.2
+                    2.2
+                    Question
+                    Question
+                    2.2
+                    Question 2.2
+                  
+                  Question 2.2
+                  
+                    
+                        
+                          
+                            ⁢
+                            g
+                            i
+                            v
+                            e
+                            n
+                            t
+                            h
+                            e
+                            g
+                            r
+                            o
+                            u
+                            p
+                            s
+                            i
+                            z
+                            e
+                          
+                        
+                      G
+                          
+                            .
+                            T
+                            h
+                            e
+                            n
+                            ,
+                            t
+                            h
+                            e
+                            p
+                            o
+                            l
+                            i
+                            c
+                            y
+                            L
+                            L
+                            M
+                            a
+                            i
+                            m
+                            s
+                            t
+                            o
+                            m
+                            a
+                            x
+                            i
+                            m
+                            i
+                            z
+                            e
+                            t
+                            h
+                            e
+                            f
+                            o
+                            l
+                            l
+                            o
+                            w
+                            i
+                            n
+                            g
+                            G
+                            R
+                            P
+                            O
+                            o
+                            b
+                            j
+                            e
+                            c
+                            t
+                            i
+                            v
+                            e
+                            :
+                            
+                              
+                                (2)
+                                Equation 2
+                                Equation
+                                Equation
+                                Equations
+                                Equations
+                                2
+                              
+                            
+                          
+                        
+                  
+                
+              
+\question= \mathsf{form\mbox{-}prompt}(\mathsf{issue}, \mathsf{ctx})$.ThepolicyLLM$\mathit{\pi_{\theta}}$triestosolvetheissuebygeneratingcodechangesthroughreasoning,andproducesmultipleoutputs$o_i$foreachinputprompt$\question$giventhegroupsize$G$.Then,thepolicyLLMaimstomaximizethefollowingGRPOobjective:\begin{equation}\small\begin{gathered}\end{gathered}
+
+    Experimental support, please
+    
+view the build logs
+
+    for errors. Generated by
+    
+
+        L
+        
+A
+
+        T
+        
+E
+
+xml
+
+.
+  
+
+Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+Click the "Report Issue" 
+(
+
+)
+ button, located in the page header.
+
+Tip:
+ You can select the relevant text first, to include it in your report.
+
+Our team has already identified 
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a 
+list of packages that need conversion
+, and welcome 
+developer contributions
+.
+
+        We gratefully acknowledge support from
+        our 
+major funders
+,
+        
+member institutions
+, 
+,
+        and all contributors.
+      
+
+About
+
+·
+
+Help
+
+·
+
+Contact
+
+·
+
+Subscribe
+
+·
+
+Copyright
+
+·
+
+Privacy
+
+·
+
+Accessibility
+
+·
+
+Operational Status
+ (opens in new tab)
+
+Major funding support from
+
+

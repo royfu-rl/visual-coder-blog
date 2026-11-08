@@ -1,0 +1,1552 @@
+1Introduction 
+ Report GitHub Issue 
+ × 
+ Title: 
+ Content selection saved. Describe the issue below:
+ Description: 
+ Submit without GitHub 
+ Submit in GitHub 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+ Back to arXiv 
+ Why HTML? 
+ Report Issue 
+ Back to Abstract 
+ Download PDF 
+ Abstract 
+ 1 Introduction 
+ 2 Related work 
+ Software engineering agents. 
+ Strategies to improve SWE agents. 
+ Reinforcement learning for coding. 
+ 3 Preliminaries 
+ 3.1 Task formulation 
+ 3.2 From PPO to DAPO 
+ 3.3 Agent scaffolding 
+ 4 Training methodology 
+ 4.1 Data 
+ 4.2 Phase 1: rejection fine-tuning (RFT) 
+ 4.3 Phase 2: multi-turn RL 
+ 5 Results and findings 
+ 5.1 Main results 
+ 5.2 Findings 
+ 6 Discussion and future work 
+ References 
+ A PPO, GRPO and DAPO objectives 
+ B Verified-50 problems 
+ C Hyperparameters 
+ Inference. 
+ Training. 
+ D Infrastructure details 
+ E Example of agent action errors 
+ Error Type 1: Command Not Extractable. 
+ Error Type 2: Multiple Commands in a Single Turn. 
+ F Agent prompts and available tools 
+ F.1 System prompt 
+ F.2 One-shot demonstration 
+ G Example of an SWE task 
+ License: CC BY 4.0
+arXiv:2508.03501v2 [cs.LG] 10 Oct 2025
+ Training Long-Context, Multi-Turn Software Engineering Agents with Reinforcement Learning 
+ Alexander Golubev 1* , Maria Trofimova 1 , Sergei Polezhaev 1 , Ibragim Badertdinov 1 , Maksim Nekrashevich 1 , Anton Shevtsov 1 , Simon Karasik 1 , Sergey Abramov 1 , Andrei Andriushchenko 1 , Filipp Fisin 1 , Sergei Skvortsov 1 , Boris Yangel 2,† 
+ 1 Nebius AI  2 Humanoid
+ † Work done while at Nebius AI
+ * Correspondence to: alex_golubev@nebius.com
+ Abstract 
+ Research on applications of reinforcement learning (RL) to large language models has mostly been focused on single-turn problems, such as mathematical reasoning or single-shot code generation. While these problems can be viewed as token-level multi-turn Markov decision processes (MDPs), this view corresponds to a degenerate case of multi-turn interaction where the environment provides no feedback. This contrasts with many real-world domains, such as software engineering (SWE), which require rich multi-turn interactions with a stateful environment that responds to each action with a non-trivial observation. To bridge this gap, we demonstrate the successful application of RL to this general regime. Our methodology begins with rejection fine-tuning (RFT) using execution feedback to train a policy to follow instructions and formatting effectively, followed by a synchronous RL pipeline using DAPO for iterative improvement. Applying this pipeline to Qwen2.5-72B-Instruct, we increase its Pass@1 on the SWE-bench Verified benchmark from 11% to 39%, substantially improving upon the 20% RFT baseline. On the May and June splits of SWE-rebench , the resulting agent achieves Pass@1 of 35% and 31% respectively, competitive with even larger models such as DeepSeek-V3-0324 or Qwen3-235B-A22B, demonstrating that our methodology offers a practical approach for training capable agents for multi-turn interactive tasks using open-weight models. 
+ 1 Introduction
+ Large language models (LLMs) are increasingly being deployed within autonomous agents in complex, real-world domains. Software engineering (SWE) is an especially compelling application area, promising substantial economic impact through automation of debugging, code generation, and software maintenance tasks. However, current approaches to developing effective SWE agents rely predominantly on one of three strategies: (i) combining sophisticated scaffolding with proprietary LLMs  ( AugmentCode, 2025 ; Refact AI, 2025 ; Trae, 2025 ) , (ii) leveraging extensive inference-time scaling techniques  ( Antoniades et al., 2025 ) , or (iii) supervised fine-tuning (SFT) of open-weight models using demonstrations from stronger teacher models  ( Yang et al., 2025 ; Zeng et al., 2025 ; Pan et al., 2025 ) .
+While these methods have yielded strong initial results, they are often resource-intensive and depend on powerful, proprietary models. This reality underscores the need for methods that can build comparably effective systems from smaller, open-weight models. Reinforcement learning (RL) offers a promising alternative by directly optimizing an agent’s policy through interaction with a responsive environment, potentially achieving stronger performance without reliance on teacher models.
+ The interactive, structured nature of SWE, where actions produce observable transitions and verifiable outcomes, makes it an ideal domain for RL. Yet, to date, most RL applications for LLMs have been limited to single-turn tasks, such as math reasoning or single-shot code generation, which can be trivially modeled as multi-armed bandits or degenerate MDPs with no intermediate environmental feedback (Figure  1 ).
+ Figure 1 : 
+Illustration of task structure differences between bandit-style problems ( top , e.g., math) and POMDPs ( bottom , e.g., software engineering), defined in Section  3.1 . In bandit settings, the agent takes a single action to produce a final solution based on an initial observation. In contrast, POMDPs require a multi-step interaction loop where the agent repeatedly takes actions and interprets new environmental feedback to guide its subsequent decisions.
+ In contrast, SWE scenarios require agents to manage stateful, multi-turn interactions. Successfully applying RL in this context involves several key challenges:
+ • 
+ Long-horizon, multi-turn interaction : Agents must maintain coherence across dozens of steps with context windows spanning hundreds of thousands of tokens.
+ • 
+ Complex, informative feedback : Actions elicit rich outputs (e.g., compiler traces, test logs) that must be interpreted to guide subsequent decisions effectively.
+ • 
+ Data scalability and fidelity : Generating high-quality trajectories requires the reproduction of specific repository states in controlled environments, which limits dataset scale. Large-scale datasets such as SWE-smith   ( Yang et al., 2025 ) and SWE-rebench   ( Badertdinov et al., 2025 ) begin to address this gap; we primarily build on the latter.
+ • 
+ Sparse, delayed rewards : Success signals typically emerge only at the end of long action sequences, complicating credit assignment.
+ • 
+ Expensive and noisy evaluation : Unrolling trajectories and subsequent evaluation are costly, and flakiness in tests introduces noise in the reward signal.
+ In this paper, we address these challenges by developing and validating a complete training pipeline for interactive SWE agents. Our primary contributions are:
+ • 
+ We design and implement a robust two-phase training methodology that combines rejection fine-tuning (RFT) with a subsequent reinforcement learning stage using DAPO  ( Yu et al., 2025 ) . This pipeline appears to be effective for training agents in long-context interactive environments.
+ • 
+ We provide a strong empirical demonstration of our method’s effectiveness. By applying our pipeline to a 72B-parameter open-weight model, we improve its Pass@1 on SWE-bench Verified   ( Chowdhury et al., 2024 ) from 11% to 39.0%. Coupled with 35% and 31% Pass@1 scores on the SWE-rebench May/June splits, the agent achieves competitive performance with powerful, often much larger, open-weight models (Table  1 ).
+ • 
+ We share key practical insights and analyses from scaling RL to long-context SWE tasks. This includes findings on maintaining training stability and lessons learned that can serve as a blueprint for future work on RL for complex, interactive agents.
+ 2 Related work
+ Software engineering agents.
+ Early systems, notably SWE-agent  ( Yang et al., 2024 ) , demonstrated that LLMs could effectively operate within sandboxed software environments using predefined toolkits (e.g., shell commands, code editors) and be evaluated via automated unit tests  ( Jimenez et al., 2024 ) . Subsequent frameworks introduced alternative scaffolding and prompting strategies to enhance model interactions, including Agentless  ( Xia et al., 2024 ) , OpenHands  ( Wang et al., 2025 ) , and Moatless  ( Antoniades et al., 2025 ) . Our work closely aligns with the original SWE-agent design, leveraging similar prompting structures and tool configurations, enabling a direct evaluation of reinforcement learning improvements within this established context.
+ Strategies to improve SWE agents.
+ Prior efforts to enhance SWE agent performance beyond improving scaffoldings broadly focus on either test-time exploration or model-level improvements through supervised training.
+Test-time exploration strategies, such as Monte Carlo Tree Search (MCTS)  ( Antoniades et al., 2025 ) and guided 1-step lookahead  ( Zainullina et al., 2025 ) , significantly boost task success by exploring multiple solution trajectories. However, these methods are computationally expensive and sometimes introduce infrastructure complexity due to operations such as environment rollbacks and parallel execution paths.
+ Alternatively, many efforts have targeted model-level improvements via supervised fine-tuning using expert-curated demonstrations. Prominent examples include SWE-smith   ( Yang et al., 2025 ) , SWE-Fixer  ( Xie et al., 2025 ) , and Skywork-SWE  ( Zeng et al., 2025 ) , all of which achieved success by training open-weight models on extensive demonstration data. In contrast, our method relies exclusively on self-generated interaction data obtained through direct RL training. This approach simplifies data collection, eliminates the need for strong teacher models and opens the way for iterative self-improvement.
+ Reinforcement learning for coding.
+ RL has shown notable success in structured reasoning domains like mathematics  ( Shao et al., 2024 ; Seed et al., 2025 ) . In the coding domain, early RL applications often focused on single-turn code generation  ( Dou et al., 2024 ) . In complex SWE tasks, SWE-RL  ( Wei et al., 2025 ) is a recent example of applying policy-gradient RL, where the agent achieved strong results. However, its methodology, built upon the Agentless scaffold, frames the problem as a single-turn task where the model generates a complete solution patch in one pass. This approach simplifies the learning problem by sidestepping the complexities of stateful, multi-turn interaction and long-horizon credit assignment.
+ Our work, alongside other recent advancements, directly addresses these multi-turn challenges. Concurrent to our work, DeepSWE  ( Luo et al., 2025 ) successfully scaled critic-free RL training to a 32B-parameter model, while Sky-RL  ( Cao et al., 2025 ) introduced an asynchronous RL pipeline for long-context tasks. Our contribution to this emerging area is a complete, multi-stage methodology that successfully applies RL to a larger 72B-parameter model with a 131k token context in a fully interactive, multi-turn setting.
+ 3 Preliminaries
+ 3.1 Task formulation
+ We formalize the task of an autonomous SWE agent as a partially observable Markov decision process (POMDP)  ( Murphy, 2025 ) , defined by the tuple \langle\mathcal{Z},\mathcal{A},\Omega,T,\mathcal{O},R,\gamma\rangle :
+ • 
+ \mathcal{Z} : Set of true, latent environment states.
+ • 
+ \mathcal{A} : Set of actions available to the agent.
+ • 
+ \Omega : Set of observations the agent can receive.
+ • 
+ T(z^{\prime}|z,a) : Transition probability to state z^{\prime} from state z after action a .
+ • 
+ \mathcal{O}(o|z^{\prime}) : Probability of receiving observation o from state z^{\prime} .
+ • 
+ R(z,a) : Reward provided from taking action a from state z .
+ • 
+ \gamma\in[0,1] : Discount factor.
+ At each step t , the environment’s latent state z_{t} is unobservable. Instead, the agent maintains a history h_{t} of all previous actions and observations: h_{t}=(o_{0},a_{0},o_{1},a_{1},\dots,a_{t-1},o_{t}) . A complete history corresponding to a finished episode is called a trajectory \tau . The agent’s policy, parameterized by \theta , selects the next action based on this history: \pi_{\theta}(a_{t}|h_{t}) . Due to the LLM’s autoregressive nature, the policy probability factorizes over tokens within an action:
+ | 
+ \pi_{\theta}(a_{t}|h_{t})=\prod_{k=1}^{|a_{t}|}\pi_{\theta}(a_{t,k}|h_{t},a_{t, | 
+ (1) | 
+ Here, a_{t,k} is the k -th token of the action a_{t} , and |a_{t}| is the length of the action in tokens.
+ In our SWE setting, these components are instantiated as follows:
+ • 
+ Environment State ( z_{t} ) : Complete, hidden software environment state, including file system, source code, and running processes.
+ • 
+ Action ( a_{t} ) : A command string generated autoregressively by the LLM (potentially with reasoning and tool calls).
+ • 
+ Observation ( o_{t} ): The execution output from a command (typically stdout , stderr , and exit codes). The initial observation o_{0} contains the natural-language description of the task from the GitHub issue.
+ • 
+ History ( h_{t} ) : Complete observable history of past actions and observations, conditioning the policy’s next decision.
+ Our goal is to find a policy \pi_{\theta} that maximizes the expected cumulative reward. The cumulative reward for a trajectory \tau is the sum of rewards over all its steps, G(\tau)=\sum_{t=0}^{|\tau|-1}R(z_{t},a_{t}) , where |\tau| denotes the number of actions in the trajectory. Given our sparse reward structure where immediate rewards R(z_{t},a_{t}) are zero for all non-terminal steps, this simplifies to the terminal reward, which we denote as R(\tau) . R(\tau) is 1 if the final proposed patch passes the validation test suite, and 0 otherwise.
+ 3.2 From PPO to DAPO
+ Reinforcement learning has traditionally been dominated by Proximal Policy Optimization (PPO)  ( Schulman et al., 2017 ) , which employs a learned critic to estimate the advantage of each generated action, shown in Equation  5 . While powerful, PPO introduces extra overhead and sensitivity to hyperparameter tuning.
+ Group-Relative Policy Optimization (GRPO)  ( Shao et al., 2024 ) eliminates the need for a learned advantage estimator. Instead, it computes a Monte Carlo estimate of the advantage for each trajectory by normalizing its terminal reward against the mean and standard deviation of rewards from a group of trajectories sampled from the same policy.
+ For a given initial observation, GRPO samples a group of G complete trajectories \{\tau^{(1)},\dots,\tau^{(G)}\} from the policy and collects their terminal rewards \{R(\tau^{(1)}),\dots,R(\tau^{(G)})\} . The advantage of a trajectory \tau^{(i)} is calculated relative to the average reward of the group, \bar{R}=\frac{1}{G}\sum_{i=1}^{G}R(\tau^{(i)}) :
+ | 
+ \hat{A}^{(i)}=\frac{R(\tau^{(i)})-\bar{R}}{\sigma_{R}+\delta}, | 
+ | 
+ (2) | 
+ where \sigma_{R} is the standard deviation of rewards in the group and \delta is a small constant for numerical stability. This single advantage value \hat{A}^{(i)} is then applied to all tokens within the trajectory \tau^{(i)} , shown in Equation  7 .
+ DAPO extends GRPO by introducing several practical improvements for enhanced stability and efficiency. Key modifications include:
+ • 
+ Clip higher : Instead of a symmetric clip range (1-\varepsilon,1+\varepsilon) , DAPO uses asymmetric bounds (1-\varepsilon_{low},1+\varepsilon_{high}) . Typically, \varepsilon_{high} is set higher than \varepsilon_{low} to better prevent policy’s entropy collapse.
+ • 
+ Dynamic sampling : Sampled trajectories that carry no learning signal (i.e., \hat{A}^{(i)}=0 ) are filtered out, focusing computation on effective updates.
+ • 
+ Soft overlong punishment : An incremental penalty is imposed on trajectories that exceed a predefined threshold. The penalty scales linearly within a specified interval and is added to the original test-based reward to discourage excessively long responses.
+ • 
+ Token-level loss : The original GRPO algorithm uses sample-level averaging, where each trajectory has equal weight. DAPO suggests averaging the loss over all tokens in the batch, as shown in Equation  8 . This method ensures every token across the batch contributes equally to the gradient, giving greater influence to longer trajectories.
+ Our implementation applies the DAPO framework, adapting the reward function to better suit the multi-turn nature of SWE tasks, as detailed in Section  4.3 . Complete mathematical formulations for objective functions are provided in Appendix  A .
+ 3.3 Agent scaffolding
+ Our agent follows the SWE-agent  ( Yang et al., 2024 ) implementation with a ReAct-style loop  ( Yao et al., 2023 ) , interacting with the environment through a predefined set of tools. The entire action–observation history conditions every decision. The agent interacts with an environment using the following tools:
+ • 
+ Arbitrary shell commands ( ls , cat , grep , etc.).
+ • 
+ An edit command that replaces a specified range of lines in a file with new text. The command requires the agent to provide the replacement text with precise indentation and can operate on either the currently open file or one specified by a file path.
+ • 
+ Custom search and navigation utilities (e.g., search_file , open , goto ).
+ • 
+ A submit command that takes no arguments, signals that the agent has finished its work. This action terminates an episode.
+ Each SWE task includes a GitHub-style issue with a natural language description, a failing test suite that evaluates final patch correctness, and a sandboxed environment initialized from a repository snapshot. Prompts, available tools and an example of an SWE task can be found in Appendices  F - G .
+ 4 Training methodology
+ This section outlines our carefully curated data and a two-phase training pipeline optimized for multi-turn SWE tasks.
+ 4.1 Data
+ We start from the publicly available SWE-rebench dataset, containing 21,336 tasks sourced from approximately 3,400 Python GitHub repositories. Each task includes a GitHub issue, a ground-truth solution patch, a validation test suite, and a reproducible environment.
+ To ensure high-quality and stable training, we apply rigorous filtering criteria, resulting in 7,249 tasks selected according to:
+ • 
+ Task correctness : Remove tasks causing test failures due to invalid references or imports (e.g., AttributeError , ImportError ), as indicated in task metadata. These cases would require agent to guess particular identifier names.
+ • 
+ Controlled complexity : Include only tasks modifying up to seven files and fewer than 500 lines of code to maintain manageable complexity.
+ • 
+ LLM-assessed quality : Exclude tasks with unclear issue descriptions, overly complex tasks, or flawed test patches according to LLM-generated scores from the original dataset. This is done by removing all problems with the assigned LLM score of 3.0 in the metadata field.
+ • 
+ Deterministic tests : Remove tasks with flaky tests that produce inconsistent results across repeated executions (50 trials), ensuring stable training signals. Non-deterministic test behavior occurs mostly due to external service calls or floating-point inaccuracies.
+ For evaluation, we use the standard SWE-bench Verified benchmark, a 50-problem random subset (referred to as Verified-50 ) for faster intermediate checkpoint evaluation, and the monthly splits of SWE-rebench (May-June) which are not included in the training set, ensuring a fair and contamination-free comparison. The full list of Verified-50 problems can be found in Appendix  B .
+ 4.2 Phase 1: rejection fine-tuning (RFT)
+ We start from the open-weight Qwen2.5-72B-Instruct model. Out of the box it achieves only \sim 11% Pass@1 on SWE-bench Verified with poor instruction following being the dominant issue, resulting in improperly formatted commands. Examples of such behavior can be found in Appendix  E .
+ To address this problem and to warm up the model for the RL stage, we perform rejection fine-tuning. First, we run the initial checkpoint 10 times on the selected SWE-rebench tasks and keep only trajectories whose patches pass the test suite. This yields a set of 6,548 successful trajectories, on which we run a single epoch of supervised fine-tuning. During this epoch, we mask assistant turns that triggered an environment-formatting error, thereby focusing the loss only on valid actions and improving adherence to the tool structure (see Figure  2 ). After RFT, the model’s accuracy rises to \sim 20% (Table 1 ) and serves as a baseline for comparison with subsequent RL runs. Hyperparameters for the RFT run are listed in Appendix  C .
+ Figure 2 : An example trajectory from the agent’s interaction used in RFT. Only green (error-free) assistant turns contribute to training loss. 
+ 4.3 Phase 2: multi-turn RL
+ The core of our work involves applying RL to thousands of problems in an iterative loop. Each RL iteration includes:
+ • 
+ Problem sampling : A subset of problems is selected from the training pool.
+ • 
+ Rollouts generation : We sample G=10 complete trajectories per problem using the current policy.
+ • 
+ Reward computation : Following DAPO formulation, the final reward signal R_{\text{final}}(\tau) combines the binary success reward from test execution with a trajectory length penalty. Unlike the original token-based penalty, we apply a linear penalty for exceeding a predefined number of steps to better reflect the multi-turn nature of SWE tasks. The reward is computed as follows:
+ | 
+ \displaystyle R_{\text{final}}(\tau) | 
+ \displaystyle=R(\tau)+R_{\text{length}}(\tau) | 
+ | 
+ (3) | 
+ | 
+ \displaystyle R_{\text{length}}(\tau) | 
+ \displaystyle=\begin{cases}0,&\text{if }|\tau| | 
+ (4) | 
+ Here, R(\tau)\in\{0,1\} is the terminal reward defined in Section  3.1 , L_{\text{thr}} and T_{\text{max}} are hyperparameters representing the penalty threshold and maximum number of turns per trajectory, respectively.
+ • 
+ Advantage estimation : Rewards are averaged and normalized within each 10-sample group; samples with zero advantage are dropped.
+ • 
+ Optimization : We update all model parameters using DAPO’s clipped token-level objective.
+ Our RL training is divided into two sequential stages. The first stage establishes a baseline policy at a 65k context length. The second stage then advances this policy by training on a longer 131k context and doubling the maximum number of agent turns T_{\text{max}} , allowing the agent to tackle more complex problems.
+ Transitioning to this more computationally demanding setting required adjusting key hyperparameters to ensure stable and efficient training. Following practices from training reasoning models with large-scale RL  ( Rastogi et al., 2025 ; Parashar et al., 2025 ; He et al., 2025 ) , we decreased the high clip bound, increased problem difficulty and batch size, and decreased the number of instances sampled per iteration. The problems difficulty is increased by removing instances that have a success rate of 2/3 over all training iterations. To eliminate instances that are likely unsolvable, we also filter those that have never been solved. The complete set of hyperparameter changes between stages is detailed in Table  3 .
+ This second phase boosts performance to 39.0% on SWE-bench Verified . On the held-out SWE-rebench evaluation sets, it achieves 35.0% on the May split and 31.7% on the June split. The significant gap between our final Pass@1 score (39.0%) and Pass@10 score (58.4%) suggests that while the agent’s single best guess may be incorrect, a valid solution frequently exists within its top proposals. This indicates strong potential for application of re-ranking or best-of- n selection mechanisms to further improve performance.
+ Table 1 : Comparison of our models against open-weight baselines on SWE-bench Verified and SWE-rebench . Pass@1 metrics are averaged over 10 runs and reported with the standard error of the mean. Our final model and the baseline models are evaluated with a 131k context length; our intermediate models are evaluated at the context length used during their respective training stages (65k). All models use their default decoding parameters as specified in their Hugging Face configuration.
+ Model | 
+ SWE-bench 
+ Verified 
+ | 
+ SWE-rebench 
+ May 
+ | 
+ SWE-rebench 
+ June 
+ | 
+ | 
+ Pass@1 | 
+ Pass@10 | 
+ Pass@1 | 
+ Pass@10 | 
+ Pass@1 | 
+ Pass@10 | 
+ Qwen2.5-72B-Inst | 
+ 11.4 \pm 0.24 | 
+ 31.0 | 
+ 14.5 \pm 1.33 | 
+ 40.0 | 
+ 14.6 \pm 1.03 | 
+ 36.6 | 
+ + RFT @ 65k | 
+ 20.5 \pm 0.42 | 
+ 43.0 | 
+ 22.5 \pm 1.18 | 
+ 45.0 | 
+ 21.0 \pm 1.51 | 
+ 43.9 | 
+ + Stage 1 RL @ 65k | 
+ 35.7 \pm 0.28 | 
+ 54.6 | 
+ 36.5 \pm 1.59 | 
+ 55.0 | 
+ 31.2 \pm 0.80 | 
+ 53.7 | 
+ + Stage 2 RL @ 131k | 
+ 39.0 \pm 0.50 | 
+ 58.4 | 
+ 35.0 \pm 1.54 | 
+ 52.5 | 
+ 31.7 \pm 1.31 | 
+ 53.7 | 
+ Llama-4 Maverick | 
+ 15.8 \pm 0.54 | 
+ 47.2 | 
+ 19.0 \pm 1.72 | 
+ 50.0 | 
+ 13.7 \pm 1.79 | 
+ 39.0 | 
+ Qwen3-32B no-think | 
+ 20.4 \pm 0.34 | 
+ 44.0 | 
+ 21.8 \pm 1.54 | 
+ 50.0 | 
+ 17.6 \pm 1.30 | 
+ 36.6 | 
+ gpt-oss-120b | 
+ 22.8 \pm 0.54 | 
+ 58.4 | 
+ 24.8 \pm 1.26 | 
+ 57.5 | 
+ 19.5 \pm 2.36 | 
+ 48.8 | 
+ Qwen3-235B no-think | 
+ 25.8 \pm 0.37 | 
+ 54.4 | 
+ 27.3 \pm 1.15 | 
+ 57.5 | 
+ 22.9 \pm 2.16 | 
+ 48.8 | 
+ DeepSeek-V3-0324 | 
+ 39.6 \pm 0.47 | 
+ 62.2 | 
+ 36.8 \pm 0.92 | 
+ 60.0 | 
+ 31.5 \pm 1.38 | 
+ 58.5 | 
+ Qwen3-235b-Inst-2507 | 
+ 46.9 \pm 0.19 | 
+ 69.4 | 
+ 41.3 \pm 1.13 | 
+ 57.5 | 
+ 38.3 \pm 1.93 | 
+ 61.0 | 
+ 5 Results and findings
+ 5.1 Main results
+ Our two-phase procedure yields substantial improvements. Rejection fine-tuning provides an initial performance boost by enhancing the model’s ability to interact correctly with the environment. This is followed by over 100 RL iterations that progressively refine the agent’s policy. The performance trends in Figure  3 clearly illustrate how the agent’s behavior changes over iterations and stages. In Stage 1, the agent shows consistent improvement before its Pass@1 score begins to plateau. The switch to Stage 2 provides a further performance increase. Notably, this second stage is also characterized by a significant growth in the average steps per trajectory and the number of trajectories finished by a submit command, suggesting that the agent engages in longer, more complex reasoning to solve the more difficult tasks. The final model achieves 39.0\% on the full SWE-bench Verified .
+ For head-to-head comparisons, we evaluate DeepSeek-V3-0324 , Llama-4 Maverick , Qwen3-235B-A22B no-think , Qwen3-32B no-think , gpt-oss-120b and Qwen3-235B-A22B-Instruct-2507 within the same environment and tool setup (see Table  1 ) on both SWE-bench Verified and SWE-rebench . To benchmark our final model against specialized SWE agents, we summarize recent results in Table  2 .
+ Table 2 : Comparison of specialized multi-turn SWE agents on SWE-bench Verified . The “Before” column shows the Pass@1 score of the model prior to training, while the “After” column shows the final performance. “Teacher Distillation” indicates whether a stronger model was used for training.
+ Agent 
+ | 
+ Base Model 
+ | 
+ Before 
+ | 
+ After 
+ | 
+ Teacher 
+ Distillation 
+ | 
+ Ours 
+ | 
+ Qwen2.5-72B-Instruct 
+ | 
+ 11.4% | 
+ 39.0% | 
+ No | 
+ DeepSWE-32B, ( Luo et al., 2025 ) 
+ | 
+ Qwen3-32B 
+ | 
+ 23.0% | 
+ 42.2% | 
+ No | 
+ SkyRL-Agent-14B-v0, ( Cao et al., 2025 ) 
+ | 
+ Qwen3-14B 
+ | 
+ 18.0% | 
+ 21.6% | 
+ No | 
+ SWE-Fixer-72B, ( Xie et al., 2025 ) 
+ | 
+ Qwen2.5-72B-Base 
+ | 
+ – | 
+ 30.2% | 
+ Yes | 
+ SWE-agent-LM-32B, ( Yang et al., 2025 ) 
+ | 
+ Qwen2.5-Coder-32B-Instruct 
+ | 
+ 14.3% | 
+ 40.2% | 
+ Yes | 
+ Skywork-SWE-32B, ( Zeng et al., 2025 ) 
+ | 
+ Qwen2.5-Coder-32B-Instruct 
+ | 
+ 6.4% | 
+ 38.0% | 
+ Yes | 
+ SWE-Gym-32B, ( Pan et al., 2025 ) 
+ | 
+ Qwen2.5-Coder-32B-Instruct 
+ | 
+ 7.0% | 
+ 20.6% | 
+ Yes | 
+ SWESynInfer-72B, ( Ma et al., 2024 ) 
+ | 
+ Qwen2.5-72B-Instruct 
+ | 
+ 25.4% | 
+ 30.2% | 
+ Yes | 
+ R2EGym-Agent-32B, ( Jain et al., 2025 ) 
+ | 
+ Qwen2.5-Coder-32B-Instruct 
+ | 
+ 7.0% | 
+ 34.4% | 
+ Yes | 
+ 5.2 Findings
+ A commonly adopted practice in dataset preparation, also mentioned in DeepSWE  ( Luo et al., 2025 ) , is to filter or mask trajectories that exceed the model’s maximum context length. This is often motivated by the desire to reduce reward noise. However, we find this must be applied with caution. Manually crafted heuristics can introduce biases, breaking the assumption that the training data is sampled from the same distribution as the policy being optimized. In our setting, these long trajectories often occur when the agent is stuck in a repetitive loop. By discarding these trajectories, one also discards specific negative examples of this failure mode. As a result, the agent is not penalized for this looping behavior and fails to learn how to break out of such cycles, which can lead to it occurring more frequently during training.
+ We also observe a more subtle instability related to discrepancies between sampling and training. Midway through training, we upgraded the vLLM  ( Kwon et al., 2023 ) runtime, which introduced internal changes to decoding parameters. The upgrade enabled top_k and min_p filtering (previously off by default) using model-dependent values inherited from Hugging Face configurations.
+While this initially improved evaluation metrics, it caused performance to degrade after 5–10 training iterations.
+We attribute this to a distribution mismatch that violates the assumptions of importance sampling. The DAPO objective relies on the probability ratio \rho_{t,k}(\theta) to correct for evaluating actions under the current policy \pi_{\theta} using data generated by the policy from the previous iteration \pi_{\theta_{old}} (see Equation  6 ). Enabling decoding filters like top_k or min_p means that trajectories were sampled from a modified, truncated distribution \pi_{\text{rollout}} , not the true policy \pi_{\theta_{old}} . Consequently, the ratio \rho_{t,k}(\theta) becomes an invalid estimator of the policy change, leading to biased gradient updates and training instability. Once unbiased sampling was restored, performance recovered.
+ 6 Discussion and future work
+ Our work successfully demonstrates that modern reinforcement learning algorithms, specifically those based on the DAPO framework, can train capable agents for complex, interactive software engineering tasks. This process, however, highlights fundamental challenges in agent-based learning and reveals several key directions for future research:
+ • 
+ Sparse Rewards and Credit Assignment : A fundamental challenge is that the agent receives only a single binary success signal at the end of a long trajectory. This sparsity makes it difficult to perform credit assignment, that is, to identify which specific actions in a long sequence were crucial for the outcome. Broadcasting a single advantage estimate across thousands of preceding tokens can result in noisy and inefficient policy updates. Several research directions could address this: (i) reward shaping, which involves designing intermediate rewards based on signals like passing a subset of tests or reducing compiler errors; (ii) training an auxiliary critic or value head to provide step-level advantage estimates, enabling more granular updates; and (iii) prefix sampling, where rollouts are initiated from a shared non-empty trajectory prefix to better isolate the impact of later decisions.
+ • 
+ Uncertainty and Risk-Awareness : The binary, success-based reward objective encourages the agent to submit a patch “at any cost”, which leads it to act confidently even when a solution is unlikely. For real-world deployment, agents must recognize when to abstain. This requires better uncertainty estimation; for instance, by training the model to explicitly output a confidence score or by using the policy’s output entropy as a proxy for uncertainty. Such estimates would enable a precision-recall trade-off, allowing the agent to decide when to halt or to apply more compute for best-of- n selection without an external outcome-supervision model.
+ References
+ Antoniades et al. (2025) 
+Antoniades, A., Örwall, A., Zhang, K., Xie, Y., Goyal, A., and Wang, W.
+ Swe-search: Enhancing software agents with monte carlo tree search and iterative refinement, 2025.
+ URL https://arxiv.org/abs/2410.20285 .
+ AugmentCode (2025) 
+AugmentCode.
+ Ai software developer platform, 2025.
+ URL https://www.augmentcode.com/blog/1-open-source-agent-on-swe-bench-verified-by-combining-claude-3-7-and-o1 .
+ Badertdinov et al. (2025) 
+Badertdinov, I., Golubev, A., Nekrashevich, M., Shevtsov, A., Karasik, S., Andriushchenko, A., Trofimova, M., Litvintseva, D., and Yangel, B.
+ Swe-rebench: An automated pipeline for task collection and decontaminated evaluation of software engineering agents, 2025.
+ URL https://arxiv.org/abs/2505.20411 .
+ Cao et al. (2025) 
+Cao, S., Hegde, S., Li, D., Griggs, T., Liu, S., Tang, E., Pan, J., Wang, X., Malik, A., Neubig, G., Hakhamaneshi, K., Liaw, R., Moritz, P., Zaharia, M., Gonzalez, J. E., and Stoica, I.
+ Skyrl-v0: Train real-world long-horizon agents via reinforcement learning, 2025.
+ Chowdhury et al. (2024) 
+Chowdhury, N., Aung, J., Shern, C. J., Jaffe, O., Sherburn, D., Starace, G., Mays, E., Dias, R., Aljubeh, M., Glaese, M., Jimenez, C. E., Yang, J., Ho, L., Patwardhan, T., Liu, K., and Madry, A.
+ Introducing SWE-bench verified, 2024.
+ URL https://openai.com/index/introducing-swe-bench-verified/ .
+ Dou et al. (2024) 
+Dou, S., Liu, Y., Jia, H., Xiong, L., Zhou, E., Shen, W., Shan, J., Huang, C., Wang, X., Fan, X., Xi, Z., Zhou, Y., Ji, T., Zheng, R., Zhang, Q., Huang, X., and Gui, T.
+ Stepcoder: Improve code generation with reinforcement learning from compiler feedback, 2024.
+ URL https://arxiv.org/abs/2402.01391 .
+ He et al. (2025) 
+He, J., Liu, J., Liu, C. Y., Yan, R., Wang, C., Cheng, P., Zhang, X., Zhang, F., Xu, J., Shen, W., Li, S., Zeng, L., Wei, T., Cheng, C., An, B., Liu, Y., and Zhou, Y.
+ Skywork open reasoner 1 technical report, 2025.
+ URL https://arxiv.org/abs/2505.22312 .
+ Jain et al. (2025) 
+Jain, N., Singh, J., Shetty, M., Zheng, L., Sen, K., and Stoica, I.
+ R2e-gym: Procedural environments and hybrid verifiers for scaling open-weights swe agents, 2025.
+ URL https://arxiv.org/abs/2504.07164 .
+ Jimenez et al. (2024) 
+Jimenez, C. E., Yang, J., Wettig, A., Yao, S., Pei, K., Press, O., and Narasimhan, K.
+ Swe-bench: Can language models resolve real-world github issues?, 2024.
+ URL https://arxiv.org/abs/2310.06770 .
+ Kwon et al. (2023) 
+Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J. E., Zhang, H., and Stoica, I.
+ Efficient memory management for large language model serving with pagedattention.
+ In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles , 2023.
+ Luo et al. (2025) 
+Luo, M., Jain, N., Singh, J., Tan, S., Patel, A., Wu, Q., Ariyak, A., Cai, C., Venkat, T., Zhu, S., Athiwaratkun, B., Roongta, M., Zhang, C., Li, L. E., Popa, R. A., Sen, K., and Stoica, I.
+ Deepswe: Training a state-of-the-art coding agent from scratch by scaling rl, 2025.
+ URL https://pretty-radio-b75.notion.site/DeepSWE-Training-a-Fully-Open-sourced-State-of-the-Art-Coding-Agent-by-Scaling-RL-22281902c1468193aabbe9a8c59bbe33 .
+ Notion Blog.
+ Ma et al. (2024) 
+Ma, Y., Cao, R., Cao, Y., Zhang, Y., Chen, J., Liu, Y., Liu, Y., Li, B., Huang, F., and Li, Y.
+ Lingma swe-gpt: An open development-process-centric language model for automated software improvement, 2024.
+ URL https://arxiv.org/abs/2411.00622 .
+ Murphy (2025) 
+Murphy, K.
+ Reinforcement learning: An overview, 2025.
+ URL https://arxiv.org/abs/2412.05265 .
+ Pan et al. (2025) 
+Pan, J., Wang, X., Neubig, G., Jaitly, N., Ji, H., Suhr, A., and Zhang, Y.
+ Training software engineering agents and verifiers with swe-gym, 2025.
+ URL https://arxiv.org/abs/2412.21139 .
+ Parashar et al. (2025) 
+Parashar, S., Gui, S., Li, X., Ling, H., Vemuri, S., Olson, B., Li, E., Zhang, Y., Caverlee, J., Kalathil, D., and Ji, S.
+ Curriculum reinforcement learning from easy to hard tasks improves llm reasoning, 2025.
+ URL https://arxiv.org/abs/2506.06632 .
+ Peng et al. (2024) 
+Peng, B., Quesnelle, J., Fan, H., and Shippole, E.
+ Yarn: Efficient context window extension of large language models.
+ In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net, 2024.
+ URL https://openreview.net/forum?id=wHBfxhZu1u .
+ Rastogi et al. (2025) 
+Rastogi, A., Jiang, A. Q., Lo, A., Berrada, G., Lample, G., Rute, J., Barmentlo, J., Yadav, K., Khandelwal, K., Chandu, K. R., et al.
+ Magistral, 2025.
+ URL https://arxiv.org/abs/2506.10910 .
+ Refact AI (2025) 
+Refact AI.
+ Refact.ai: Ai software engineering agent, 2025.
+ URL https://refact.ai/blog/2025/open-source-sota-on-swe-bench-verified-refact-ai/ .
+ Schulman et al. (2017) 
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O.
+ Proximal policy optimization algorithms, 2017.
+ URL https://arxiv.org/abs/1707.06347 .
+ Seed et al. (2025) 
+Seed, B., :, Chen, J., Fan, T., Liu, X., Liu, L., Lin, Z., Wang, M., Wang, C., Wei, X., Xu, W., Yuan, Y., Yue, Y., Yan, L., Yu, Q., Zuo, X., Zhang, C., Zhu, R., An, Z., Bai, Z., Bao, Y., Bin, X., Chen, J., Chen, F., Chen, H., Chen, R., Chen, L., Chen, Z., Chen, J., Chen, S., Chen, K., Chen, Z., Chen, J., Chen, J., Chi, J., Dai, W., Dai, N., Dai, J., Dou, S., Du, Y., Du, Z., Duan, J., Dun, C., Fan, T.-H., Feng, J., Feng, J., Feng, Z., Fu, Y., Fu, W., Fu, H., Ge, H., Guo, H., Han, M., Han, L., Hao, W., Hao, X., He, Q., He, J., He, F., Heng, W., Hong, Z., Hou, Q., Hu, L., Hu, S., Hu, N., Hua, K., Huang, Q., Huang, Z., Huang, H., Huang, Z., Huang, T., Huang, W., Jia, W., Jia, B., Jia, X., Jiang, Y., Jiang, H., Jiang, Z., Jiang, K., Jiang, C., Jiao, J., Jin, X., Jin, X., Lai, X., Li, Z., Li, X., Li, L., Li, H., Li, Z., Wan, S., Wang, Y., Li, Y., Li, C., Li, N., Li, S., Li, X., Li, X., Li, A., Li, Y., Liang, N., Liang, X., Lin, H., Lin, W., Lin, Y., Liu, Z., Liu, G., Liu, G., Liu, C., Liu, Y., Liu, G., Liu, J.,
+Liu, C., Liu, D., Liu, K., Liu, S., Liu, Q., Liu, Y., Liu, K., Liu, G., Liu, B., Long, R., Lou, W., Lou, C., Luo, X., Luo, Y., Lv, C., Lv, H., Ma, B., Ma, Q., Ma, H., Ma, Y., Ma, J., Ma, W., Ma, T., Mao, C., Min, Q., Nan, Z., Ning, G., Ou, J., Pan, H., Pang, R., Peng, Y., Peng, T., Qian, L., Qian, L., Qiao, M., Qu, M., Ren, C., Ren, H., Shan, Y., Shen, W., Shen, K., Shen, K., Sheng, G., Shi, J., Shi, W., Shi, G., Cao, S. S., Song, Y., Song, Z., Su, J., Sun, Y., Sun, T., Sun, Z., Wan, B., Wang, Z., Wang, X., Wang, X., Wang, S., Wang, J., Wang, Q., Wang, C., Wang, S., Wang, Z., Wang, C., Wang, J., Wang, S., Wang, X., Wang, Z., Wang, Y., Wang, W., Wang, T., Wei, C., Wei, H., Wei, Z., Wei, S., Wu, Z., Wu, Y., Wu, Y., Wu, B., Wu, S., Wu, J., Wu, N., Wu, S., Wu, J., Xi, C., Xia, F., Xian, Y., Xiang, L., Xiang, B., Xiao, B., Xiao, Z., Xiao, X., Xiao, Y., Xin, C., Xin, S., Xiong, Y., Xu, J., Xu, Z., Xu, C., Xu, J., Xu, Y., Xu, W., Xu, Y., Xu, S., Yan, S., Yan, S., Yang, Q., Yang, X., Yang, T., Yang, Y., Yang, Y.,
+Yang, X., Yang, Z., Yang, G., Yang, Y., Yao, X., Yi, B., Yin, F., Yin, J., Ying, Z., Yu, X., Yu, H., Yu, S., Yu, M., Yu, H., Yuan, S., Yuan, J., Zeng, Y., Zhan, T., Zhang, Z., Zhang, Y., Zhang, M., Zhang, W., Zhang, R., Zhang, Z., Zhang, T., Zhang, X., Zhang, Z., Zhang, S., Zhang, W., Zhang, X., Zhang, Y., Zhang, Y., Zhang, G., Zhang, H., Zhang, Y., Zheng, R., Zheng, N., Zheng, Z., Zheng, Y., Zheng, C., Zhi, X., Zhong, W., Zhong, C., Zhong, Z., Zhong, B., Zhou, X., Zhou, N., Zhou, H., Zhu, H., Zhu, D., Zhu, W., and Zuo, L.
+ Seed1.5-thinking: Advancing superb reasoning models with reinforcement learning, 2025.
+ URL https://arxiv.org/abs/2504.13914 .
+ Shao et al. (2024) 
+Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y. K., Wu, Y., and Guo, D.
+ Deepseekmath: Pushing the limits of mathematical reasoning in open language models, 2024.
+ URL https://arxiv.org/abs/2402.03300 .
+ TractoAI (2025) 
+TractoAI.
+ Tractoai: Cloud platform for deploying, scaling, and monitoring ai and big data workloads, 2025.
+ URL https://tracto.ai/ .
+ Trae (2025) 
+Trae.
+ Trae: Ai software developer platform, 2025.
+ URL https://www.trae.ai/blog/product_update_0625 .
+ Wang et al. (2025) 
+Wang, X., Li, B., Song, Y., Xu, F. F., Tang, X., Zhuge, M., Pan, J., Song, Y., Li, B., Singh, J., Tran, H. H., Li, F., Ma, R., Zheng, M., Qian, B., Shao, Y., Muennighoff, N., Zhang, Y., Hui, B., Lin, J., Brennan, R., Peng, H., Ji, H., and Neubig, G.
+ Openhands: An open platform for ai software developers as generalist agents, 2025.
+ URL https://arxiv.org/abs/2407.16741 .
+ Wei et al. (2025) 
+Wei, Y., Duchenne, O., Copet, J., Carbonneaux, Q., Zhang, L., Fried, D., Synnaeve, G., Singh, R., and Wang, S. I.
+ Swe-rl: Advancing llm reasoning via reinforcement learning on open software evolution, 2025.
+ URL https://arxiv.org/abs/2502.18449 .
+ Xia et al. (2024) 
+Xia, C. S., Deng, Y., Dunn, S., and Zhang, L.
+ Agentless: Demystifying llm-based software engineering agents, 2024.
+ URL https://arxiv.org/abs/2407.01489 .
+ Xie et al. (2025) 
+Xie, C., Li, B., Gao, C., Du, H., Lam, W., Zou, D., and Chen, K.
+ Swe-fixer: Training open-source llms for effective and efficient github issue resolution, 2025.
+ URL https://arxiv.org/abs/2501.05040 .
+ Yang et al. (2024) 
+Yang, J., Jimenez, C. E., Wettig, A., Lieret, K., Yao, S., Narasimhan, K., and Press, O.
+ Swe-agent: Agent-computer interfaces enable automated software engineering, 2024.
+ URL https://arxiv.org/abs/2405.15793 .
+ Yang et al. (2025) 
+Yang, J., Leret, K., Jimenez, C. E., Wettig, A., Khandpur, K., Zhang, Y., Hui, B., Press, O., Schmidt, L., and Yang, D.
+ Swe-smith: Scaling data for software engineering agents, 2025.
+ URL https://arxiv.org/abs/2504.21798 .
+ Yao et al. (2023) 
+Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., and Cao, Y.
+ React: Synergizing reasoning and acting in language models, 2023.
+ URL https://arxiv.org/abs/2210.03629 .
+ Yu et al. (2025) 
+Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., Yue, Y., Dai, W., Fan, T., Liu, G., Liu, L., Liu, X., Lin, H., Lin, Z., Ma, B., Sheng, G., Tong, Y., Zhang, C., Zhang, M., Zhang, W., Zhu, H., Zhu, J., Chen, J., Chen, J., Wang, C., Yu, H., Song, Y., Wei, X., Zhou, H., Liu, J., Ma, W.-Y., Zhang, Y.-Q., Yan, L., Qiao, M., Wu, Y., and Wang, M.
+ Dapo: An open-source llm reinforcement learning system at scale, 2025.
+ URL https://arxiv.org/abs/2503.14476 .
+ Zainullina et al. (2025) 
+Zainullina, K., Golubev, A., Trofimova, M., Polezhaev, S., Badertdinov, I., Litvintseva, D., Karasik, S., Fisin, F., Skvortsov, S., Nekrashevich, M., Shevtsov, A., and Yangel, B.
+ Guided search strategies in non-serializable environments with applications to software engineering agents, 2025.
+ URL https://arxiv.org/abs/2505.13652 .
+ Zeng et al. (2025) 
+Zeng, L., Li, Y., Xiao, Y., Li, C., Liu, C. Y., Yan, R., Wei, T., He, J., Song, X., Liu, Y., and Zhou, Y.
+ Skywork-swe: Unveiling data scaling laws for software engineering in llms, 2025.
+ URL https://arxiv.org/abs/2506.19290 .
+ Appendix A PPO, GRPO and DAPO objectives
+ In our setting, the PPO objective can be the following:
+ | 
+ \mathcal{J}_{\text{PPO}}(\theta)=\mathbb{E}_{\begin{subarray}{c}o_{0}\sim\mathcal{D},\\
+\tau\sim\pi_{\theta_{old}}(\cdot|o_{0})\end{subarray}}\Biggl[\frac{1}{|\tau|}\sum_{t=0}^{|\tau|-1}\frac{1}{|a_{t}|}\sum_{k=1}^{|a_{t}|}\min\Bigl(\rho_{t,k}(\theta)A_{t,k},\text{clip}(\rho_{t,k}(\theta),1-\varepsilon,1+\varepsilon)A_{t,k}\Bigr)\Biggr], | 
+ | 
+ (5) | 
+ where o_{0}\sim\mathcal{D} indicates that initial observations are sampled from the distribution of tasks in our dataset and \theta_{old} represents parameters of the policy from the previous training step.
+ | 
+ \rho_{t,k}(\theta)\triangleq\frac{\pi_{\theta}(a_{t,k}|h_{t},a_{t, | 
+ (6) | 
+ is the probability ratio for the k -th token in action a_{t} , and A_{t,k} is its corresponding advantage estimate.
+ The GRPO objective function uses the same clipped surrogate objective as PPO but substitutes the critic-based advantage with this group-wise advantage estimate:
+ | 
+ \mathcal{J}_{\text{GRPO}}(\theta)=\mathbb{E}_{\begin{subarray}{c}o_{0}\sim\mathcal{D},\\
+\{\tau^{(i)}\}_{i=1}^{G}\sim\pi_{\theta_{old}}(\cdot|o_{0})\end{subarray}}\Biggl[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|\tau^{(i)}|}\sum_{t=0}^{|\tau^{(i)}|-1}\frac{1}{|a_{t}^{(i)}|}\sum_{k=1}^{|a_{t}^{(i)}|}\\
+\min\Bigl(\rho_{t,k}^{(i)}(\theta)\hat{A}^{(i)},\text{clip}(\rho_{t,k}^{(i)}(\theta),1-\varepsilon,1+\varepsilon)\hat{A}^{(i)}\Bigr)\Biggr]. | 
+ | 
+ (7) | 
+ DAPO suggests modifications on top of GRPO described in Section  3.2 :
+ | 
+ \mathcal{J}_{\text{DAPO}}(\theta)=\mathbb{E}_{\begin{subarray}{c}o_{0}\sim\mathcal{D},\\
+\{\tau^{(i)}\}_{i=1}^{G}\sim\pi_{\theta_{old}}(\cdot|o_{0})\end{subarray}}\Biggl[\frac{1}{\sum_{i=1}^{G}\sum_{t=0}^{|\tau^{(i)}|-1}|a_{t}^{(i)}|}\sum_{i=1}^{G}\sum_{t=0}^{|\tau^{(i)}|-1}\sum_{k=1}^{|a_{t}^{(i)}|}\\
+\min\Bigl(\rho_{t,k}^{(i)}(\theta)\hat{A}^{(i)},\text{clip}(\rho_{t,k}^{(i)}(\theta),1-\varepsilon_{low},1+\varepsilon_{high})\hat{A}^{(i)}\Bigr)\Biggr]. | 
+ | 
+ (8) | 
+ Figure 3 : A detailed performance trend of the RL-trained agent over all iterations. Statistics include Pass@1, Pass@10, the number of submit commands and the average number of steps per trajectory. All metrics are computed on Verified-50 . 
+ Appendix B Verified-50 problems
+ The Verified-50 dataset, which we curate from the SWE-bench Verified by randomly selecting problems, contains the following problem instances:
+ ⬇ 
+ 1 
+ sympy__sympy -22080 
+ 2 
+ django__django -15315 
+ 3 
+ django__django -11333 
+ 4 
+ matplotlib__matplotlib -20826 
+ 5 
+ django__django -11532 
+ 6 
+ django__django -16642 
+ 7 
+ django__django -14855 
+ 8 
+ sphinx - doc__sphinx -8721 
+ 9 
+ pylint - dev__pylint -4604 
+ 10 
+ sympy__sympy -13615 
+ 11 
+ django__django -13089 
+ 12 
+ django__django -15987 
+ 13 
+ django__django -14725 
+ 14 
+ sympy__sympy -14248 
+ 15 
+ pytest - dev__pytest -7982 
+ 16 
+ django__django -15280 
+ 17 
+ scikit - learn__scikit - learn -13142 
+ 18 
+ pytest - dev__pytest -5809 
+ 19 
+ matplotlib__matplotlib -23299 
+ 20 
+ django__django -16560 
+ 21 
+ django__django -15103 
+ 22 
+ sympy__sympy -16792 
+ 23 
+ django__django -14007 
+ 24 
+ psf__requests -2317 
+ 25 
+ django__django -11880 
+ 26 
+ django__django -16136 
+ 27 
+ django__django -16661 
+ 28 
+ sympy__sympy -17139 
+ 29 
+ sphinx - doc__sphinx -8595 
+ 30 
+ sympy__sympy -14531 
+ 31 
+ django__django -10880 
+ 32 
+ sympy__sympy -19346 
+ 33 
+ sphinx - doc__sphinx -9229 
+ 34 
+ django__django -11265 
+ 35 
+ matplotlib__matplotlib -25332 
+ 36 
+ scikit - learn__scikit - learn -13135 
+ 37 
+ pydata__xarray -6744 
+ 38 
+ pydata__xarray -6461 
+ 39 
+ sympy__sympy -15017 
+ 40 
+ django__django -13417 
+ 41 
+ matplotlib__matplotlib -24870 
+ 42 
+ django__django -15368 
+ 43 
+ django__django -11095 
+ 44 
+ django__django -15554 
+ 45 
+ pydata__xarray -6992 
+ 46 
+ django__django -15863 
+ 47 
+ django__django -13363 
+ 48 
+ sympy__sympy -13852 
+ 49 
+ django__django -14017 
+ 50 
+ pylint - dev__pylint -4661 
+ Listing 1: A list of problems from Verified-50. 
+ Appendix C Hyperparameters
+ Inference.
+ For rollout generation, we run the model with a temperature of 1.0, explicitly disabling all other decoding parameters such as top_p , top_k , min_p , repetition_penalty and others. This ensures unbiased sampling, which is critical for the validity of importance sampling ratios used during training. We demonstrate the dangers of biased sampling procedures in Section  5.2 .
+ Training.
+ For RFT, we perform one epoch of training at a 65k context length, with a learning rate of 5\times 10^{-6} , AdamW optimizer with weight decay of 0.1, 10 warmup steps, and a cosine decay scheduler with \textit{end\_lr}=0.0 . We use a batch size of 64, resulting in 50 gradient update steps.
+ For the RL pipeline, we list all hyperparameters changed across stages in Table  3 . Both setups share common settings: \textit{gradient\_clipping}=1.0 ; AdamW with \beta_{1}=0.9 , \beta_{2}=0.999 , \varepsilon=1\times 10^{-8} , weight decay of 0.1; learning rate of 10^{-6} and \textit{num\_epochs}=1 .
+ Table 3 : Key hyperparameters across the two RL training stages. 
+ Hyperparameter | 
+ Stage 1 | 
+ Stage 2 | 
+ Problems / Iteration | 
+ 300 | 
+ 100 | 
+ Total Problems | 
+ 7249 | 
+ 2028 | 
+ Batch Size | 
+ 128 | 
+ 256 | 
+ ( \varepsilon_{low} , \varepsilon_{high} ) | 
+ (0.2, 0.3) | 
+ (0.2, 0.26) | 
+ Maximum Turns ( T_{\text{max}} ) | 
+ 40 | 
+ 80 | 
+ Penalty Threshold ( L_{\text{thr}} ) | 
+ 10 | 
+ 10 | 
+ For the Qwen2.5-72B-Instruct model we use YaRN positional encoding  ( Peng et al., 2024 ) with \textit{factor}=4.0 to enable 131k context length training and inference.
+ Appendix D Infrastructure details
+ The described process is based on a fully synchronous RL training process, meaning that inference and training stages are interleaved: once rollout generation is completed, trajectories are used for training. This setup enables fully on-policy training with no policy lag between sampling and updates. However, as described earlier, we sample 10 trajectories for each problem. This results in 2-8 optimization steps per iteration depending on the batch size and the number of trajectories with \hat{A}^{(i)}\neq 0 .
+ We believe that asynchronous frameworks can offer greater scalability, but to eliminate complexities like trajectory lag, a synchronous framework is a reasonable choice for these experiments. A key drawback of the synchronous approach is the “straggler” problem: the time for each generation iteration is determined by the single slowest trajectory to complete, which can reduce overall throughput.
+ To enable full-parameter training on sequences up to 131k tokens, we leverage context parallelism, which partitions long sequences across GPUs. All training and inference are conducted on 16 H200 nodes.
+ Figure 4 : One synchronous iteration of the RL pipeline (green: GPU heavy; yellow: CPU heavy). 
+ The entire pipeline of distributed agent execution and evaluation is orchestrated at scale using Kubernetes for agent execution and Tracto AI  ( TractoAI, 2025 ) for evaluation. During the rollout generation phase, each agent instance runs in a dedicated Kubernetes pod with a resource request of 0.5 CPU and 2 GiB of RAM.
+ All training and inference are conducted on a cluster of 16 H200 nodes, each equipped with eight GPUs, 32 CPUs and 960 GiB of CPU RAM.
+ Within this environment, model training is conducted using an internal framework built on JAX, while inference is accelerated using the vLLM framework  ( Kwon et al., 2023 ) , version 0.7.4.
+ Figure  4 demonstrates the workflow of a single synchronous iteration. As illustrated, the training process for a new policy begins only after the verification of all trajectories in the batch is complete.
+ Appendix E Example of agent action errors
+ This section provides examples of common formatting errors produced by the base Qwen2.5-72B-Instruct model prior to rejection fine-tuning. These errors prevent the agent from interacting correctly with the environment and are the primary target of the RFT phase.
+ Error Type 1: Command Not Extractable.
+ In this common failure mode, the agent correctly reasons about the next step but fails to format its intended action as a distinct, parsable command beginning with ‘‘‘ command and ending with ‘‘‘ . The scaffolding cannot extract a valid command, resulting in an error.
+ ⬇ 
+ 1 
+ Now that we have located the ‘ __deepcopy__ ‘ method in ‘ fields . py ‘, let ’ s modify it to deeply copy the ‘ error_messages ‘ dictionary . This will ensure that each instance of the form field has its own independent copy of the error messages . 
+ 2 
+ 3 
+ ### Step 2: Modify the ‘ __deepcopy__ ‘ method 
+ 4 
+ I will add a line to the ‘ __deepcopy__ ‘ method to deep copy the ‘ error_messages ‘ dictionary . 
+ 5 
+ 6 
+ ‘‘‘ edit 198:198 
+ 7 
+ result . error_messages = copy . deepcopy ( self . error_messages , memo ) 
+ 8 
+ ‘‘‘ 
+ Listing 2: An example of the ‘cannot_extract_command‘ error type. 
+ Error Type 2: Multiple Commands in a Single Turn.
+ The agent is designed to follow a strict ReAct loop, where it emits a single thought and a single action per turn before waiting for an observation. In this error case, the agent violates this protocol by attempting to issue multiple distinct commands within a single turn, leading to a parsing failure.
+ ⬇ 
+ 1 
+ To resolve this issue , I will follow these steps : 
+ 2 
+ 3 
+ 1. ** Reproduce the Error **: I need to create a Python script that reproduces the ‘ KeyError ‘ when passing a ‘ CCDData ‘ instance into ‘ np . min ()‘. 
+ 4 
+ 2. ** Identify the Cause **: Once the error is reproduced , I will investigate the code in ‘ astropy / nddata / mixins / ndarithmetic . py ‘ to understand why the ‘ KeyError ‘ is being raised . 
+ 5 
+ 3. ** Fix the Issue **: I will modify the code to handle the ‘ KeyError ‘ appropriately and ensure that ‘ np . min ()‘ works as expected . 
+ 6 
+ 4. ** Verify the Fix **: I will run the same script to confirm that the ‘ KeyError ‘ is no longer raised and that the correct minimum value is returned . 
+ 7 
+ 5. ** Run Existing Tests **: I will run the existing tests in the repository to ensure that my changes do not break any other functionality . 
+ 8 
+ 9 
+ Let ’ s start by creating a Python script to reproduce the error . 
+ 10 
+ 11 
+ ‘‘‘ command 
+ 12 
+ create reproduce_error . py 
+ 13 
+ ‘‘‘ 
+ 14 
+ ‘‘‘ command 
+ 15 
+ edit 1:1 << ’ EOF ’ 
+ 16 
+ import numpy as np 
+ 17 
+ from astropy . nddata import CCDData 
+ 18 
+ 19 
+ a = CCDData ([1, 2, 3], unit =" adu ") 
+ 20 
+ print ( np . min ( a )) 
+ 21 
+ EOF 
+ 22 
+ ‘‘‘ 
+ 23 
+ 24 
+ Now , I will run the script to reproduce the error . 
+ 25 
+ 26 
+ ‘‘‘ command 
+ 27 
+ python reproduce_error . py 
+ 28 
+ ‘‘‘ 
+ Listing 3: An example of the ‘multiple_commands_extracted‘ error type. 
+ Appendix F Agent prompts and available tools
+ This section details the prompts used to guide the agent. The agent’s behavior is primarily governed by a system prompt that defines the required ReAct-style interaction format, and a description of the available tools. This system prompt is provided to the agent at the beginning of every episode for all experiments.
+ For the initial data collection phase using the base instruct-tuned checkpoint, we appended a one-shot demonstration to the system prompt. This in-context example of a successful trajectory was used solely to improve the quality of the initial rollouts for building the RFT dataset. Crucially, this demonstration was not included in the prompt for the RFT and subsequent RL-trained models; they were trained and evaluated using only the system prompt detailed below.
+ F.1 System prompt
+ ⬇ 
+ 1 
+ You are an autonomous programming agent . Your goal is to resolve the issue given to you . 
+ 2 
+ You are given access to a terminal environment with some special tools to make your job easier . 
+ 3 
+ You must use the terminal to gain information about the codebase , find or modify the relevant files in order to resolve the issue . 
+ 4 
+ In this environment , all standard unix commands ( e . g . grep , sed , echo etc .) will be available to you . 
+ 5 
+ However , the environment does NOT support interactive session commands that expect user input ( e . g . vim ), so please do not invoke them , it will result in an error . 
+ 6 
+ You can however create python scripts and run them , this is very useful to reproduce errors or test something . 
+ 7 
+ If some packages are missing , you can install them using an appropriate package manager ( e . g . pip , apt , etc .). 
+ 8 
+ Do not ask any questions to the environment , it ’ s an automated system that can only execute your commands . 
+ 9 
+ When you are satisfied with the changes you made , you should explicitly submit them using a special command . This will terminate your session . 
+ 10 
+ 11 
+ # SPECIAL TOOLS 
+ 12 
+ 13 
+ In addition to standard unix commands you can use special tools described below . 
+ 14 
+ Please note that some of these commands work with the currently open file , so pay attention to what file is open . 
+ 15 
+ 16 
+ Usage : create [ OPTIONS ] FILENAME 
+ 17 
+ Creates and opens a new filename with the given name . 
+ 18 
+ 19 
+ Usage : edit [ OPTIONS ] LINE_RANGE [ REPLACEMENT_TEXT ] 
+ 20 
+ Replaces lines in LINE_RANGE =< start_line >:< end_line > ( inclusive ) with the 
+ 21 
+ given text in the currently open or specified file . The REPLACEMENT_TEXT 
+ 22 
+ will be used as provided including all whitespaces , so make sure your 
+ 23 
+ indentation is correct . 
+ 24 
+ To input multiple lines into REPLACEMENT_TEXT , you may use the following 
+ 25 
+ syntax : 
+ 26 
+ ‘‘‘ 
+ 27 
+ edit 1:1 << ’ EOF ’ 
+ 28 
+ Line1 
+ 29 
+ Line2 
+ 30 
+ EOF 
+ 31 
+ ‘‘‘ 
+ 32 
+ You can also provide the file to edit via ‘-- file ‘ option . 
+ 33 
+ ‘‘‘ 
+ 34 
+ edit -- file path / to / file 1:1 " Your Replacement Text Here " 
+ 35 
+ ‘‘‘ 
+ 36 
+ Please note that THIS COMMAND REQUIRES PROPER INDENTATION . If you ’ d like to 
+ 37 
+ add the line ’ print ( x )’ you must fully write that out , with all 
+ 38 
+ those spaces before the print statement ! 
+ 39 
+ Options : 
+ 40 
+ -- file PATH The file to edit . ( If not provided , edits the currently open 
+ 41 
+ file ) 
+ 42 
+ 43 
+ Usage : goto [ OPTIONS ] LINE_NUMBER 
+ 44 
+ Navigates the current window to a given line in the currently open file . 
+ 45 
+ 46 
+ Usage : open [ OPTIONS ] [ FILE ] [ LINE_NUMBER ] 
+ 47 
+ Opens the file at the given path in the editor . If file is not specified , 
+ 48 
+ the last open file will be reopened . If line_number is provided , the current 
+ 49 
+ window will move to show that line . 
+ 50 
+ 51 
+ Usage : replace [ OPTIONS ] SEARCH REPLACE 
+ 52 
+ Replaces a given string with another string in the currently open file . 
+ 53 
+ Options : 
+ 54 
+ -- replace - all Replace all occurrences of the SEARCH text . 
+ 55 
+ 56 
+ Usage : scroll_down [ OPTIONS ] 
+ 57 
+ Scroll down the window in the currently open file and output its contents . 
+ 58 
+ 59 
+ Usage : scroll_up [ OPTIONS ] 
+ 60 
+ Scroll up the window in the currently open file and output its contents . 
+ 61 
+ 62 
+ Usage : search_file [ OPTIONS ] SEARCH_TERM [ FILE ] 
+ 63 
+ Searches for SEARCH_TERM in file . If FILE is not provided , searches in the currently open file . 
+ 64 
+ 65 
+ Usage : submit [ OPTIONS ] 
+ 66 
+ Submits your current code and terminates the session . 
+ 67 
+ 68 
+ 69 
+ # ENVIRONMENT RESPONSE 
+ 70 
+ 71 
+ At the very beginning the environment will provide you with an issue description . In response to every command that you invoke , 
+ 72 
+ the environment will give you the output of the command or an error message followed by a shell prompt . 
+ 73 
+ The shell prompt will be formatted as follows : 
+ 74 
+ ‘‘‘ 
+ 75 
+ ( Current directory : < current_dir >, current file : < current_file >) bash - $ 
+ 76 
+ ‘‘‘ 
+ 77 
+ so that you always know what the current directory is and what file is currently open . 
+ 78 
+ 79 
+ # YOUR RESPONSE 
+ 80 
+ 81 
+ Your response should consist of two parts : reasoning ( arbitrary text ) and command ( surrounded by triple ticks and a special ’ command ’ keyword ). 
+ 82 
+ Your response should always include A SINGLE reasoning and A SINGLE command as in the following examples : 
+ 83 
+ 84 
+ < response example > 
+ 85 
+ First I ’ ll start by using ls to see what files are in the current directory . I ’ ll look at all files including hidden ones . 
+ 86 
+ ‘‘‘ command 
+ 87 
+ ls - a 
+ 88 
+ ‘‘‘ 
+ 89 
+ </ response example > 
+ 90 
+ 91 
+ < response example > 
+ 92 
+ Let ’ s search the file ‘ models . py ‘ for the UserEntity class definition . 
+ 93 
+ ‘‘‘ command 
+ 94 
+ search_file " class UserEntity " models . py 
+ 95 
+ ‘‘‘ 
+ 96 
+ </ response example > 
+ 97 
+ 98 
+ Everything you include in the reasoning will be made available to you when generating further commands . 
+ 99 
+ If you ’ d like to issue two command blocks in a single response , PLEASE DO NOT DO THAT ! THIS WILL RESULT IN AN ERROR . 
+ 100 
+ 101 
+ # HANDLING TESTS 
+ 102 
+ 103 
+ * You can run existing tests to validate the changes you made or make sure you didn ’ t break anything . 
+ 104 
+ * If missing packages or some environment misconfiguration is preventing you from running the tests , you can install missing packages or fix the environment . 
+ 105 
+ * However UNDER NO CIRCUMSTANCES should you modify existing tests or add new tests to the repository . 
+ 106 
+ This will lead to an error in the system that evaluates your performance . Instead , you can just create a temporary script , use it to test changes and remove it before submitting . 
+ 107 
+ * If existing tests break because they need to be updated to reflect the changes you made , just ignore it . Evaluation system will not take it into account . 
+ 108 
+ * However if existing tests are broken because your fix is incorrect , you should fix your code and make sure all tests pass before submitting the change . 
+ 109 
+ 110 
+ # USEFUL ADVICE 
+ 111 
+ 112 
+ * As a first step , it might be a good idea to explore the repository to familiarize yourself with its structure . 
+ 113 
+ * You should also come up with a rough plan of how to resolve the issue and put it into your reasoning . 
+ 114 
+ * If the issue description reports some error , create a script to reproduce the error and run it to confirm the error . THIS IS USUALLY A VERY GOOD FIRST STEP ! 
+ 115 
+ * Edit the source code of the repo to resolve the issue 
+ 116 
+ * Rerun your reproduce script and confirm that the error is fixed ! THIS IS QUITE IMPORTANT ! 
+ 117 
+ * Think about edge cases and make sure your fix handles them as well . 
+ 118 
+ * Make sure your solution is general enough and not hardcoded to the specific cases reported in the issue description . 
+ 119 
+ * It might be a good idea to ensure that existing tests in the repository pass before submitting the change . Otherwise it ’ s easy to break existing functionality . 
+ Listing 4: System prompt defining the agent’s task and tools. 
+ F.2 One-shot demonstration
+ The following demonstration was provided as a one-shot example to the base instruct model to generate the initial dataset for RFT.
+ ⬇ 
+ 1 
+ # DEMONSTRATION 
+ 2 
+ 3 
+ Here is a very simple demonstration of how agent can interact with the environment using the provided interface . 
+ 4 
+ 5 
+ < demonstration >< environment > 
+ 6 
+ # ISSUE DESCRIPTION 
+ 7 
+ 8 
+ Here is a script that is supposed to print out first 10 prime numbers , but it seems to have a bug . Can you fix it ? 
+ 9 
+ 10 
+ ‘‘‘ 
+ 11 
+ def is_prime ( n ): 
+ 12 
+ if n <= 1: 
+ 13 
+ return False 
+ 14 
+ for i in range (2, int ( n **0.5)): 
+ 15 
+ if n % i == 0: 
+ 16 
+ return False 
+ 17 
+ return True 
+ 18 
+ 19 
+ primes = [] 
+ 20 
+ num = 2 
+ 21 
+ while len ( primes ) < 10: 
+ 22 
+ if is_prime ( num ): 
+ 23 
+ primes . append ( num ) 
+ 24 
+ num += 1 
+ 25 
+ 26 
+ print (" First 10 prime numbers :", primes ) 
+ 27 
+ ‘‘‘ 
+ 28 
+ 29 
+ # ADDITIONAL ADVICE 
+ 30 
+ 31 
+ Since you are given a git repository , you can use git commands to simplify your work . 
+ 32 
+ For example , if you made a mistake and want to revert your changes , you can use ‘ git checkout < file >‘ to restore the file to its original state . 
+ 33 
+ You can also reset all changes in the repository using ‘ git reset -- hard ‘ command . 
+ 34 
+ Additionally , you can use ‘ git stash ‘ and ‘ git stash pop ‘ to temporarily save your changes and restore them later . 
+ 35 
+ Finally , you can see the changes that you ’ ve made ( which will be submitted when you call ‘ submit ‘) using ‘ git status ‘ or ‘ git diff ‘ commands . 
+ 36 
+ However you don ’ t need to use ‘ git add ‘ or ‘ git commit ‘ before submitting your changes . In fact , 
+ 37 
+ ‘ submit ‘ only submits currently unstaged changes because it uses ‘ git diff ‘ to get the changes that need to be submitted . 
+ 38 
+ 39 
+ # CHECKLIST 
+ 40 
+ 41 
+ Before submitting your solution , please go over the following checklist and make sure you ’ ve done everything : 
+ 42 
+ - [ ] If an error was reported in the issue description , I have successfully reproduced it . 
+ 43 
+ - [ ] If an error was reported in the issue description , I have confirmed that my fix resolves the error . 
+ 44 
+ - [ ] I have thought about edge cases and made sure my fix handles them as well . 
+ 45 
+ - [ ] I have run existing tests in the repository that might have been affected by the change I made and confirmed that they pass . 
+ 46 
+ I want you to list every bullet from this checklist and write your reasoning for why you think you did it or didn ’ t need to . 
+ 47 
+ 48 
+ Repository has been uploaded and your shell is currently at the repository root . Time to solve the issue ! 
+ 49 
+ 50 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 51 
+ </ environment > 
+ 52 
+ < agent > 
+ 53 
+ Let me analyze the issue and fix the prime number generator script step by step . 
+ 54 
+ 55 
+ First , let ’ s create a Python script to reproduce the reported issue and verify the current behavior . 
+ 56 
+ 57 
+ ‘‘‘ command 
+ 58 
+ create prime_numbers . py 
+ 59 
+ ‘‘‘ 
+ 60 
+ </ agent > 
+ 61 
+ < environment > 
+ 62 
+ [ File : prime_numbers . py (1 lines total )] 
+ 63 
+ 1: 
+ 64 
+ 65 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 66 
+ </ environment > 
+ 67 
+ < agent > 
+ 68 
+ Now I ’ ll add the provided code to the file to test it and see what output it produces . The issue description mentions there ’ s a bug , but doesn ’ t specify what exactly is wrong . First we need to identify the issue . 
+ 69 
+ 70 
+ ‘‘‘ command 
+ 71 
+ edit 1:1 << ’ EOF ’ 
+ 72 
+ def is_prime ( n ): 
+ 73 
+ if n <= 1: 
+ 74 
+ return False 
+ 75 
+ for i in range (2, int ( n **0.5)): 
+ 76 
+ if n % i == 0: 
+ 77 
+ return False 
+ 78 
+ return True 
+ 79 
+ 80 
+ primes = [] 
+ 81 
+ num = 2 
+ 82 
+ while len ( primes ) < 10: 
+ 83 
+ if is_prime ( num ): 
+ 84 
+ primes . append ( num ) 
+ 85 
+ num += 1 
+ 86 
+ 87 
+ print (" First 10 prime numbers :", primes ) 
+ 88 
+ EOF 
+ 89 
+ ‘‘‘ 
+ 90 
+ </ agent > 
+ 91 
+ < environment > 
+ 92 
+ File updated . Please review the changes and make sure they are correct ( correct indentation , no duplicate lines , etc ). Edit the file again if necessary . 
+ 93 
+ [ File : / project / prime_numbers . py (16 lines total )] 
+ 94 
+ 1: def is_prime ( n ): 
+ 95 
+ 2: if n <= 1: 
+ 96 
+ 3: return False 
+ 97 
+ 4: for i in range (2, int ( n **0.5)): 
+ 98 
+ 5: if n % i == 0: 
+ 99 
+ 6: return False 
+ 100 
+ 7: return True 
+ 101 
+ 8: 
+ 102 
+ 9: primes = [] 
+ 103 
+ 10: num = 2 
+ 104 
+ 11: while len ( primes ) < 10: 
+ 105 
+ 12: if is_prime ( num ): 
+ 106 
+ 13: primes . append ( num ) 
+ 107 
+ 14: num += 1 
+ 108 
+ 15: 
+ 109 
+ 16: print (" First 10 prime numbers :", primes ) 
+ 110 
+ 111 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 112 
+ </ environment > 
+ 113 
+ < agent > 
+ 114 
+ Now let ’ s run the script to see what output it produces and identify the bug . 
+ 115 
+ 116 
+ ‘‘‘ command 
+ 117 
+ python prime_numbers . py 
+ 118 
+ ‘‘‘ 
+ 119 
+ </ agent > 
+ 120 
+ < environment > 
+ 121 
+ First 10 prime numbers : [2, 3, 4, 5, 6, 7, 8, 9, 11, 13] 
+ 122 
+ 123 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 124 
+ </ environment > 
+ 125 
+ < agent > 
+ 126 
+ Ah , I see the issue ! The script incorrectly includes numbers 4, 6, 8, and 9 in the output as " prime " numbers when they ’ re actually not prime . The bug is in the ‘ is_prime ()‘ function - the range should go up to ‘ int ( n **0.5) + 1‘ because the upper bound in Python ’ s range is exclusive . Let ’ s fix this by modifying the range in the ‘ is_prime ()‘ function . 
+ 127 
+ 128 
+ ‘‘‘ command 
+ 129 
+ edit 4:4 << ’ EOF ’ 
+ 130 
+ for i in range (2, int ( n **0.5) + 1): 
+ 131 
+ EOF 
+ 132 
+ ‘‘‘ 
+ 133 
+ </ agent > 
+ 134 
+ < environment > 
+ 135 
+ File updated . Please review the changes and make sure they are correct ( correct indentation , no duplicate lines , etc ). Edit the file again if necessary . 
+ 136 
+ [ File : / project / prime_numbers . py (16 lines total )] 
+ 137 
+ 1: def is_prime ( n ): 
+ 138 
+ 2: if n <= 1: 
+ 139 
+ 3: return False 
+ 140 
+ 4: for i in range (2, int ( n **0.5) + 1): 
+ 141 
+ 5: if n % i == 0: 
+ 142 
+ 6: return False 
+ 143 
+ 7: return True 
+ 144 
+ 8: 
+ 145 
+ 9: primes = [] 
+ 146 
+ 10: num = 2 
+ 147 
+ 11: while len ( primes ) < 10: 
+ 148 
+ 12: if is_prime ( num ): 
+ 149 
+ 13: primes . append ( num ) 
+ 150 
+ 14: num += 1 
+ 151 
+ 15: 
+ 152 
+ 16: print (" First 10 prime numbers :", primes ) 
+ 153 
+ 154 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 155 
+ </ environment > 
+ 156 
+ < agent > 
+ 157 
+ Now let ’ s run the script again to verify that the fix works and produces the correct list of prime numbers . 
+ 158 
+ 159 
+ ‘‘‘ command 
+ 160 
+ python prime_numbers . py 
+ 161 
+ ‘‘‘ 
+ 162 
+ </ agent > 
+ 163 
+ < environment > 
+ 164 
+ First 10 prime numbers : [2, 3, 5, 7, 11, 13, 17, 19, 23, 29] 
+ 165 
+ 166 
+ ( Current directory : / project , current file : none ) bash - $ 
+ 167 
+ </ environment > 
+ 168 
+ < agent > 
+ 169 
+ The output now correctly shows the first 10 prime numbers . Let ’ s go through the checklist : 
+ 170 
+ 171 
+ 1. Reproduced the error : Yes , we saw the script incorrectly included non - prime numbers in its output . 
+ 172 
+ 2. Confirmed the fix resolves the error : After modifying the range , the script now correctly lists only prime numbers . 
+ 173 
+ 3. Edge cases considered : The fix handles all cases correctly - numbers <=1 are non - prime , and the +1 ensures we check all potential divisors up to the square root . 
+ 174 
+ 4. Existing tests : Since this is a standalone script and there are no existing tests mentioned in the repository , this point isn ’ t applicable . 
+ 175 
+ 176 
+ The fix is complete and correct . We can now submit the changes . 
+ 177 
+ 178 
+ ‘‘‘ command 
+ 179 
+ submit 
+ 180 
+ ‘‘‘ 
+ 181 
+ </ agent > 
+ 182 
+ </ demonstration > 
+ Listing 5: Demonstration prompt used for initial data collection only. 
+ Appendix G Example of an SWE task
+ This section provides an example of a single software engineering task in the raw JSON format used during our training and evaluation process. Each task contains several key fields. The problem_statement field holds the natural language bug report from a GitHub issue, which is the initial observation provided to the agent. The agent’s goal is to produce a patch that resolves this issue. Task correctness is verified using the test_patch , which typically introduces a new unit test that fails on the buggy code but passes once a correct solution is applied. The ground-truth solution is also included as the patch field for reference. This task structure follows the format used in the SWE-bench benchmark and is provided here for convenience.
+ ⬇ 
+ 1 
+ { 
+ 2 
+ " repo ": " deepchem / deepchem ", 
+ 3 
+ " instance_id ": " deepchem__deepchem -2802", 
+ 4 
+ " base_commit ": "9 ef6c58eefd4e5f9bee40743ca14defa6f764f80 ", 
+ 5 
+ " patch ": " diff -- git a / deepchem / data / datasets . py b / deepchem / data / datasets . py 
+ 6 
+ index f80a399ca .. dd5ba637f 100644 
+ 7 
+ --- a / deepchem / data / datasets . py 
+ 8 
+ +++ b / deepchem / data / datasets . py 
+ 9 
+ @@ -2286,6 +2286,7 @@ class DiskDataset ( Dataset ): 
+ 10 
+ basename = " shard -% d " % shard_num 
+ 11 
+ DiskDataset . write_data_to_disk ( self . data_dir , basename , X , y , w , ids ) 
+ 12 
+ self . _cached_shards = None 
+ 13 
+ + self . legacy_metadata = True 
+ 14 
+ 15 
+ def select ( self , 
+ 16 
+ indices : Sequence [ int ],", 
+ 17 
+ " test_patch ": " diff -- git a / deepchem / data / tests / test_setshard . py b / deepchem / data / tests / test_setshard . py 
+ 18 
+ new file mode 100644\ nindex 000000000..0 fcf4b03e 
+ 19 
+ --- / dev / null 
+ 20 
+ +++ b / deepchem / data / tests / test_setshard . py 
+ 21 
+ @@ -0,0 +1,21 @@ 
+ 22 
+ + import deepchem as dc 
+ 23 
+ + import numpy as np 
+ 24 
+ + 
+ 25 
+ + 
+ 26 
+ + def test_setshard_with_X_y (): 
+ 27 
+ + """ Test setsharding on a simple example """ 
+ 28 
+ + X = np . random . rand (10, 3) 
+ 29 
+ + y = np . random . rand (10,) 
+ 30 
+ + dataset = dc . data . DiskDataset . from_numpy ( X , y ) 
+ 31 
+ + X_shape , y_shape , _ , _ = dataset . get_shape () 
+ 32 
+ + assert X_shape [0] == 10 
+ 33 
+ + assert y_shape [0] == 10 
+ 34 
+ + for i , ( X , y , w , ids ) in enumerate ( dataset . itershards ()): 
+ 35 
+ + X = X [1:] 
+ 36 
+ + y = y [1:] 
+ 37 
+ + w = w [1:] 
+ 38 
+ + ids = ids [1:] 
+ 39 
+ + dataset . set_shard ( i , X , y , w , ids ) 
+ 40 
+ + X_shape , y_shape , _ , _ = dataset . get_shape () 
+ 41 
+ + assert X_shape [0] == 9 
+ 42 
+ + assert y_shape [0] == 9", 
+ 43 
+ " problem_statement ": " Bug in dataset . get_shape () when used after dataset . set_shard () 
+ 44 
+ ## \ ud83d \ udc1b Bug 
+ 45 
+ 46 
+ ## To Reproduce 
+ 47 
+ 48 
+ <!-- If you have a code sample , error messages , stack traces , please provide it here as well . --> 
+ 49 
+ 50 
+ ## Expected behavior 
+ 51 
+ 52 
+ ‘‘‘ 
+ 53 
+ import deepchem as dc 
+ 54 
+ import numpy as np 
+ 55 
+ X = np . random . randn (10, 3) 
+ 56 
+ y = np . random . randn (10) 
+ 57 
+ 58 
+ dataset = dc . data . DiskDataset . from_numpy ( X , y ) 
+ 59 
+ dataset . get_shape () # Output : ((10, 3), (10,), (10,), (10,)) 
+ 60 
+ 61 
+ for i , ( X , y , w , ids ) in enumerate ( dataset . itershards ()): 
+ 62 
+ X = X [1:] 
+ 63 
+ y = y [1:] 
+ 64 
+ w = w [1:] 
+ 65 
+ ids = ids [1:] 
+ 66 
+ dataset . set_shard ( i , X , y , w , ids ) 
+ 67 
+ 68 
+ dataset . get_shape () 
+ 69 
+ # Output : ((10, 3), (10,), (10,), (10,)) 
+ 70 
+ # Expected output : ((9, 3), (9, ), (9, ), (9,)) 
+ 71 
+ ‘‘‘ 
+ 72 
+ 73 
+ Edit 1: 
+ 74 
+ 75 
+ This prints correctly : 
+ 76 
+ ‘‘‘ 
+ 77 
+ for i , ( X , y , w , ids ) in enumerate ( dataset . itershards ()): 
+ 78 
+ print ( X . shape ) # Output : (9, 3) 
+ 79 
+ ‘‘‘ 
+ 80 
+ ## Environment 
+ 81 
+ * DeepChem version : 2.6.0. dev 
+ 82 
+ 83 
+ ## Additional context 
+ 84 
+ The fix is probably a simple one .", 
+ 85 
+ " hints_text ": "", 
+ 86 
+ " created_at ": "2022-01-01 T16 :38:29+00:00", 
+ 87 
+ " version ": 0.0, 
+ 88 
+ " FAIL_TO_PASS ": [ 
+ 89 
+ " deepchem / data / tests / test_setshard . py :: test_setshard_with_X_y " 
+ 90 
+ ], 
+ 91 
+ " PASS_TO_PASS ": [], 
+ 92 
+ " environment_setup_commit ": "2401580 b6f41fe72f1360493ee46e8a842bd04ba ", 
+ 93 
+ " meta ": { 
+ 94 
+ " failed_lite_validators ": [], 
+ 95 
+ " has_test_patch ": true , 
+ 96 
+ " is_lite ": true 
+ 97 
+ }, 
+ 98 
+ " pull_number ": 2802.0, 
+ 99 
+ " issue_numbers ": [ 
+ 100 
+ 2772 
+ 101 
+ ] 
+ 102 
+ } 
+ Listing 6: Example of an SWE task (‘deepchem__deepchem-2802‘) in JSON format. 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ L
+ A 
+ T
+ E 
+ xml 
+ .
+ Instructions for reporting errors
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+ Click the "Report Issue" ( 
+ ) button, located in the page header.
+ Tip: You can select the relevant text first, to include it in your report.
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+ Major funding support from
